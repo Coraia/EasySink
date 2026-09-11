@@ -5,13 +5,11 @@ from __future__ import annotations
 import argparse
 import sys
 
-from wise_reader.engine import Engine
 from wise_reader.l0 import candidates
 from wise_reader.l2 import filter_candidates
 from wise_reader.lexicon import Lexicon
 from wise_reader.profile import ReaderProfile
 from wise_reader.render import render_inline
-from wise_reader.store import Store
 from wise_reader.tokenize import parse
 
 
@@ -43,7 +41,9 @@ def main(argv: list[str] | None = None) -> int:
         text = Path_read(args.file)
         doc = parse(text)
         profile = ReaderProfile(vocab_size=args.vocab, density=args.density)
-        shown = filter_candidates(candidates(doc, lexicon), [], profile, len(doc.tokens))
+        shown = filter_candidates(
+            candidates(doc, lexicon), [], profile, len(doc.tokens)
+        )
         print(render_inline(doc, shown))
         print(
             f"\n--- {len(doc.tokens)} words, {len(shown)} notes, "

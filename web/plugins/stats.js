@@ -1,43 +1,52 @@
-(() => {
-  WR.addNav({ href: "#/stats", label: "统计" });
-  WR.addRoute("/stats", renderStats);
-
-  function stopHeartbeat() {
-    if (WR._statsTimer) {
-      clearInterval(WR._statsTimer);
-      WR._statsTimer = null;
-    }
-  }
-
-  WR.on("read", ({ id }) => {
-    stopHeartbeat();
-    WR._statsTimer = setInterval(() => {
-      if (!location.hash.startsWith("#/read/")) {
-        stopHeartbeat();
-        return;
-      }
-      WR.api("/api/stats/heartbeat", { method: "POST", body: { doc_id: id, seconds: 15 } }).catch(() => {});
-    }, 15000);
+import { $, e, api, date } from "../core.js";
+export function install(ctx) {
+  const read = ctx.hook("read", (r) => {
+    let elapsed = 0,
+      last = performance.now(),
+      activeAt = Date.now();
+    const s = r.scope;
+    const activity = () => {
+      activeAt = Date.now();
+    };
+    s.on(window, "pointerdown", activity);
+    s.on(window, "keydown", activity);
+    s.on(window, "scroll", activity, { passive: true });
+    const sample = () => {
+      const now = performance.now();
+      if (!document.hidden && Date.now() - activeAt < 120000)
+        elapsed += Math.min(2, (now - last) / 1000);
+      last = now;
+    };
+    const flush = () => {
+      sample();
+      const seconds = Math.min(120, Math.floor(elapsed));
+      if (seconds < 1) return;
+      elapsed -= seconds;
+      api("/stats/heartbeat", {
+        method: "POST",
+        body: { doc_id: r.doc.id, seconds },
+        keepalive: true,
+      }).catch(() => {});
+    };
+    s.interval(sample, 1000);
+    s.interval(flush, 15000);
+    s.on(document, "visibilitychange", () => {
+      flush();
+      last = performance.now();
+    });
+    s.cleanup(flush);
+    s.on(window, "pagehide", flush);
   });
-
-  window.addEventListener("hashchange", () => {
-    if (!location.hash.startsWith("#/read/")) stopHeartbeat();
+  const route = ctx.route("stats", async (scope) => {
+    const [stats, logs] = await Promise.all([
+      api("/stats", { signal: scope.signal }),
+      api("/reading-log", { signal: scope.signal }),
+    ]);
+    if (scope.signal.aborted) return;
+    ctx.root.innerHTML = `<div class="page"><div class="page-head"><div><div class="eyebrow">LITTLE BY LITTLE</div><h1>每一页，都算数。</h1><p>统计可见页面的活跃阅读时间；连续静止超过两分钟会暂停计时。</p></div></div><div class="stats-grid"><div class="card stat">${Math.floor(stats.seconds / 60)}<small>累计阅读分钟</small></div><div class="card stat">${stats.known_count}<small>已掌握的词</small></div><div class="card stat">${new Set(logs.map((l) => l.doc_id)).size}<small>标记读完的篇数</small></div></div><section class="card"><h2>阅读过的时间</h2>${stats.by_document.map((d) => `<div class="list-item row between"><span>${e(d.title)}</span><span class="meta">${Math.ceil(d.seconds / 60)} 分钟</span></div>`).join("") || '<div class="empty">从第一篇开始，慢慢积累。</div>'}</section></div>`;
   });
-
-  async function renderStats() {
-    const s = await WR.api("/api/stats");
-    const h = Math.floor(s.seconds / 3600);
-    const m = Math.floor((s.seconds % 3600) / 60);
-    const app = document.getElementById("app");
-    app.innerHTML = `
-      <h2>阅读统计</h2>
-      <div class="card">
-        <p>累计阅读 <strong>${h} 小时 ${m} 分</strong>（心跳统计，打开阅读页才会记）</p>
-        <p class="meta">文章 ${s.document_count} · 认识 ${s.known_count} · 生词 ${s.unknown_count}</p>
-      </div>
-      <ul class="list">
-        ${s.by_document.map((d) => `<li><span>${WR.escapeHtml(d.title)}</span>
-          <span class="meta">${Math.round(d.seconds / 60)} 分钟</span></li>`).join("") || "<li>还没有时长</li>"}
-      </ul>`;
-  }
-})();
+  return () => {
+    read();
+    route();
+  };
+}

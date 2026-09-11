@@ -53,11 +53,13 @@ class Document:
     def numbered_sentences(self) -> list[str]:
         out = []
         for sent in self.sentences:
-            parts = [
-                f"<{t.id}>{t.text}"
-                for t in self.tokens[sent.first_token : sent.last_token + 1]
-            ]
-            out.append(f"[S{sent.id}] " + " ".join(parts))
+            parts = []
+            pos = sent.start
+            for t in self.tokens[sent.first_token : sent.last_token + 1]:
+                parts.append(self.text[pos : t.start] + f"<{t.id}>" + t.text)
+                pos = t.end
+            parts.append(self.text[pos : sent.end])
+            out.append(f"[S{sent.id}] " + "".join(parts))
         return out
 
     def reconstruct(self) -> str:
@@ -81,8 +83,11 @@ def _split_sentences(text: str) -> list[tuple[int, int]]:
         last_word = _WORD.findall(before)
         if m.group().startswith(".") and last_word and last_word[-1].lower() in _ABBREV:
             continue
-        if m.group().startswith(".") and before and before[-1:].isalpha() and (
-            len(before) < 2 or not before[-2:-1].isalpha()
+        if (
+            m.group().startswith(".")
+            and before
+            and before[-1:].isalpha()
+            and (len(before) < 2 or not before[-2:-1].isalpha())
         ):
             continue
         if end < len(text) and not text[end].isspace():

@@ -1,556 +1,411 @@
-const app = document.getElementById("app");
-const toastEl = document.getElementById("toast");
-
-let state = {
+import {
+  $,
+  $$,
+  e,
+  api,
+  Scope,
+  local,
+  toast,
+  errorBox,
+  date,
+  openDialog,
+  busy,
+} from "./core.js";
+import { PluginHost } from "./plugin-host.js";
+import { Reader } from "./reader.js";
+const hooks = new Map(),
+  routes = new Map();
+const ctx = {
+  root: $("#app"),
   profile: null,
-  doc: null,
-  bubble: null,
-  lookups: 0,
-};
-
-window.WR = {
-  state,
-  flags: {},
-  hooks: { home: [], read: [], history: [], profile: [], nav: [], routes: [] },
-  on(name, fn) {
-    (this.hooks[name] || (this.hooks[name] = [])).push(fn);
+  reader: null,
+  scope: null,
+  hook(slot, fn) {
+    if (!hooks.has(slot)) hooks.set(slot, new Set());
+    hooks.get(slot).add(fn);
+    return () => hooks.get(slot).delete(fn);
   },
-  addRoute(test, fn) {
-    this.hooks.routes.push({ test, fn });
+  route(name, fn) {
+    routes.set(name, fn);
+    return () => routes.delete(name);
   },
-  addNav(item) {
-    this.hooks.nav.push(item);
-  },
-  pluginOn(id) {
-    return !!this.flags[id];
-  },
-  async emit(name, payload) {
-    for (const fn of this.hooks[name] || []) {
+  async run(slot, arg) {
+    for (const fn of hooks.get(slot) || []) {
+      if (arg?.scope?.signal.aborted) return;
       try {
-        await fn(payload);
+        await fn(arg);
       } catch (err) {
-        console.warn("plugin hook", name, err);
+        if (err.name === "AbortError") return;
+        console.warn("Optional feature failed", err);
+        toast("一项辅助功能暂时不可用，正文仍可阅读");
       }
     }
   },
+  enabled: (id) => host.enabled(id),
+  navigate(hash) {
+    if (location.hash === hash) route();
+    else location.hash = hash;
+  },
+  refresh: () => route(),
+  cards,
+  importText: () => importText(),
+  openDialog,
+  jump(doc_id, anchor) {
+    if (anchor) local.set(`jump:${doc_id}`, anchor);
+    ctx.navigate(`#/read/${doc_id}`);
+  },
 };
-
-function toast(msg) {
-  toastEl.hidden = false;
-  toastEl.textContent = msg;
-  clearTimeout(toast.t);
-  toast.t = setTimeout(() => { toastEl.hidden = true; }, 1800);
+const host = new PluginHost(ctx);
+ctx.host = host;
+const palette = [
+  "#dce4d8",
+  "#e9dfcc",
+  "#dce5e7",
+  "#e7dcd1",
+  "#dfe0eb",
+  "#e5e8d0",
+];
+function cards(items) {
+  return items
+    .map(
+      (d, i) =>
+        `<a class="book-card" href="${d.href || "#/read/" + d.id}"><div class="book-cover" style="--cover:${palette[i % palette.length]}"><small>${e(d.coverLabel || "WISE READER / ARTICLE")}</small><div class="cover-title">${e(d.title)}</div></div><div class="book-info"><h3>${e(d.title)}</h3><div class="row"><span>${e(d.subtitle || `${d.word_count?.toLocaleString() || 0} 词`)}</span><span>·</span><span>${date(d.created_at)}</span></div><footer><span>${e(d.action || "打开阅读")}</span><span>↗</span></footer></div></a>`,
+    )
+    .join("");
 }
-
-async function api(path, opts = {}) {
-  const isForm = opts.body instanceof FormData;
-  let res;
+async function route() {
+  ctx.scope?.dispose();
+  ctx.reader = null;
+  const scope = (ctx.scope = new Scope());
+  const hash = location.hash.replace(/^#\/?/, "");
+  const [name, id] = hash.split("/");
+  document.body.classList.remove("reading", "immersive");
+  $("#header-context").textContent = "你的英文阅读空间";
+  $$("[data-nav]").forEach((a) =>
+    a.classList.toggle("active", a.dataset.nav === (name || "home")),
+  );
+  ctx.root.innerHTML = '<div class="loading" role="status">正在打开…</div>';
+  window.scrollTo(0, 0);
   try {
-    const headers = isForm
-      ? { ...(opts.headers || {}) }
-      : { "Content-Type": "application/json", ...(opts.headers || {}) };
-    res = await fetch(path, {
-      ...opts,
-      credentials: "include",
-      headers,
-      body: opts.body == null ? undefined : (isForm ? opts.body : JSON.stringify(opts.body)),
-    });
-  } catch (e) {
-    throw new Error("服务连不上。请重新启动：uv run uvicorn wise_reader.app:create_app --factory --port 8766");
-  }
-  if (res.status === 401) {
-    if (!location.hash.startsWith("#/login")) location.hash = "#/login";
-    throw new Error("需要登录");
-  }
-  if (!res.ok) throw new Error(await res.text());
-  const ct = res.headers.get("content-type") || "";
-  if (ct.includes("application/json")) return res.json();
-  return res.text();
-}
-
-WR.api = api;
-WR.toast = toast;
-WR.escapeHtml = escapeHtml;
-
-WR.scrollRatio = function () {
-  const el = document.scrollingElement || document.documentElement;
-  const max = el.scrollHeight - window.innerHeight;
-  return max > 0 ? el.scrollTop / max : 0;
-};
-
-WR.restoreScroll = function (ratio) {
-  const apply = () => {
-    const el = document.scrollingElement || document.documentElement;
-    const max = el.scrollHeight - window.innerHeight;
-    if (max > 0 && ratio > 0) el.scrollTop = max * ratio;
-  };
-  apply();
-  requestAnimationFrame(() => requestAnimationFrame(apply));
-};
-
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-
-function route() {
-  closeBubble();
-  toastEl.hidden = true;
-  clearTimeout(toast.t);
-  const hash = location.hash.slice(1) || "/";
-  const [path, q] = hash.split("?");
-  const params = new URLSearchParams(q || "");
-  let task;
-  const pluginHit = matchPluginRoute(path, params);
-  if (pluginHit) task = pluginHit;
-  else if (path === "/") task = renderHome();
-  else if (path === "/history") task = renderHistory();
-  else if (path === "/profile") task = renderProfile();
-  else if (path === "/test") task = renderTest();
-  else if (path === "/labs") task = renderLabs();
-  else if (path.startsWith("/read/")) task = renderRead(path.split("/")[2], params.get("density"));
-  else task = renderHome();
-  document.querySelectorAll("nav a").forEach((a) => {
-    const href = a.getAttribute("href");
-    a.classList.toggle("active", href === `#${path}` || (path === "/" && href === "#/"));
-  });
-  Promise.resolve(task).catch((err) => {
-    console.error(err);
-    toast(err.message || "加载失败");
-    app.innerHTML = `<p class="hero">${escapeHtml(err.message || "加载失败")}</p>`;
-  });
-}
-
-function matchPluginRoute(path, params) {
-  for (const r of WR.hooks.routes) {
-    const t = r.test;
-    const ok = typeof t === "function" ? t(path) : (path === t || path.startsWith(t + "/"));
-    if (ok) return r.fn(path, params);
-  }
-  return null;
-}
-
-WR.route = route;
-
-async function renderHome() {
-  state.profile = await api("/api/profile");
-  app.innerHTML = `
-    <p class="hero">粘贴英文材料。按你的词汇量自动加中文注释，读的时候不用查词典。</p>
-    <label>标题（可选）</label>
-    <input id="title" type="text" placeholder="今天读的那篇" />
-    <label>正文</label>
-    <textarea id="text" placeholder="Paste English text here."></textarea>
-    <div class="row">
-      <button id="go">开始阅读</button>
-      <span class="meta">当前词汇量估计 ${state.profile.vocab_size} · 密度 ${state.profile.density}/百词</span>
-    </div>
-    <div id="plugin-home"></div>
-  `;
-  document.getElementById("go").onclick = async () => {
-    const text = document.getElementById("text").value.trim();
-    if (!text) return toast("先贴一段英文");
-    document.getElementById("go").disabled = true;
-    try {
-      const doc = await api("/api/documents", {
-        method: "POST",
-        body: { title: document.getElementById("title").value, text },
-      });
-      location.hash = `#/read/${doc.id}`;
-    } catch (e) {
-      toast(e.message || "处理失败");
-      document.getElementById("go").disabled = false;
-    }
-  };
-  await WR.emit("home", { root: document.getElementById("plugin-home") });
-}
-
-async function renderHistory() {
-  const [docs, logs] = await Promise.all([api("/api/documents"), api("/api/reading-log")]);
-  app.innerHTML = `
-    <h2>阅读历史</h2>
-    <ul class="list">
-      ${docs.map(d => `<li><a href="#/read/${d.id}">${escapeHtml(d.title)}</a>
-        <span class="meta">${d.word_count} 词 · ${d.created_at.slice(0,10)}</span></li>`).join("") || "<li>还没有文章</li>"}
-    </ul>
-    <h3>读完记录</h3>
-    <ul class="list">
-      ${logs.map(l => `<li><span>${escapeHtml(l.title || "#" + l.doc_id)}</span>
-        <span class="meta">查词 ${l.manual_lookups} · 标注 ${l.annotation_count} · ${l.felt_density || ""}</span></li>`).join("") || "<li>还没有记录</li>"}
-    </ul>
-  `;
-  await WR.emit("history", { root: app });
-}
-
-async function saveProfile(patch) {
-  state.profile = await api("/api/profile", { method: "PATCH", body: patch });
-  return state.profile;
-}
-
-function setSaveStatus(kind, text) {
-  const el = document.getElementById("saveStatus");
-  if (!el) return toast(text);
-  el.dataset.state = kind;
-  el.textContent = text;
-}
-
-async function renderProfile() {
-  const p = await api("/api/profile");
-  state.profile = p;
-  const exams = Object.entries(p.exam_vocab);
-  const selectedDomains = new Set(p.domains);
-  app.innerHTML = `
-    <div class="page-head">
-      <div>
-        <h2>读者档案</h2>
-        <p class="hint">改动立即保存，不用找保存按钮。</p>
-      </div>
-      <span class="save-status" id="saveStatus" data-state="ok">已保存</span>
-    </div>
-
-    <section class="card">
-      <h3>词汇量</h3>
-      <p class="hint">点一个考纲，或自己改数字。只用来决定注释稀有度，读的时候还能纠正。</p>
-      <div class="chips" id="exams">
-        ${exams.map(([k, v]) => {
-          const on = Number(p.vocab_size) === Number(v) ? "on" : "";
-          return `<button type="button" class="chip ${on}" data-exam="${k}" aria-pressed="${on ? "true" : "false"}">${k.toUpperCase()}<span class="chip-n">${v}</span></button>`;
-        }).join("")}
-      </div>
-      <div class="row tight">
-        <label class="inline" for="vocab">自定义</label>
-        <input id="vocab" type="number" min="500" max="50000" value="${p.vocab_size}" />
-        <a class="link" href="#/test">或不选考纲，做 10 分钟测试</a>
-      </div>
-    </section>
-
-    <section class="card">
-      <h3>注释密度 <span id="densVal">${p.density}</span><small> / 百词</small></h3>
-      <p class="hint">每百词最多标几处。宁少勿多。</p>
-      <input id="dens" type="range" min="1" max="10" step="0.5" value="${p.density}" />
-    </section>
-
-    <section class="card">
-      <h3>熟悉的领域</h3>
-      <p class="hint">点亮的领域，文化背景注释会藏起来。点一下即保存。</p>
-      <div class="chips" id="domains">
-        ${Object.entries(p.domain_catalog).map(([k, v]) => {
-          const on = selectedDomains.has(k);
-          return `<button type="button" class="chip ${on ? "on" : ""}" data-d="${k}" aria-pressed="${on}">${v}</button>`;
-        }).join("")}
-      </div>
-    </section>
-
-    <p class="meta">个人词表 ${p.verdict_count} 条（认识 ${p.known_count} / 不认识 ${p.unknown_count}）
-      · L1 ${p.l1_available ? "已配置" : "未配置，仅词汇层"}</p>
-    <div id="plugin-profile"></div>
-  `;
-
-  const dens = document.getElementById("dens");
-  let densTimer;
-  dens.oninput = () => {
-    document.getElementById("densVal").textContent = dens.value;
-    setSaveStatus("busy", "保存中…");
-    clearTimeout(densTimer);
-    densTimer = setTimeout(async () => {
-      try {
-        await saveProfile({ density: +dens.value });
-        setSaveStatus("ok", "已保存");
-      } catch (err) {
-        setSaveStatus("err", "保存失败");
-        toast(err.message);
-      }
-    }, 280);
-  };
-
-  let vocabTimer;
-  document.getElementById("vocab").addEventListener("input", (e) => {
-    setSaveStatus("busy", "保存中…");
-    clearTimeout(vocabTimer);
-    vocabTimer = setTimeout(async () => {
-      const n = +e.target.value;
-      if (!n || n < 500) return;
-      try {
-        await saveProfile({ vocab_size: n });
-        document.querySelectorAll("#exams .chip").forEach((chip) => {
-          const v = state.profile.exam_vocab[chip.dataset.exam];
-          const on = Number(n) === Number(v);
-          chip.classList.toggle("on", on);
-          chip.setAttribute("aria-pressed", on ? "true" : "false");
-        });
-        setSaveStatus("ok", "已保存");
-      } catch (err) {
-        setSaveStatus("err", "保存失败");
-        toast(err.message);
-      }
-    }, 400);
-  });
-
-  document.getElementById("exams").onclick = async (e) => {
-    const chip = e.target.closest("[data-exam]");
-    if (!chip) return;
-    setSaveStatus("busy", "保存中…");
-    try {
-      const next = await saveProfile({ exam: chip.dataset.exam });
-      document.getElementById("vocab").value = next.vocab_size;
-      document.querySelectorAll("#exams .chip").forEach((c) => {
-        const v = next.exam_vocab[c.dataset.exam];
-        const on = Number(next.vocab_size) === Number(v);
-        c.classList.toggle("on", on);
-        c.setAttribute("aria-pressed", on ? "true" : "false");
-      });
-      setSaveStatus("ok", "已保存");
-    } catch (err) {
-      setSaveStatus("err", "保存失败");
-      toast(err.message);
-    }
-  };
-
-  document.getElementById("domains").onclick = async (e) => {
-    const chip = e.target.closest("[data-d]");
-    if (!chip) return;
-    chip.classList.toggle("on");
-    chip.setAttribute("aria-pressed", chip.classList.contains("on") ? "true" : "false");
-    const domains = [...document.querySelectorAll("#domains .chip.on")].map((x) => x.dataset.d);
-    setSaveStatus("busy", "保存中…");
-    try {
-      await saveProfile({ domains });
-      setSaveStatus("ok", `已保存 · ${domains.length} 个领域`);
-    } catch (err) {
-      chip.classList.toggle("on");
-      chip.setAttribute("aria-pressed", chip.classList.contains("on") ? "true" : "false");
-      setSaveStatus("err", "保存失败");
-      toast(err.message);
-    }
-  };
-  await WR.emit("profile", { root: document.getElementById("plugin-profile") });
-}
-
-async function renderLabs() {
-  const data = await api("/api/plugins");
-  app.innerHTML = `
-    <div class="page-head">
-      <div>
-        <h2>实验室</h2>
-        <p class="hint">每个功能都是独立插件。关掉后界面消失，对应 API 返回 404。清退代码：删 <code>src/wise_reader/plugins/&lt;id&gt;.py</code> 与 <code>web/plugins/&lt;id&gt;.js</code>，再从 catalog 去掉那一行。</p>
-      </div>
-    </div>
-    <div class="plugin-grid">
-      ${data.plugins.map((p) => `
-        <label class="plugin-card">
-          <div>
-            <strong>${escapeHtml(p.name)}</strong>
-            <span class="meta">${escapeHtml(p.id)}</span>
-            <p class="hint">${escapeHtml(p.summary)}</p>
-          </div>
-          <input type="checkbox" data-id="${p.id}" ${p.enabled ? "checked" : ""} />
-        </label>`).join("")}
-    </div>
-  `;
-  app.querySelectorAll("input[data-id]").forEach((el) => {
-    el.onchange = async () => {
-      await api(`/api/plugins/${el.dataset.id}`, { method: "PATCH", body: { enabled: el.checked } });
-      toast(el.checked ? "已开启" : "已关闭");
-      location.reload();
-    };
-  });
-}
-
-async function renderTest() {
-  let payload = await api("/api/vocab-test/start", { method: "POST", body: {} });
-  const paint = () => {
-    if (payload.finished) {
-      app.innerHTML = `
-        <div class="word-card">
-          <p>估计词汇量</p>
-          <div class="word">${payload.estimate}</div>
-          <p class="meta">已写入档案，并记住你认识的词</p>
-          <a class="btn" href="#/profile">回档案</a>
-        </div>`;
+    const { plugins } = await api("/plugins", { signal: scope.signal });
+    if (scope.signal.aborted) return;
+    await host.sync(plugins);
+    if (scope.signal.aborted) return;
+    ctx.profile = await api("/profile", { signal: scope.signal });
+    if (scope.signal.aborted) return;
+    if (name === "read" && /^\d+$/.test(id)) {
+      const doc = await api(`/documents/${id}`, { signal: scope.signal });
+      if (scope.signal.aborted) return;
+      ctx.reader = new Reader(ctx, scope, doc);
+      await ctx.reader.mount();
+    } else if (name === "profile" || name === "settings")
+      await renderProfile(scope);
+    else if (name === "labs") await renderLabs(scope);
+    else if (name === "jobs") await renderJobs(scope);
+    else if (routes.has(name)) await routes.get(name)(scope, id);
+    else if (!name || name === "history") await renderHome(scope);
+    else
+      ctx.root.innerHTML =
+        '<div class="empty"><h2>这个功能已关闭</h2><p>可在功能管理里重新开启，原来的数据仍在。</p><a class="button" href="#/labs">打开功能管理</a></div>';
+  } catch (err) {
+    if (err.name === "AbortError" || scope.signal.aborted) return;
+    if (err.status === 401 && routes.has("login")) {
+      await routes.get("login")(scope);
       return;
     }
-    const q = payload.question;
-    app.innerHTML = `
-      <div class="word-card">
-        <p class="meta">第 ${payload.round} / ${payload.max_rounds} 轮</p>
-        <div class="word">${escapeHtml(q.word)}</div>
-        <div class="ipa">${q.phonetic ? "/" + escapeHtml(q.phonetic) + "/" : ""}</div>
-        <div class="row" style="justify-content:center">
-          <button id="yes">认识</button>
-          <button class="ghost" id="no">不认识</button>
-        </div>
-        <p class="meta"><a href="#/profile">跳过，改用考纲自评</a></p>
-      </div>`;
-    const send = async known => {
-      payload = await api("/api/vocab-test/answer", {
-        method: "POST",
-        body: { session: payload.session, word: q.word, known },
-      });
-      paint();
-    };
-    document.getElementById("yes").onclick = () => send(true);
-    document.getElementById("no").onclick = () => send(false);
-  };
-  paint();
-}
-
-async function loadDoc(id, density) {
-  const q = density != null ? `?density=${density}` : "";
-  state.doc = await api(`/api/documents/${id}${q}`);
-}
-
-async function renderRead(id, densityParam) {
-  closeBubble();
-  if (!state.doc || String(state.doc.id) !== String(id) || densityParam != null) {
-    await loadDoc(id, densityParam);
+    ctx.root.innerHTML = `<div class="page"><h1>暂时无法打开</h1>${errorBox(err)}<button id="retry-page">重新连接</button></div>`;
+    scope.on($("#retry-page"), "click", route);
   }
-  const d = state.doc;
-  const html = d.fragments.map(f => {
-    if (f.type === "plain") return escapeHtml(f.text);
-    return `<span class="anno" data-lemma="${escapeHtml(f.lemma)}" data-detail="${escapeHtml(f.detail)}" data-kind="${f.kind}">${escapeHtml(f.text)}<span class="note">(${escapeHtml(f.note)})</span></span>`;
-  }).join("");
-  app.innerHTML = `
-    <div class="toolbar">
-      <span>${escapeHtml(d.title)}</span>
-      <label style="margin:0">密度
-        <input id="dens" type="range" min="1" max="10" step="0.5" value="${d.density}" />
-      </label>
-      <span id="densVal">${d.density}</span>
-      <span class="meta">${d.word_count} 词 · ${d.annotation_count} 注 · ${d.density_actual}% · ${d.fragment_count} 节点</span>
-      <span id="plugin-toolbar" class="plugin-toolbar"></span>
-    </div>
-    <div id="reader-stage">
-      <article class="article" id="article">${html}</article>
-    </div>
-    <div class="row">
-      <span class="meta">注释感觉：</span>
-      <button class="ghost" data-felt="太多">太多</button>
-      <button class="ghost" data-felt="合适">合适</button>
-      <button class="ghost" data-felt="太少">太少</button>
-    </div>
-    <div id="plugin-below"></div>
-  `;
-  const dens = document.getElementById("dens");
-  dens.oninput = () => { document.getElementById("densVal").textContent = dens.value; };
-  dens.onchange = async () => {
-    const t0 = performance.now();
-    await loadDoc(id, dens.value);
-    const dt = performance.now() - t0;
-    await renderRead(id);
-    if (dt > 500) toast(`重渲染 ${Math.round(dt)}ms`);
+}
+async function renderHome(scope) {
+  const documents = await api("/documents", { signal: scope.signal });
+  if (scope.signal.aborted) return;
+  ctx.root.innerHTML = `<div class="page"><div class="page-head"><div><div class="eyebrow">YOUR READING SPACE</div><h1>留在故事里。</h1><p>从一篇文章开始，让语言不再打断思考。</p></div><div class="row" id="home-actions"><button class="primary" id="new-reading">＋ 添加阅读</button></div></div><section class="welcome ${documents.length ? "compact" : ""}"><div class="welcome-copy"><div class="eyebrow">READ WITH UNDERSTANDING</div><h2>好的阅读体验，<br>是忘记自己在读英文。</h2><p>只解释你需要的词、表达与背景。无需先做测试，开始阅读后，辅助会随你的反馈调整。</p><div class="row wrap"><button id="try-sample">体验一篇示例 <span>→</span></button><a class="text-button" href="#/profile">调整我的阅读辅助</a></div></div><div class="reading-sample"><p>Curiosity is a quiet form of <span>courage <small>勇气</small></span>.</p><div class="caption">英文在前，理解就在旁边。</div></div></section><div id="home-continue"></div><div id="book-collections"></div><div class="section-heading"><h2>我的阅读</h2><span>${documents.filter((d) => !d.archived).length} 篇内容</span></div><div class="shelf-tools"><div class="filters" role="group" aria-label="内容筛选"><button class="filter active" data-filter="all">全部</button><button class="filter" data-filter="recent">最近添加</button><button class="filter" data-filter="archived">已归档</button></div><input type="search" id="shelf-search" placeholder="搜索标题…" aria-label="搜索书架"></div><div class="book-grid" id="article-grid"></div></div>`;
+  let filter = "all";
+  const view = { scope, documents, collections: [], chapterIds: new Set() };
+  const draw = () => {
+    let items = documents.filter((d) =>
+      filter === "archived"
+        ? d.archived
+        : !d.archived && !view.chapterIds.has(d.id),
+    );
+    if (filter !== "archived") items = [...view.collections, ...items];
+    const search = $("#shelf-search").value.toLowerCase();
+    items = items.filter((d) => d.title.toLowerCase().includes(search));
+    if (filter === "recent") items = items.slice(0, 6);
+    $("#article-grid").innerHTML =
+      cards(items) ||
+      '<div class="empty"><h3>这里还没有内容</h3><p>添加一篇文章，或导入一本 EPUB，开始自己的阅读旅程。</p></div>';
   };
-  document.getElementById("article").onclick = onAnnoClick;
-  setupLongPress(document.getElementById("article"));
-  document.querySelectorAll("[data-felt]").forEach(btn => {
-    btn.onclick = async () => {
-      await api(`/api/documents/${id}/finish`, {
+  draw();
+  scope.on($("#new-reading"), "click", () => importText());
+  scope.on($("#try-sample"), "click", (ev) =>
+    busy(
+      ev.target,
+      async () => {
+        const sample = await fetch("/static/sample.txt").then((r) => r.text());
+        const doc = await api("/documents", {
+          method: "POST",
+          body: { title: "The quiet art of paying attention", text: sample },
+        });
+        ctx.navigate("#/read/" + doc.id);
+      },
+      "正在准备…",
+    ).catch(() => {}),
+  );
+  scope.on($("#shelf-search"), "input", draw);
+  scope.on($(".filters"), "click", (ev) => {
+    const b = ev.target.closest("[data-filter]");
+    if (b) {
+      filter = b.dataset.filter;
+      $$(".filter").forEach((x) => x.classList.toggle("active", x === b));
+      draw();
+    }
+  });
+  await ctx.run("home", { scope, documents });
+}
+function importText() {
+  const draft = local.get("import-draft", { title: "", text: "" });
+  const d = openDialog(
+    "添加一段值得读的文字",
+    `<div id="import-extension"></div><form id="paste-form" class="stack"><div><label for="paste-title">标题</label><input id="paste-title" placeholder="给这篇阅读起个名字" value="${e(draft.title)}"></div><div><label for="paste-text">英文原文</label><textarea id="paste-text" rows="8" required placeholder="粘贴文章、邮件或你想读懂的一段英文…">${e(draft.text)}</textarea></div><div class="row between"><span class="save-state" id="paste-state">草稿保留在此浏览器</span><button class="primary" type="submit">开始阅读 →</button></div></form>`,
+  );
+  const form = $("#paste-form", d);
+  form.oninput = () => {
+    const saved = local.set("import-draft", {
+      title: $("#paste-title", d).value,
+      text: $("#paste-text", d).value,
+    });
+    $("#paste-state", d).textContent = saved
+      ? "草稿已自动保存"
+      : "草稿未保存，请复制内容";
+  };
+  form.onsubmit = (ev) => {
+    ev.preventDefault();
+    busy(
+      $("button[type=submit]", form),
+      async () => {
+        const text = $("#paste-text", d).value.trim();
+        if (!text) throw new Error("先粘贴一些英文内容");
+        const doc = await api("/documents", {
+          method: "POST",
+          body: { title: $("#paste-title", d).value, text },
+        });
+        local.remove("import-draft");
+        d.close();
+        ctx.navigate("#/read/" + doc.id);
+      },
+      "正在整理…",
+    ).catch(() => {});
+  };
+  ctx.run("importDialog", d).catch((err) => toast(err.message));
+}
+async function renderProfile(scope) {
+  const p = ctx.profile;
+  let domains = new Set(p.domains);
+  let queue = Promise.resolve();
+  let latest = 0;
+  ctx.root.innerHTML = `<div class="settings-layout"><div class="page-head"><div><div class="eyebrow">MAKE IT YOURS</div><h1>刚刚好的帮助。</h1><p>所有选择都会自动保存。读得越多，越懂你的需要。</p></div><span class="save-state" id="profile-save" role="status">已同步</span></div><section class="card"><h2>阅读辅助</h2><div class="setting-row"><div><strong>从熟悉的程度开始</strong><p>这是词频门槛的起点，可以随时调整，不需要先做测试。</p></div><select id="vocab-level" aria-label="英语熟悉程度">${[
+    [3500, "基础阅读"],
+    [4500, "大学四级左右"],
+    [6000, "大学六级左右"],
+    [8000, "熟练阅读"],
+    [12000, "进阶阅读"],
+  ]
+    .map(
+      ([v, label]) =>
+        `<option value="${v}" ${p.vocab_size === v ? "selected" : ""}>${label}</option>`,
+    )
+    .join(
+      "",
+    )}${![3500, 4500, 6000, 8000, 12000].includes(p.vocab_size) ? `<option selected value="${p.vocab_size}">自定义 · ${p.vocab_size}</option>` : ""}</select></div><div class="setting-row"><div><strong>默认辅助密度</strong><p>每百词约显示多少处解释。要求保留的注释优先显示。</p></div><select id="default-density" aria-label="默认辅助密度">${[
+    [0, "原文"],
+    [2, "轻 · 2 处"],
+    [4, "适中 · 4 处"],
+    [8, "多 · 8 处"],
+  ]
+    .map(
+      ([v, label]) =>
+        `<option value="${v}" ${p.density === v ? "selected" : ""}>${label}</option>`,
+    )
+    .join(
+      "",
+    )}${![0, 2, 4, 8].includes(p.density) ? `<option selected value="${p.density}">${p.density} 处</option>` : ""}</select></div><div class="setting-row"><div><strong>重复解释</strong><p>同一个词在一篇文章中再次出现时，仍显示解释。</p></div><input class="switch" type="checkbox" id="repeat" aria-label="重复解释" ${p.repeat ? "checked" : ""}></div><div class="setting-row"><div><strong>表达与文化注释</strong><p>${p.l1_available ? "已连接 AI，可在阅读页请求增强注释。" : "常用表达可离线解释；更广的语法与文化注释需要配置 AI。"}</p></div><input class="switch" type="checkbox" id="l1-enabled" aria-label="表达与文化注释" ${p.l1_enabled ? "checked" : ""}></div></section><section class="card"><h2>我熟悉的领域</h2><p class="muted">选择你已有背景知识的领域，减少相关背景解释。</p><div class="chips" id="domains">${Object.entries(
+    p.domain_catalog,
+  )
+    .map(
+      ([id, label]) =>
+        `<button class="chip" data-domain="${id}" aria-pressed="${domains.has(id)}">${e(label)}</button>`,
+    )
+    .join(
+      "",
+    )}</div><p class="save-state" id="domain-state">已选择 ${domains.size} 个领域 · 自动保存</p></section><section class="card"><div class="row between"><div><h2>了解我的阅读起点</h2><p class="muted" style="margin:0;font-size:14px">可选的短测试，给出词频熟悉度范围。</p></div><button id="vocab-test">试一试 →</button></div><div id="vocab-test-area"></div></section><div id="profile-extensions" class="stack"></div><section class="card row between"><div><h3>让功能保持轻盈</h3><span class="muted">按需开关 15 个功能，已有数据会保留。</span></div><a class="button" href="#/labs">功能管理 →</a></section></div>`;
+  const save = (fields) => {
+    const version = ++latest;
+    $("#profile-save").textContent = "保存中…";
+    queue = queue
+      .catch(() => {})
+      .then(() => api("/profile", { method: "PATCH", body: fields }))
+      .then((saved) => {
+        ctx.profile = saved;
+        if (!scope.signal.aborted && version === latest) {
+          $("#profile-save").textContent = "已自动保存 ✓";
+          $("#domain-state").textContent =
+            `已选择 ${saved.domains.length} 个领域 · 已保存`;
+        }
+      })
+      .catch((err) => {
+        if (!scope.signal.aborted) {
+          $("#profile-save").innerHTML =
+            '<button class="text-button" id="retry-save">保存失败 · 重试</button>';
+          $("#retry-save").onclick = () => save(fields);
+        }
+        toast(err.message);
+      });
+  };
+  scope.on($("#vocab-level"), "change", (ev) =>
+    save({ vocab_size: +ev.target.value }),
+  );
+  scope.on($("#default-density"), "change", (ev) =>
+    save({ density: +ev.target.value }),
+  );
+  scope.on($("#repeat"), "change", (ev) => save({ repeat: ev.target.checked }));
+  scope.on($("#l1-enabled"), "change", (ev) =>
+    save({ l1_enabled: ev.target.checked }),
+  );
+  scope.on($("#domains"), "click", (ev) => {
+    const btn = ev.target.closest("[data-domain]");
+    if (!btn) return;
+    const id = btn.dataset.domain;
+    domains.has(id) ? domains.delete(id) : domains.add(id);
+    btn.setAttribute("aria-pressed", domains.has(id));
+    $("#domain-state").textContent = `已选择 ${domains.size} 个领域 · 保存中…`;
+    save({ domains: [...domains] });
+  });
+  scope.on($("#vocab-test"), "click", () => vocabTest(scope));
+  await ctx.run("profile", { scope });
+}
+async function vocabTest(scope) {
+  const root = $("#vocab-test-area");
+  const draw = (q) => {
+    if (scope.signal.aborted) return;
+    if (q.finished) {
+      root.innerHTML = `<div class="notice">建议的阅读起点：${q.estimate.toLocaleString()} 词频门槛。已保存。<p class="muted">参考范围 ${q.range[0].toLocaleString()}–${q.range[1].toLocaleString()}；这不是精确词汇量。你可以直接阅读，再调整辅助。</p></div>`;
+      return;
+    }
+    root.innerHTML = `<div class="gap card"><div class="meta">第 ${q.round} 轮 / 最多 ${q.max_rounds} 轮 · 已回答 ${q.progress} 题</div><h2 style="font:32px Georgia,serif;margin:20px 0">${e(q.question.word)}</h2><div class="row"><button data-answer="true">认识</button><button data-answer="false">不确定 / 不认识</button></div></div>`;
+    $$("[data-answer]", root).forEach(
+      (b) =>
+        (b.onclick = async () => {
+          const buttons = $$("[data-answer]", root);
+          buttons.forEach((el) => (el.disabled = true));
+          try {
+            draw(
+              await api("/vocab-test/answer", {
+                method: "POST",
+                body: {
+                  session: q.session,
+                  word: q.question.word,
+                  known: b.dataset.answer === "true",
+                },
+                signal: scope.signal,
+              }),
+            );
+          } catch (err) {
+            if (err.name !== "AbortError") {
+              toast(err.message);
+              buttons.forEach((el) => (el.disabled = false));
+            }
+          }
+        }),
+    );
+  };
+  try {
+    draw(
+      await api("/vocab-test/start", {
         method: "POST",
-        body: {
-          annotation_count: state.doc.annotation_count,
-          manual_lookups: state.lookups,
-          felt_density: btn.dataset.felt,
-        },
+        body: {},
+        signal: scope.signal,
+      }),
+    );
+  } catch (err) {
+    if (!scope.signal.aborted) root.innerHTML = errorBox(err);
+  }
+}
+async function renderLabs(scope) {
+  const catalog = host.catalog;
+  ctx.root.innerHTML = `<div class="settings-layout"><div class="page-head"><div><div class="eyebrow">A LIGHTER READER</div><h1>留下你需要的。</h1><p>关闭立即生效，书籍、笔记与设置仍会保留。</p></div><span class="save-state" id="plugin-save" role="status">${catalog.filter((p) => p.enabled).length} / 15 已开启</span></div><div class="card">${catalog.map((p, i) => `<div class="plugin-row"><span class="number">${String(i + 1).padStart(2, "0")}</span><div class="description"><h3>${e(p.name)}</h3><p>${e(p.summary)}</p></div><input type="checkbox" class="switch" data-plugin="${p.id}" aria-label="${e(p.name)}" ${p.enabled ? "checked" : ""}></div>`).join("")}</div><p class="muted" style="font-size:13px">账号功能仅用于锁住这台机器上的阅读空间。关闭访问锁后，同机访问不再需要密码。</p><a class="text-button" href="#/profile">← 返回阅读偏好</a></div>`;
+  scope.on(ctx.root, "change", async (ev) => {
+    const box = ev.target.closest("[data-plugin]");
+    if (!box) return;
+    $$("[data-plugin]").forEach((b) => (b.disabled = true));
+    $("#plugin-save").textContent = "应用中…";
+    try {
+      const { plugins } = await api(`/plugins/${box.dataset.plugin}`, {
+        method: "PATCH",
+        body: { enabled: box.checked },
       });
-      toast("已记入阅读日志");
-    };
-  });
-  await WR.emit("read", {
-    id: d.id,
-    doc: d,
-    article: document.getElementById("article"),
-    toolbar: document.getElementById("plugin-toolbar"),
-    below: document.getElementById("plugin-below"),
-    stage: document.getElementById("reader-stage"),
-  });
-}
-
-function onAnnoClick(e) {
-  const el = e.target.closest(".anno");
-  if (!el) { closeBubble(); return; }
-  e.preventDefault();
-  const r = el.getBoundingClientRect();
-  showBubble(r.left + window.scrollX, r.bottom + window.scrollY + 6, {
-    lemma: el.dataset.lemma,
-    detail: el.dataset.detail,
-    el,
+      await host.sync(plugins);
+      if (!scope.signal.aborted)
+        $("#plugin-save").textContent = "已保存并生效 ✓";
+    } catch (err) {
+      box.checked = !box.checked;
+      toast(err.message);
+      if (!scope.signal.aborted)
+        $("#plugin-save").textContent = "保存失败，请重试";
+    } finally {
+      $$("[data-plugin]").forEach((b) => (b.disabled = false));
+    }
   });
 }
-
-function showBubble(x, y, { lemma, detail, el }) {
-  closeBubble();
-  const b = document.createElement("div");
-  b.className = "bubble";
-  b.style.left = x + "px";
-  b.style.top = y + "px";
-  b.innerHTML = `
-    <div>${escapeHtml(detail || lemma)}</div>
-    <div class="actions">
-      <button data-v="known">认识了</button>
-      <button class="ghost" data-v="unknown">还是不认识</button>
-    </div>`;
-  b.onclick = async ev => {
-    const v = ev.target.dataset.v;
-    if (!v) return;
-    await api("/api/feedback", { method: "POST", body: { lemma, verdict: v } });
-    if (v === "known" && el) el.replaceWith(document.createTextNode(el.childNodes[0].textContent));
-    closeBubble();
-    toast(v === "known" ? "以后不再标" : "以后一定标");
+async function renderJobs(scope) {
+  ctx.root.innerHTML =
+    '<div class="page"><div class="page-head"><div><h1>后台任务</h1><p>已完成的分段会保留；失败后可以从断点继续。</p></div><a class="button" href="#/">回书架</a></div><div id="jobs-list"></div></div>';
+  const labels = {
+    queued: "等待中",
+    running: "进行中",
+    complete: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
   };
-  document.body.appendChild(b);
-  state.bubble = b;
-}
-
-function closeBubble() {
-  if (state.bubble) { state.bubble.remove(); state.bubble = null; }
-}
-
-function wordAtPoint(x, y) {
-  const caret = document.caretRangeFromPoint?.(x, y) || (document.caretPositionFromPoint && (() => {
-    const p = document.caretPositionFromPoint(x, y);
-    if (!p) return null;
-    const r = document.createRange();
-    r.setStart(p.offsetNode, p.offset);
-    r.collapse(true);
-    return r;
-  })());
-  if (!caret || caret.startContainer.nodeType !== Node.TEXT_NODE) return "";
-  const text = caret.startContainer.textContent;
-  const i = caret.startOffset;
-  const m1 = text.slice(0, i).match(/[A-Za-z]+$/);
-  const m2 = text.slice(i).match(/^[A-Za-z]+/);
-  return ((m1 ? m1[0] : "") + (m2 ? m2[0] : ""));
-}
-
-function setupLongPress(article) {
-  let timer = null;
-  const start = ev => {
-    const p = ev.touches ? ev.touches[0] : ev;
-    timer = setTimeout(async () => {
-      const w = wordAtPoint(p.clientX, p.clientY);
-      if (!w) return;
-      const info = await api("/api/lookup", { method: "POST", body: { word: w, mark_unknown: true } });
-      state.lookups += 1;
-      const r = { left: p.clientX + window.scrollX, bottom: p.clientY + window.scrollY };
-      showBubble(r.left, r.bottom + 8, {
-        lemma: info.lemma || w,
-        detail: info.found ? `${info.note}${info.phonetic ? " /" + info.phonetic + "/" : ""}` : "词典未收录",
-        el: null,
-      });
-    }, 500);
+  const update = async () => {
+    try {
+      const jobs = await api("/jobs", { signal: scope.signal });
+      if (scope.signal.aborted) return;
+      $("#jobs-list").innerHTML =
+        jobs
+          .map(
+            (j) =>
+              `<section class="card gap"><div class="row between"><h3>${j.kind === "translate" ? "中文翻译" : "增强注释"} · ${j.doc_ids.length} 章</h3><span class="meta">${labels[j.status]}</span></div><div class="progress-track"><div style="width:${(j.cursor / Math.max(1, j.total)) * 100}%"></div></div><p class="meta gap">${j.cursor} / ${j.total} 分段 ${e(j.error)}</p><div class="row">${["queued", "running"].includes(j.status) ? `<button data-job="${j.id}" data-action="cancel">取消任务</button>` : ""}${["failed", "cancelled"].includes(j.status) ? `<button data-job="${j.id}" data-action="retry">从断点重试</button>` : ""}<a class="text-button" href="#/read/${j.doc_ids[0]}">打开正文 →</a></div></section>`,
+          )
+          .join("") || '<div class="empty">还没有后台任务。</div>';
+    } catch (err) {
+      if (err.name !== "AbortError") toast(err.message);
+    }
   };
-  const cancel = () => { clearTimeout(timer); };
-  article.addEventListener("mousedown", start);
-  article.addEventListener("touchstart", start, { passive: true });
-  article.addEventListener("mouseup", cancel);
-  article.addEventListener("mouseleave", cancel);
-  article.addEventListener("touchend", cancel);
+  await update();
+  scope.interval(update, 2000);
+  scope.on(ctx.root, "click", async (ev) => {
+    const b = ev.target.closest("[data-job]");
+    if (b) {
+      b.disabled = true;
+      try {
+        await api(`/jobs/${b.dataset.job}/${b.dataset.action}`, {
+          method: "POST",
+        });
+        await update();
+      } catch (err) {
+        toast(err.message);
+        b.disabled = false;
+      }
+    }
+  });
 }
-
 window.addEventListener("hashchange", route);
-document.querySelector(".top").addEventListener("click", (e) => {
-  const a = e.target.closest("a[href^='#']");
-  if (!a) return;
-  const next = a.getAttribute("href");
-  if (location.hash === next) {
-    e.preventDefault();
-    route();
-  }
-});
+try {
+  const { plugins } = await api("/plugins");
+  await host.sync(plugins);
+  await route();
+} catch (err) {
+  ctx.root.innerHTML = `<div class="page"><h1>阅读空间暂时无法连接</h1>${errorBox(err)}<p>请检查本机 Web 服务是否已启动，然后刷新页面。</p></div>`;
+}

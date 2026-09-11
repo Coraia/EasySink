@@ -1,36 +1,33 @@
-(() => {
-  WR.on("read", () => {
-    if (WR._shortcutHinted) return;
-    WR._shortcutHinted = true;
-    WR.toast("快捷键：F 沉浸 · / 搜索 · [ ] 密度 · Esc 退出");
-  });
-
-  document.addEventListener("keydown", (e) => {
-    const tag = (e.target && e.target.tagName) || "";
-    if (tag === "INPUT" || tag === "TEXTAREA" || e.target.isContentEditable) {
-      if (e.key === "Escape") e.target.blur();
-      return;
-    }
-    const onRead = location.hash.startsWith("#/read/");
-    if (e.key === "Escape") {
-      document.body.classList.remove("immersive");
-      const exit = document.getElementById("wr-imm-exit");
-      if (exit) exit.click();
-      return;
-    }
-    if (!onRead) return;
-    if (e.key === "f" || e.key === "F") {
-      if (WR._immersiveToggle) WR._immersiveToggle();
-    } else if (e.key === "/") {
-      e.preventDefault();
-      if (WR._focusSearch) WR._focusSearch();
-    } else if (e.key === "[" || e.key === "]") {
-      const dens = document.getElementById("dens");
-      if (!dens) return;
-      const step = e.key === "]" ? 0.5 : -0.5;
-      dens.value = String(Math.min(10, Math.max(1, +dens.value + step)));
-      dens.dispatchEvent(new Event("input"));
-      dens.dispatchEvent(new Event("change"));
-    }
-  });
-})();
+import { $, escapeEditing } from "../core.js";
+export function install(ctx) {
+  return ctx.hook("read", (r) =>
+    r.scope.on(document, "keydown", (ev) => {
+      if (escapeEditing(ev)) return;
+      if (ev.key === "Escape") {
+        r.closePop();
+        if (r.panelId) r.closePanel();
+        else if (document.body.classList.contains("immersive"))
+          $("#tool-immersive")?.click();
+        return;
+      }
+      const tools = {
+        f: "immersive",
+        "/": "search",
+        n: "notes",
+        b: "bookmarks",
+      };
+      const tool = tools[ev.key.toLowerCase()];
+      if (tool) {
+        ev.preventDefault();
+        $("#tool-" + tool)?.click();
+      }
+      if (ev.key === "[" || ev.key === "]") {
+        ev.preventDefault();
+        const levels = [0, 2, 4, 8],
+          index = levels.indexOf(r.doc.density),
+          next = Math.max(0, Math.min(3, index + (ev.key === "[" ? -1 : 1)));
+        r.density(levels[next]);
+      }
+    }),
+  );
+}

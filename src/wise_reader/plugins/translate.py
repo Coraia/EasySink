@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
+from wise_reader.jobs import chunks as _chunks
 from wise_reader.plugins.runtime import PluginContext, require_plugin
 from wise_reader.store import Store
 
@@ -37,19 +38,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _chunks(text: str, n: int = 1400):
-    paras = text.split("\n\n")
-    buf: list[str] = []
-    size = 0
-    for p in paras:
-        if size + len(p) > n and buf:
-            yield "\n\n".join(buf)
-            buf, size = [p], len(p)
-        else:
-            buf.append(p)
-            size += len(p) + 2
-    if buf:
-        yield "\n\n".join(buf)
+__all__ = ["_chunks", "migrate", "register"]
 
 
 def register(app: FastAPI, ctx: PluginContext) -> None:
@@ -73,12 +62,10 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
         text = body.body.strip()
         if body.generate:
             if not ctx.l1_on:
-                raise HTTPException(400, "未配置 LLM。可粘贴译文，或在 .env 开启 WR_LLM。")
-            parts = []
-            for chunk in _chunks(doc["text"]):
-                parts.append(ctx.llm.chat(SYS, chunk).strip())
-            text = "\n\n".join(p for p in parts if p)
-            source = "llm"
+                raise HTTPException(
+                    400, "未配置 LLM。可粘贴译文，或在 .env 开启 WR_LLM。"
+                )
+            return app.state.jobs.enqueue([doc_id])
         if not text:
             raise HTTPException(400, "empty translation")
         ctx.store.execute(
@@ -92,5 +79,15 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
             "SELECT * FROM wr_translation WHERE doc_id = ? AND lang = ?",
             (doc_id, lang),
         )
+
+    @router.post("/api/translate/books/{book_id}")
+    def translate_book(book_id: int):
+        ids = [
+            r["doc_id"]
+            for r in ctx.store.query(
+                "SELECT doc_id FROM wr_chapter WHERE book_id=? ORDER BY idx", (book_id,)
+            )
+        ]
+        return app.state.jobs.enqueue(ids)
 
     app.include_router(router)

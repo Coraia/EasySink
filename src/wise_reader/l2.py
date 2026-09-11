@@ -1,72 +1,45 @@
-"""L2 个性化过滤：读者模型唯一介入点。"""
+"""Personal selection with a soft density budget and explicit forced overrides."""
 
-from __future__ import annotations
+from dataclasses import replace
 
-from wise_reader.models import Annotation, Kind
-from wise_reader.profile import ReaderProfile
+from wise_reader.models import Kind
+from wise_reader.semantics import target
 
 
-def filter_candidates(
-    l0: list[Annotation],
-    l1: list[Annotation],
-    profile: ReaderProfile,
-    word_count: int,
-    density: float | None = None,
-) -> list[Annotation]:
+def filter_candidates(l0, l1, profile, word_count, density=None, verdicts=None):
     density = profile.density if density is None else density
-    budget = max(1, round(word_count * density / 100))
-    threshold = profile.rank_threshold()
-
-    l1_kept: list[Annotation] = []
-    if profile.l1_enabled:
-        for a in l1:
-            if a.kind == Kind.CULTURE and a.domain and a.domain in profile.domains:
-                continue
-            l1_kept.append(a)
-
-    l0_kept: list[Annotation] = []
-    seen_lemma: set[str] = set()
-    for a in l0:
-        lemma = a.lemma or a.surface.lower()
-        if profile.knows(lemma):
+    budget = max(1, round(word_count * density / 100)) if density > 0 else 0
+    verdicts = verdicts or {}
+    eligible = []
+    for a in l0 + l1:
+        key = target(a)
+        if profile.knows(key) or verdicts.get(key) == "known":
             continue
-        forced = profile.struggles_with(lemma)
-        if not forced and 0 < a.rarity <= threshold:
-            continue
-        if not profile.repeat:
-            if lemma in seen_lemma:
+        forced = profile.struggles_with(key) or verdicts.get(key) == "unknown"
+        if a.kind == Kind.WORD:
+            if not forced and (
+                a.suppressed or 0 < a.rarity <= profile.rank_threshold()
+            ):
                 continue
-            seen_lemma.add(lemma)
-        item = Annotation(
-            first_token=a.first_token,
-            last_token=a.last_token,
-            kind=a.kind,
-            note=a.note,
-            surface=a.surface,
-            rarity=a.rarity,
-            lemma=lemma,
-            domain=a.domain,
-            detail=a.detail,
-            forced=forced,
-        )
-        l0_kept.append(item)
-
-    occupied: set[int] = set()
-    for a in l0_kept:
-        occupied.update(range(a.first_token, a.last_token + 1))
-
-    l1_deduped: list[Annotation] = []
-    for a in l1_kept:
+        else:
+            if not profile.l1_enabled and not forced:
+                continue
+            if a.kind == Kind.CULTURE and a.domain in profile.domains and not forced:
+                continue
+        eligible.append(replace(a, forced=forced))
+    # Resolve overlap only when actually selecting; expressions precede ordinary word glosses.
+    eligible.sort(key=lambda a: (a.forced, a.kind != Kind.WORD, a.rarity), reverse=True)
+    chosen = []
+    occupied = set()
+    seen = set()
+    for a in eligible:
+        key = target(a)
         span = set(range(a.first_token, a.last_token + 1))
-        if span & occupied:
+        if (not profile.repeat and key in seen) or span & occupied:
             continue
-        l1_deduped.append(a)
-
-    merged = l0_kept + l1_deduped
-    forced = [a for a in merged if a.forced]
-    rest = [a for a in merged if not a.forced]
-    rest.sort(key=lambda a: a.rarity, reverse=True)
-    room = max(0, budget - len(forced))
-    chosen = forced + rest[:room]
-    chosen.sort(key=lambda a: a.first_token)
-    return chosen
+        if not a.forced and len(chosen) >= budget:
+            continue
+        chosen.append(a)
+        occupied |= span
+        seen.add(key)
+    return sorted(chosen, key=lambda a: a.first_token)

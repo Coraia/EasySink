@@ -2,37 +2,40 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from wise_reader.engine import Engine
+from wise_reader.jobs import Jobs
 from wise_reader.l1 import NullLLM, OpenAICompatLLM
 from wise_reader.lexicon import Lexicon
 from wise_reader.plugins import PluginContext, mount_plugins
 from wise_reader.profile import DOMAINS, EXAM_VOCAB
 from wise_reader.settings import ROOT, Settings
-from wise_reader.store import Store
+from wise_reader.store import Store, _now
 from wise_reader.vocab_test import VocabTester, question_payload
 
 WEB = ROOT / "web"
 
 
 class DocumentIn(BaseModel):
-    text: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=500000)
     title: str = ""
 
 
 class FeedbackIn(BaseModel):
-    lemma: str
-    verdict: str
+    lemma: str = ""
+    target: str = ""
+    verdict: Literal["known", "unknown", "reset"]
 
 
 class ProfilePatch(BaseModel):
-    vocab_size: int | None = None
-    density: float | None = None
+    vocab_size: int | None = Field(default=None, ge=500, le=50000)
+    density: float | None = Field(default=None, ge=0, le=15)
     domains: list[str] | None = None
     repeat: bool | None = None
     l1_enabled: bool | None = None
@@ -71,10 +74,13 @@ def create_app() -> FastAPI:
         l1_on = True
     engine = Engine(lexicon, store, llm=llm, l1_enabled=l1_on)
     tester = VocabTester(lexicon)
+    jobs = Jobs(store, engine)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        jobs.start()
         yield
+        jobs.close()
         lexicon.close()
         store.close()
 
@@ -82,6 +88,38 @@ def create_app() -> FastAPI:
     app.state.engine = engine
     app.state.store = store
     app.state.tester = tester
+    app.state.jobs = jobs
+
+    @app.get("/health")
+    def health():
+        return {"ok": True, "version": "0.2.0"}
+
+    @app.get("/api/jobs")
+    def job_list():
+        return [
+            jobs.payload(r)
+            for r in store.query("SELECT * FROM wr_job ORDER BY id DESC LIMIT 30")
+        ]
+
+    @app.post("/api/jobs/{job_id}/{action}")
+    def job_action(job_id: int, action: Literal["retry", "cancel"]):
+        return jobs.control(job_id, action)
+
+    @app.post("/api/documents/{doc_id}/analyze")
+    def analyze_document(doc_id: int):
+        return jobs.enqueue([doc_id], "annotations")
+
+    @app.post("/api/documents/{doc_id}/archive")
+    def archive_document(doc_id: int):
+        if not store.get_document(doc_id):
+            raise HTTPException(404, "not found")
+        store.execute("INSERT OR REPLACE INTO wr_archive VALUES(?,?)", (doc_id, _now()))
+        return {"ok": True}
+
+    @app.post("/api/documents/{doc_id}/restore")
+    def restore_document(doc_id: int):
+        store.execute("DELETE FROM wr_archive WHERE doc_id=?", (doc_id,))
+        return {"ok": True}
 
     @app.get("/api/profile")
     def get_profile():
@@ -117,20 +155,28 @@ def create_app() -> FastAPI:
             fields["repeat"] = body.repeat
         if body.l1_enabled is not None:
             fields["l1_enabled"] = body.l1_enabled
-        p = store.update_profile(**fields)
+        store.update_profile(**fields)
         return get_profile()
 
     @app.post("/api/documents")
     def create_document(body: DocumentIn):
+        if not body.text.strip():
+            raise HTTPException(400, "请输入英文原文")
         profile = store.get_profile()
-        return engine.ingest(body.title, body.text, profile)
+        doc = engine.ingest(body.title, body.text, profile, analyze=False)
+        if l1_on and profile.l1_enabled and len(body.text) <= 20000:
+            jobs.enqueue([doc["id"]], "annotations")
+        return doc
 
     @app.get("/api/documents")
     def list_documents():
-        return store.list_documents()
+        archived = {r["doc_id"] for r in store.query("SELECT doc_id FROM wr_archive")}
+        return [{**r, "archived": r["id"] in archived} for r in store.list_documents()]
 
     @app.get("/api/documents/{doc_id}")
-    def get_document(doc_id: int, density: float | None = None):
+    def get_document(
+        doc_id: int, density: float | None = Query(default=None, ge=0, le=15)
+    ):
         profile = store.get_profile()
         try:
             return engine.present(doc_id, profile, density=density)
@@ -153,9 +199,22 @@ def create_app() -> FastAPI:
 
     @app.post("/api/feedback")
     def feedback(body: FeedbackIn):
-        if body.verdict not in ("known", "unknown"):
-            raise HTTPException(400, "verdict")
-        store.set_verdict(body.lemma, body.verdict, "feedback")
+        target = (body.target or body.lemma).strip().lower()
+        if not target or len(target) > 500:
+            raise HTTPException(400, "无效的标注目标")
+        with store.transaction():
+            if ":" in target:
+                if body.verdict == "reset":
+                    store.execute("DELETE FROM wr_target WHERE target=?", (target,))
+                else:
+                    store.execute(
+                        "INSERT OR REPLACE INTO wr_target VALUES(?,?,?)",
+                        (target, body.verdict, _now()),
+                    )
+            elif body.verdict == "reset":
+                store.execute("DELETE FROM word_verdict WHERE lemma=?", (target,))
+            else:
+                store.set_verdict(target, body.verdict, "feedback")
         return {"ok": True}
 
     @app.post("/api/lookup")
@@ -179,7 +238,9 @@ def create_app() -> FastAPI:
         try:
             session = tester.answer(body.session, body.word, body.known)
         except KeyError:
-            raise HTTPException(404, "session")
+            raise HTTPException(404, "测试已过期，请重新开始")
+        except ValueError as e:
+            raise HTTPException(409, str(e))
         if session.finished and session.estimate:
             store.update_profile(vocab_size=session.estimate)
             for w in session.known_words:
@@ -188,7 +249,9 @@ def create_app() -> FastAPI:
 
     mount_plugins(
         app,
-        PluginContext(store=store, engine=engine, llm=llm, l1_on=l1_on, settings=settings),
+        PluginContext(
+            store=store, engine=engine, llm=llm, l1_on=l1_on, settings=settings
+        ),
     )
 
     @app.get("/")

@@ -1,47 +1,62 @@
-(() => {
-  const KEY = "wr.type";
-
-  function defaults() {
-    return { size: 16, height: 1.9, width: 760 };
-  }
-
-  function load() {
-    try { return { ...defaults(), ...JSON.parse(localStorage.getItem(KEY) || "{}") }; }
-    catch { return defaults(); }
-  }
-
-  function apply(cfg) {
-    document.documentElement.style.setProperty("--article-size", cfg.size + "px");
-    document.documentElement.style.setProperty("--article-height", String(cfg.height));
-    document.documentElement.style.setProperty("--page-width", cfg.width + "px");
-    localStorage.setItem(KEY, JSON.stringify(cfg));
-  }
-
-  apply(load());
-
-  WR.on("read", ({ below }) => {
-    if (!below) return;
-    const cfg = load();
-    below.insertAdjacentHTML("beforeend", `
-      <section class="card" id="wr-type">
-        <h3>排版</h3>
-        <label>字号 <span id="wr-sz">${cfg.size}</span></label>
-        <input id="wr-size" type="range" min="14" max="24" step="1" value="${cfg.size}" />
-        <label>行距 <span id="wr-lh">${cfg.height}</span></label>
-        <input id="wr-height" type="range" min="1.5" max="2.4" step="0.1" value="${cfg.height}" />
-        <label>栏宽 <span id="wr-wd">${cfg.width}</span></label>
-        <input id="wr-width" type="range" min="560" max="980" step="20" value="${cfg.width}" />
-      </section>`);
-    const bind = (id, key, labelId) => {
-      const el = document.getElementById(id);
-      el.oninput = () => {
-        cfg[key] = +el.value;
-        document.getElementById(labelId).textContent = el.value;
-        apply(cfg);
-      };
-    };
-    bind("wr-size", "size", "wr-sz");
-    bind("wr-height", "height", "wr-lh");
-    bind("wr-width", "width", "wr-wd");
-  });
-})();
+import { $, e, local } from "../core.js";
+export function install(ctx) {
+  let prefs = local.get("typography", { size: 22, line: 1.95, width: 760 });
+  const apply = () => {
+    document.documentElement.style.setProperty(
+      "--reading-size",
+      prefs.size + "px",
+    );
+    document.documentElement.style.setProperty("--reading-line", prefs.line);
+    document.documentElement.style.setProperty(
+      "--reading-width",
+      prefs.width + "px",
+    );
+  };
+  apply();
+  const read = ctx.hook("read", (r) =>
+    r.tool("typography", "排版", () =>
+      r.panel(
+        "typography",
+        "舒服地读",
+        `${[
+          ["size", "正文字号", 18, 30, 1, "px"],
+          ["line", "行间距", 1.5, 2.6, 0.05, ""],
+          ["width", "阅读栏宽", 560, 960, 20, "px"],
+        ]
+          .map(
+            ([id, label, min, max, step, unit]) =>
+              `<div class="gap"><label for="type-${id}">${label} <span id="type-value-${id}" class="meta">${prefs[id]}${unit}</span></label><input type="range" id="type-${id}" data-type="${id}" min="${min}" max="${max}" step="${step}" value="${prefs[id]}"></div>`,
+          )
+          .join(
+            "",
+          )}<p class="save-state gap" id="type-state">调整后自动保存到此浏览器</p><button id="reset-type">恢复默认排版</button>`,
+        (el, scope) => {
+          scope.on(el, "input", (ev) => {
+            const input = ev.target.closest("[data-type]");
+            if (!input) return;
+            const anchor = r.position();
+            prefs[input.dataset.type] = +input.value;
+            apply();
+            local.set("typography", prefs);
+            $("#type-value-" + input.dataset.type, el).textContent =
+              input.value;
+            r.restore(anchor);
+            $("#type-state", el).textContent = "已自动保存 ✓";
+          });
+          scope.on($("#reset-type", el), "click", () => {
+            prefs = { size: 22, line: 1.95, width: 760 };
+            apply();
+            local.set("typography", prefs);
+            r.closePanel();
+          });
+        },
+      ),
+    ),
+  );
+  return () => {
+    read();
+    ["--reading-size", "--reading-line", "--reading-width"].forEach((name) =>
+      document.documentElement.style.removeProperty(name),
+    );
+  };
+}

@@ -88,9 +88,11 @@ def _parse_json(text: str) -> dict[str, Any]:
 
 def validate(raw: dict[str, Any], doc: Document) -> tuple[list[Annotation], int, int]:
     """返回 (合法标注, 原始条数, 丢弃条数)。"""
+    if not isinstance(raw, dict):
+        raise ValueError("模型未返回 JSON 对象")
     items = raw.get("annotations") or []
     if not isinstance(items, list):
-        return [], 0, 0
+        raise ValueError("annotations 必须是数组")
     kept: list[Annotation] = []
     dropped = 0
     n = len(doc.tokens)
@@ -100,6 +102,7 @@ def validate(raw: dict[str, Any], doc: Document) -> tuple[list[Annotation], int,
             last = int(item["last_token"])
             kind = Kind(item["kind"])
             note = str(item.get("note") or "").strip()
+            difficulty = max(1, min(5, int(item.get("difficulty") or 3)))
         except (KeyError, TypeError, ValueError):
             dropped += 1
             continue
@@ -124,7 +127,6 @@ def validate(raw: dict[str, Any], doc: Document) -> tuple[list[Annotation], int,
         domain = item.get("domain")
         if domain not in ALLOWED_DOMAINS:
             domain = None
-        difficulty = int(item.get("difficulty") or 3)
         start, end = doc.slice(first, last)
         kept.append(
             Annotation(
@@ -156,9 +158,11 @@ def generate(
     try:
         stats["calls"] = 1
         raw = client.complete(PROMPT, numbered)
-    except Exception:
-        return [], stats
-    kept, raw_n, dropped = validate(raw, doc)
+        kept, raw_n, dropped = validate(raw, doc)
+    except Exception as e:
+        return [], {**stats, "failed": True, "error": type(e).__name__}
     stats["raw"] = raw_n
     stats["dropped"] = dropped
+    if raw_n and dropped == raw_n:
+        stats["failed"] = True
     return kept, stats

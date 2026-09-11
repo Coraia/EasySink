@@ -30,7 +30,10 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
         lines = ["lemma,verdict,source,updated_at"]
         for r in rows:
             lines.append(
-                ",".join(_csv_escape(str(r[k])) for k in ("lemma", "verdict", "source", "updated_at"))
+                ",".join(
+                    _csv_escape(str(r[k]))
+                    for k in ("lemma", "verdict", "source", "updated_at")
+                )
             )
         return PlainTextResponse("\n".join(lines) + "\n", media_type="text/csv")
 

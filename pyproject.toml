@@ -1,6 +1,6 @@
 [project]
 name = "wise-reader"
-version = "0.1.0"
+version = "0.2.0"
 description = "按个人词汇量与知识储备自动决定注释密度的沉浸式英文阅读引擎"
 requires-python = ">=3.12"
 dependencies = [
@@ -30,3 +30,9 @@ packages = ["src/wise_reader"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

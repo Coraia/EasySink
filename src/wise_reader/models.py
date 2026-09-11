@@ -26,6 +26,8 @@ class Annotation:
     domain: str | None = None
     detail: str = ""
     forced: bool = False
+    suppressed: bool = False
+    source: str = "dictionary"
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -45,6 +47,8 @@ class Annotation:
             domain=d.get("domain"),
             detail=d.get("detail") or "",
             forced=bool(d.get("forced")),
+            suppressed=bool(d.get("suppressed")),
+            source=d.get("source", "dictionary"),
         )
 
 

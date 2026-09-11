@@ -1,51 +1,50 @@
 # Wise Reader
 
-> 一个把英文原文加工成"对我个人恰好可读"的阅读工具。
->
-> **读之前就已经标好了，你的眼睛不需要离开正文。**
+面向中文读者的本地英文阅读 Web 原型。中文解释贴近正文，阅读偏好与笔记自动保存；15 个扩展可以逐个开关。
 
-当前阶段：**V1 Web 可运行**（L0 词汇层 + 阅读界面 + 词汇量测试）。L1 模型层已接好，无 API key 时自动跳过。
-
----
+当前版本：**Web 原型 02**。使用已有 FastAPI / SQLite / 本地词典，前端为可拆卸 ES modules。
 
 ## 启动
 
 ```bash
-# 词库已在 data/；若缺失：python3 scripts/fetch_lexicon.py
 uv sync --extra dev
-uv run uvicorn wise_reader.app:create_app --factory --host 127.0.0.1 --port 8766
+# 缺少词库时运行：python3 scripts/fetch_lexicon.py
+python3 scripts/web.py start
+python3 scripts/web.py status
 ```
 
-打开 http://127.0.0.1:8766/ ，粘贴英文即可读。
-
-命令行验收：
+打开 [本机阅读空间](http://127.0.0.1:8766/)。点击「体验一篇示例」可直接开始，不强制登录或测词汇量。
 
 ```bash
-uv run wise-reader lookup ubiquitous
-uv run wise-reader annotate tests/fixtures/b_opinion.txt --vocab 8000 --density 4
-uv run pytest -q
+python3 scripts/web.py restart
+python3 scripts/web.py stop
 ```
 
-配置 L1（可选）：复制 `.env.example` 为 `.env`，填 `WR_LLM_API_KEY` 并设 `WR_LLM_ENABLED=true`。
+日志：`.runtime/web.log`。关闭终端后服务继续运行；电脑重启后需要重新启动。
 
----
+## 能力与边界
+
+EPUB/TXT/Markdown 导入、章节目录、沉浸阅读、笔记、书签、续读、译文、导出、朗读、主题、排版、搜索、统计、快捷键、本机访问锁。
+
+AI 是可选的。未配置时使用词典和有限的语境/表达规则，可自行粘贴译文；配置后支持后台增强注释及分段整书翻译，提供进度、取消与断点重试。复制 `.env.example` 为 `.env`、配置供应商参数、设置 `WR_LLM_ENABLED=true` 后重启即可。账号仅锁住本机实例，没有云端账户或多用户隔离。
+
+EPUB 保留主要文本结构，图片使用替代文字，不保留完整原书版式和脚注交叉链接。辅助密度是软预算，明确要求保留的注释优先。
+
+## 验证
+
+```bash
+uv run --no-sync python -m pytest -q
+npm ci
+npx playwright install chromium
+npm run test:e2e
+```
+
+浏览器测试使用 18767 上的独立临时库，不污染个人内容。生产前端不需要 npm 构建；npm 仅用于格式化和浏览器验收。
 
 ## 文档
 
-| 文档 | 内容 |
-| --- | --- |
-| [01 · 可行性](docs/01-feasibility.md) | 小程序硬约束、载体决策 |
-| [02 · 产品方案](docs/02-prd.md) | 原则、范围、非目标 |
-| [03 · 开发文档](docs/03-design.md) | 三层架构与算法 |
-| [04 · 里程碑](docs/04-milestones.md) | 可判定验收标准 |
-| [05 · 本轮验收](docs/05-acceptance.md) | 2026-08-30 实现验收记录 |
+- [当前产品、模块清单、开发契约和体验路线](docs/07-web-prototype-v2.md)
+- [本轮评审依据](docs/06-web-review.md)
+- [历史可行性](docs/01-feasibility.md)、[历史 PRD](docs/02-prd.md)、[历史设计](docs/03-design.md)、[历史验收](docs/05-acceptance.md)
 
----
-
-## 五条不可妥协的原则
-
-1. 宁可漏标，不可滥标
-2. 注释密度有硬上限
-3. 同一个词一篇只标一次
-4. 注释不打断版面（行内灰字）
-5. 反馈只需一次点击
+数据保存在 `data/user.db`，词典与用户库分离。功能开关不删除数据。升级前备份在 `data/backups/`；代码基线为 `4a7da10`。不要向 Git 提交数据库、日志或 API key。

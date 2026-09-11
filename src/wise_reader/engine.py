@@ -4,32 +4,44 @@ from __future__ import annotations
 
 import hashlib
 
-from wise_reader import l0, l1, l2, render
+from wise_reader import content, l0, l1, l2, render, semantics
 from wise_reader.l1 import LLMClient, NullLLM
 from wise_reader.lexicon import Lexicon
-from wise_reader.models import Annotation, Fragment
+from wise_reader.models import Annotation
 from wise_reader.profile import ReaderProfile
 from wise_reader.store import Store
 from wise_reader.tokenize import Document, parse
 
 
 def text_hash(text: str) -> str:
-    normalized = "\n".join(line.rstrip() for line in text.replace("\r\n", "\n").split("\n"))
+    normalized = "\n".join(
+        line.rstrip() for line in text.replace("\r\n", "\n").split("\n")
+    )
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 class Engine:
-    def __init__(self, lexicon: Lexicon, store: Store, llm: LLMClient | None = None, l1_enabled: bool = False):
+    def __init__(
+        self,
+        lexicon: Lexicon,
+        store: Store,
+        llm: LLMClient | None = None,
+        l1_enabled: bool = False,
+    ):
         self.lexicon = lexicon
         self.store = store
         self.llm = llm or NullLLM()
         self.l1_enabled = l1_enabled
 
-    def ingest(self, title: str, text: str, profile: ReaderProfile) -> dict:
+    def ingest(
+        self, title: str, text: str, profile: ReaderProfile, analyze: bool = True
+    ) -> dict:
         doc = parse(text)
         h = text_hash(text)
         l0_cands = l0.candidates(doc, self.lexicon)
-        l1_cands, l1_stats = self._l1(doc, h)
+        l1_cands, l1_stats = (
+            self._l1(doc, h) if analyze else ([], {"pending": self.l1_enabled})
+        )
         doc_id = self.store.save_document(
             title=title or _title_from(text),
             text=text,
@@ -41,13 +53,19 @@ class Engine:
         return self.present(doc_id, profile, l1_stats=l1_stats)
 
     def _l1(self, doc: Document, h: str) -> tuple[list[Annotation], dict]:
+        h = text_hash(h + "|punctuated-v2|" + getattr(self.llm, "model", "offline"))
         cached = self.store.get_l1_cache(h)
         if cached is not None:
-            return cached, {"raw": len(cached), "dropped": 0, "calls": 0, "cache_hit": True}
+            return cached, {
+                "raw": len(cached),
+                "dropped": 0,
+                "calls": 0,
+                "cache_hit": True,
+            }
         enabled = self.l1_enabled and not isinstance(self.llm, NullLLM)
         kept, stats = l1.generate(doc, self.llm, enabled=enabled)
         stats = {**stats, "cache_hit": False}
-        if enabled:
+        if enabled and not stats.get("failed"):
             self.store.put_l1_cache(h, kept)
         return kept, stats
 
@@ -62,13 +80,73 @@ class Engine:
         if row is None:
             raise KeyError(doc_id)
         doc = parse(row["text"])
-        l0_cands = [Annotation.from_dict(d) for d in _loads(row["l0_json"])]
+        l0_cands = semantics.contextualize(doc, l0.candidates(doc, self.lexicon))
         l1_cands = [Annotation.from_dict(d) for d in _loads(row["l1_json"])]
-        shown = l2.filter_candidates(l0_cands, l1_cands, profile, len(doc.tokens), density)
+        l1_cands += semantics.phrases(doc)
+        verdicts = {
+            r["target"]: r["verdict"]
+            for r in self.store.query("SELECT * FROM wr_target")
+        }
+        shown = l2.filter_candidates(
+            l0_cands, l1_cands, profile, len(doc.tokens), density, verdicts
+        )
         frags = render.fragments(doc, shown)
         dens = profile.density if density is None else density
+        version, blocks = content.get_content(self.store, row)
+        rendered = []
+        for block in blocks:
+            pieces = []
+            pos = block["start"]
+            for a in shown:
+                start, end = doc.slice(a.first_token, a.last_token)
+                if start < block["start"] or end > block["end"]:
+                    continue
+                if start > pos:
+                    pieces.append({"type": "plain", "text": doc.text[pos:start]})
+                pieces.append(
+                    {
+                        "type": "anno",
+                        "text": doc.text[start:end],
+                        "note": a.note,
+                        "detail": a.detail,
+                        "lemma": a.lemma,
+                        "kind": a.kind.value,
+                        "target": semantics.target(a),
+                        "source": a.source
+                        if a.kind.value == "word" or a.source != "dictionary"
+                        else "model",
+                        "start": start - block["start"],
+                        "end": end - block["start"],
+                    }
+                )
+                pos = end
+            if pos < block["end"]:
+                pieces.append({"type": "plain", "text": doc.text[pos : block["end"]]})
+            rendered.append({**block, "fragments": pieces})
+        chapter = self.store.query_one(
+            "SELECT * FROM wr_chapter WHERE doc_id=?", (doc_id,)
+        )
+        siblings = (
+            self.store.query(
+                "SELECT doc_id,title,idx FROM wr_chapter WHERE book_id=? ORDER BY idx",
+                (chapter["book_id"],),
+            )
+            if chapter
+            else []
+        )
         return {
             "id": doc_id,
+            "text": row["text"],
+            "version": version,
+            "blocks": rendered,
+            "chapter": chapter,
+            "chapters": siblings,
+            "forced_count": sum(a.forced for a in shown),
+            "archived": bool(
+                self.store.query_one(
+                    "SELECT doc_id FROM wr_archive WHERE doc_id=?", (doc_id,)
+                )
+            ),
             "title": row["title"],
             "word_count": row["word_count"],
             "annotation_count": len(shown),
@@ -91,7 +169,9 @@ class Engine:
             "found": True,
             "phonetic": entry.phonetic,
             "note": entry.gloss(),
-            "detail": entry.translation.strip().splitlines()[0][:100] if entry.translation else "",
+            "detail": entry.translation.strip().splitlines()[0][:100]
+            if entry.translation
+            else "",
             "rank": entry.rank,
         }
 

@@ -18,7 +18,7 @@ from wise_reader.store import Store
 
 PLUGIN_ID = "auth"
 COOKIE = "wr_session"
-PUBLIC_EXACT = {"/", "/favicon.ico"}
+PUBLIC_EXACT = {"/", "/favicon.ico", "/health"}
 
 
 def _is_public(path: str, method: str) -> bool:
@@ -83,7 +83,7 @@ def _session_user(store: Store, token: str | None) -> dict | None:
         return None
     return store.query_one(
         "SELECT u.id, u.username FROM wr_session s"
-        " JOIN wr_user u ON u.id = s.user_id WHERE s.token = ?",
+        " JOIN wr_user u ON u.id = s.user_id WHERE s.token = ? AND julianday(s.created_at) > julianday('now','-7 days')",
         (token,),
     )
 
@@ -119,7 +119,9 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
             "INSERT INTO wr_session(token, user_id, created_at) VALUES (?,?,?)",
             (token, int(cur.lastrowid), _now()),
         )
-        response.set_cookie(COOKIE, token, httponly=True, samesite="lax")
+        response.set_cookie(
+            COOKIE, token, httponly=True, samesite="lax", max_age=604800
+        )
         return {"ok": True, "username": username}
 
     @router.post("/api/auth/login")
@@ -135,7 +137,9 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
             "INSERT INTO wr_session(token, user_id, created_at) VALUES (?,?,?)",
             (token, row["id"], _now()),
         )
-        response.set_cookie(COOKIE, token, httponly=True, samesite="lax")
+        response.set_cookie(
+            COOKIE, token, httponly=True, samesite="lax", max_age=604800
+        )
         return {"ok": True, "username": row["username"]}
 
     @router.post("/api/auth/logout")

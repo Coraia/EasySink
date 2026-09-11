@@ -19,6 +19,8 @@ class TestSession:
     lo: int = 1000
     hi: int = 30000
     round: int = 0
+    band: int = 5000
+    answered: dict[str, bool] = field(default_factory=dict)
     asked: list[str] = field(default_factory=list)
     known_words: list[str] = field(default_factory=list)
     current: list[Entry] = field(default_factory=list)
@@ -42,13 +44,24 @@ class VocabTester:
         session = self.sessions[session_id]
         if session.finished:
             return session
-        session.answers_this_round[word.lower()] = known
+        word = word.lower()
+        if word in session.answered:
+            return session
+        pending = [
+            e
+            for e in session.current
+            if e.word.lower() not in session.answers_this_round
+        ]
+        if not pending or pending[0].word.lower() != word:
+            raise ValueError("这不是当前题目，请刷新测试")
+        session.answered[word] = known
+        session.answers_this_round[word] = known
         if known:
             session.known_words.append(word.lower())
         if len(session.answers_this_round) < len(session.current):
             return session
         known_n = sum(1 for v in session.answers_this_round.values() if v)
-        band = session.current[0].rank if session.current else int(math.sqrt(session.lo * session.hi))
+        band = session.band
         if known_n >= 4:
             session.lo = max(session.lo, band)
         elif known_n <= 1:
@@ -79,6 +92,10 @@ class VocabTester:
             picked.append(e)
             if len(picked) >= PER_ROUND:
                 break
+        session.band = int(sum(e.frq for e in picked) / len(picked)) if picked else band
+        if not picked:
+            session.finished = True
+            session.estimate = band
         session.current = picked
         session.asked.extend(e.word.lower() for e in picked)
 
@@ -94,12 +111,16 @@ def _band_window(band: int) -> tuple[int, int]:
 
 
 def question_payload(session: TestSession) -> dict:
-    pending = [e for e in session.current if e.word.lower() not in session.answers_this_round]
+    pending = [
+        e for e in session.current if e.word.lower() not in session.answers_this_round
+    ]
     q = pending[0] if pending else None
     return {
         "session": session.id,
         "finished": session.finished,
         "estimate": session.estimate,
+        "range": [session.lo, session.hi],
+        "measure": "COCA 词频熟悉度范围；用于选择阅读辅助起点，不等于精确词汇量",
         "round": session.round + 1,
         "max_rounds": MAX_ROUNDS,
         "progress": len(session.asked) - len(pending) + (0 if q else len(pending)),

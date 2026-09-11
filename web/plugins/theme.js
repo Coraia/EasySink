@@ -1,36 +1,36 @@
-(() => {
-  const KEY = "wr.theme";
-  const THEMES = [
-    { id: "paper", label: "纸色" },
-    { id: "sepia", label: "羊皮纸" },
-    { id: "night", label: "夜间" },
-  ];
-
-  function apply(id) {
-    document.documentElement.dataset.theme = id === "paper" ? "" : id;
-    if (!id || id === "paper") delete document.documentElement.dataset.theme;
-    else document.documentElement.dataset.theme = id;
-    localStorage.setItem(KEY, id);
-  }
-
-  apply(localStorage.getItem(KEY) || "paper");
-
-  WR.on("profile", ({ root }) => {
-    if (!root) return;
-    root.insertAdjacentHTML("beforeend", `
-      <section class="card">
-        <h3>主题</h3>
-        <div class="chips" id="wr-themes">
-          ${THEMES.map((t) => `<button type="button" class="chip" data-th="${t.id}">${t.label}</button>`).join("")}
-        </div>
-      </section>`);
-    const cur = localStorage.getItem(KEY) || "paper";
-    root.querySelectorAll("[data-th]").forEach((el) => {
-      el.classList.toggle("on", el.dataset.th === cur);
-      el.onclick = () => {
-        apply(el.dataset.th);
-        root.querySelectorAll("[data-th]").forEach((x) => x.classList.toggle("on", x === el));
-      };
+import { $, e, local } from "../core.js";
+export function install(ctx) {
+  const apply = (theme) => (document.documentElement.dataset.theme = theme);
+  apply(local.get("theme", "paper"));
+  const profile = ctx.hook("profile", ({ scope }) => {
+    const section = document.createElement("section");
+    section.className = "card";
+    section.innerHTML = `<h2>让眼睛舒服一点</h2><div class="chips" id="theme-choices">${[
+      ["paper", "自然纸色"],
+      ["sepia", "暖色书页"],
+      ["night", "夜间阅读"],
+    ]
+      .map(
+        ([v, label]) =>
+          `<button class="chip" data-theme-choice="${v}" aria-pressed="${document.documentElement.dataset.theme === v}">${label}</button>`,
+      )
+      .join(
+        "",
+      )}</div><div class="save-state" id="theme-state">在此浏览器自动保存</div>`;
+    $("#profile-extensions").append(section);
+    scope.on(section, "click", (ev) => {
+      const b = ev.target.closest("[data-theme-choice]");
+      if (!b) return;
+      apply(b.dataset.themeChoice);
+      local.set("theme", b.dataset.themeChoice);
+      section
+        .querySelectorAll("button")
+        .forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      $("#theme-state").textContent = "已自动保存 ✓";
     });
   });
-})();
+  return () => {
+    profile();
+    apply("paper");
+  };
+}

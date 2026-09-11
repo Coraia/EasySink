@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
+from wise_reader.content import Anchor, save_anchor, with_anchor
 from wise_reader.plugins.runtime import PluginContext, require_plugin
 from wise_reader.store import Store
 
@@ -12,6 +13,7 @@ PLUGIN_ID = "progress"
 
 
 class ProgressIn(BaseModel):
+    anchor: Anchor | None = None
     scroll_ratio: float = 0.0
 
 
@@ -36,16 +38,24 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
 
     @router.get("/api/progress")
     def latest():
-        return ctx.store.query(
+        rows = ctx.store.query(
             "SELECT p.*, d.title, d.word_count FROM wr_progress p"
             " JOIN document d ON d.id = p.doc_id"
             " ORDER BY p.updated_at DESC LIMIT 8"
         )
 
+        return [with_anchor(ctx.store, "progress", r) for r in rows]
+
     @router.get("/api/documents/{doc_id}/progress")
     def get_one(doc_id: int):
-        row = ctx.store.query_one("SELECT * FROM wr_progress WHERE doc_id = ?", (doc_id,))
-        return row or {"doc_id": doc_id, "scroll_ratio": 0, "updated_at": None}
+        row = ctx.store.query_one(
+            "SELECT * FROM wr_progress WHERE doc_id = ?", (doc_id,)
+        )
+        return with_anchor(ctx.store, "progress", row) or {
+            "doc_id": doc_id,
+            "scroll_ratio": 0,
+            "updated_at": None,
+        }
 
     @router.put("/api/documents/{doc_id}/progress")
     def put_one(doc_id: int, body: ProgressIn):
@@ -58,6 +68,7 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
             " updated_at=excluded.updated_at",
             (doc_id, ratio, _now()),
         )
+        save_anchor(ctx.store, "progress", doc_id, doc_id, body.anchor)
         return {"ok": True, "scroll_ratio": ratio}
 
     app.include_router(router)

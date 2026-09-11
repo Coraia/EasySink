@@ -50,6 +50,8 @@ def plugin_payload(store: Store) -> list[dict]:
                 "enabled": bool(enabled),
                 "default_on": spec.default_on,
                 "backend": spec.backend is not None,
+                "requires": ["content-v2", "route-scope"],
+                "data_policy": "关闭仅隐藏入口，保留数据",
             }
         )
     return out

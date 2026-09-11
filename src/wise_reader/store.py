@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
+from threading import RLock
 
 from wise_reader.models import Annotation
 from wise_reader.profile import ReaderProfile
@@ -19,12 +22,17 @@ def _now() -> str:
 
 class Store:
     def __init__(self, path: Path | None = None):
+        self._lock = RLock()
+        self._depth = 0
         self.path = path or DATA / "user.db"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._con = sqlite3.connect(str(self.path), check_same_thread=False)
         self._con.row_factory = sqlite3.Row
         self._con.execute("PRAGMA journal_mode=WAL")
         self._init()
+        from wise_reader.content import migrate
+
+        migrate(self)
 
     def _init(self) -> None:
         self._con.executescript(
@@ -81,7 +89,7 @@ class Store:
             );
             """
         )
-        self._con.commit()
+        self._commit()
 
     def get_profile(self) -> ReaderProfile:
         row = self._con.execute("SELECT * FROM profile WHERE id = 1").fetchone()
@@ -124,12 +132,16 @@ class Store:
             sets.append(f"{k} = ?")
             vals.append(v)
         if sets:
-            self._con.execute(f"UPDATE profile SET {', '.join(sets)} WHERE id = 1", vals)
-            self._con.commit()
+            self._con.execute(
+                f"UPDATE profile SET {', '.join(sets)} WHERE id = 1", vals
+            )
+            self._commit()
         return self.get_profile()
 
     def set_verdict(self, lemma: str, verdict: str, source: str = "feedback") -> None:
-        lemma = lemma.lower()
+        lemma = lemma.lower().strip()
+        if not lemma:
+            raise ValueError("empty lemma")
         if verdict not in ("known", "unknown"):
             raise ValueError(verdict)
         self._con.execute(
@@ -139,7 +151,7 @@ class Store:
             " updated_at=excluded.updated_at, source=excluded.source",
             (lemma, verdict, _now(), source),
         )
-        self._con.commit()
+        self._commit()
 
     def save_document(
         self,
@@ -163,11 +175,13 @@ class Store:
                 _now(),
             ),
         )
-        self._con.commit()
+        self._commit()
         return int(cur.lastrowid)
 
     def get_document(self, doc_id: int) -> dict | None:
-        row = self._con.execute("SELECT * FROM document WHERE id = ?", (doc_id,)).fetchone()
+        row = self._con.execute(
+            "SELECT * FROM document WHERE id = ?", (doc_id,)
+        ).fetchone()
         if row is None:
             return None
         return dict(row)
@@ -195,7 +209,7 @@ class Store:
             ).fetchone()
             if exists:
                 self._con.execute(f"DELETE FROM {table} WHERE doc_id = ?", (doc_id,))
-        self._con.commit()
+        self._commit()
 
     def get_l1_cache(self, text_hash: str) -> list[Annotation] | None:
         row = self._con.execute(
@@ -206,7 +220,9 @@ class Store:
             return None
         return [Annotation.from_dict(d) for d in json.loads(row["payload"])]
 
-    def put_l1_cache(self, text_hash: str, annos: list[Annotation], model: str = "") -> None:
+    def put_l1_cache(
+        self, text_hash: str, annos: list[Annotation], model: str = ""
+    ) -> None:
         self._con.execute(
             "INSERT OR REPLACE INTO annotation_cache(text_hash, layer, payload, model, created_at)"
             " VALUES (?,?,?,?,?)",
@@ -218,7 +234,7 @@ class Store:
                 _now(),
             ),
         )
-        self._con.commit()
+        self._commit()
 
     def add_reading_log(
         self,
@@ -232,7 +248,7 @@ class Store:
             " VALUES (?,?,?,?,?)",
             (doc_id, _now(), annotation_count, manual_lookups, felt_density),
         )
-        self._con.commit()
+        self._commit()
 
     def list_reading_logs(self) -> list[dict]:
         rows = self._con.execute(
@@ -248,12 +264,12 @@ class Store:
 
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         cur = self._con.execute(sql, params)
-        self._con.commit()
+        self._commit()
         return cur
 
     def executescript(self, sql: str) -> None:
         self._con.executescript(sql)
-        self._con.commit()
+        self._commit()
 
     def query(self, sql: str, params: tuple = ()) -> list[dict]:
         return [dict(r) for r in self._con.execute(sql, params).fetchall()]
@@ -263,7 +279,9 @@ class Store:
         return dict(row) if row else None
 
     def is_plugin_enabled(self, plugin_id: str, default: bool = True) -> bool:
-        row = self.query_one("SELECT enabled FROM plugin_flag WHERE id = ?", (plugin_id,))
+        row = self.query_one(
+            "SELECT enabled FROM plugin_flag WHERE id = ?", (plugin_id,)
+        )
         if row is None:
             return default
         return bool(row["enabled"])
@@ -276,7 +294,44 @@ class Store:
         )
 
     def plugin_flags(self) -> dict[str, bool]:
-        return {r["id"]: bool(r["enabled"]) for r in self.query("SELECT id, enabled FROM plugin_flag")}
+        return {
+            r["id"]: bool(r["enabled"])
+            for r in self.query("SELECT id, enabled FROM plugin_flag")
+        }
+
+    def _commit(self):
+        if not self._depth:
+            self._con.commit()
+
+    @contextmanager
+    def transaction(self):
+        with self._lock:
+            self._depth += 1
+            try:
+                yield
+                if self._depth == 1:
+                    self._con.commit()
+            except BaseException:
+                if self._depth == 1:
+                    self._con.rollback()
+                raise
+            finally:
+                self._depth -= 1
 
     def close(self) -> None:
         self._con.close()
+
+
+# A single serialized connection, including complete read/modify/write transactions.
+def _serialized(fn):
+    @wraps(fn)
+    def call(self, *args, **kwargs):
+        with self._lock:
+            return fn(self, *args, **kwargs)
+
+    return call
+
+
+for _name in tuple(vars(Store)):
+    if not _name.startswith("_") and _name != "transaction":
+        setattr(Store, _name, _serialized(getattr(Store, _name)))

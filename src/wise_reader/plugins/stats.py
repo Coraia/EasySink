@@ -48,7 +48,9 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
 
     @router.get("/api/stats")
     def summary():
-        total = ctx.store.query_one("SELECT COALESCE(SUM(seconds),0) AS s FROM wr_session_time")
+        total = ctx.store.query_one(
+            "SELECT COALESCE(SUM(seconds),0) AS s FROM wr_session_time"
+        )
         docs = ctx.store.query_one("SELECT COUNT(*) AS n FROM document")
         unknown = ctx.store.query_one(
             "SELECT COUNT(*) AS n FROM word_verdict WHERE verdict = 'unknown'"

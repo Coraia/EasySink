@@ -41,18 +41,17 @@ def candidates(doc: Document, lexicon: Lexicon) -> list[Annotation]:
     """产出全部词汇候选。不含密度截断、不含读者阈值。"""
     out: list[Annotation] = []
     for token in doc.tokens:
-        if _is_acronym(token):
-            continue
+        suppressed = _is_acronym(token)
 
         entry = lexicon.lookup(token.key)
         lemma = lexicon.lemma(token.key)
 
         if token.key in _FUNCTION or lemma in _FUNCTION:
-            continue
+            suppressed = True
 
         capitalized = token.text[:1].isupper()
         if capitalized and not _is_sentence_start(doc, token):
-            continue
+            suppressed = True
 
         if entry is None or not entry.has_chinese:
             continue
@@ -78,8 +77,11 @@ def candidates(doc: Document, lexicon: Lexicon) -> list[Annotation]:
                 note=gloss,
                 surface=doc.text[start:end],
                 rarity=rarity,
+                suppressed=suppressed,
                 lemma=lemma,
-                detail=entry.translation.strip().splitlines()[0][:100] if entry.translation else "",
+                detail=entry.translation.strip().splitlines()[0][:100]
+                if entry.translation
+                else "",
             )
         )
     return out

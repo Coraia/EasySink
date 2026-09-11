@@ -1,30 +1,34 @@
-/* 插件宿主：按开关加载 web/plugins/<id>.js，再启动路由。 */
-(async function bootPlugins() {
-  function loadScript(src) {
-    return new Promise((resolve) => {
-      const s = document.createElement("script");
-      s.src = src;
-      s.onload = () => resolve();
-      s.onerror = () => resolve();
-      document.body.appendChild(s);
-    });
+import { $$, toast } from "./core.js";
+export class PluginHost {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.active = new Map();
+    this.catalog = [];
   }
-  try {
-    const data = await WR.api("/api/plugins");
-    WR.flags = {};
-    for (const p of data.plugins) WR.flags[p.id] = p.enabled;
-    for (const p of data.plugins) {
-      if (!p.enabled) continue;
-      await loadScript(`/static/plugins/${p.id}.js`);
-    }
-    const nav = document.getElementById("plugin-nav");
-    if (nav) {
-      nav.innerHTML = WR.hooks.nav
-        .map((n) => `<a href="${WR.escapeHtml(n.href)}">${WR.escapeHtml(n.label)}</a>`)
-        .join("");
-    }
-  } catch (err) {
-    console.warn("plugin boot", err);
+  enabled(id) {
+    return (
+      this.catalog.some((p) => p.id === id && p.enabled) && this.active.has(id)
+    );
   }
-  WR.route();
-})();
+  async sync(catalog) {
+    this.catalog = catalog;
+    for (const [id, dispose] of this.active)
+      if (!catalog.some((p) => p.id === id && p.enabled)) {
+        dispose?.();
+        this.active.delete(id);
+      }
+    for (const p of catalog.filter((p) => p.enabled))
+      if (!this.active.has(p.id)) {
+        try {
+          const module = await import(`/static/plugins/${p.id}.js`);
+          this.active.set(p.id, await module.install(this.ctx));
+        } catch (error) {
+          console.error(`Plugin ${p.id}`, error);
+          toast(`${p.name} 加载失败，其余功能仍可使用`);
+        }
+      }
+    $$("[data-feature-nav]").forEach(
+      (el) => (el.hidden = !this.enabled(el.dataset.featureNav)),
+    );
+  }
+}

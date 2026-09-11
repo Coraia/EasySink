@@ -1,41 +1,83 @@
-(() => {
-  WR.on("home", async ({ root }) => {
-    if (!root) return;
-    try {
-      const rows = await WR.api("/api/progress");
-      if (!rows.length) return;
-      const last = rows[0];
-      root.insertAdjacentHTML("afterbegin", `
-        <section class="card">
-          <h3>继续阅读</h3>
-          <p><a href="#/read/${last.doc_id}">${WR.escapeHtml(last.title)}</a>
-            <span class="meta">约 ${Math.round(last.scroll_ratio * 100)}%</span></p>
-        </section>`);
-    } catch (e) { /* ignore */ }
+import { $, api, local, e, date } from "../core.js";
+export function install(ctx) {
+  const home = ctx.hook("home", async ({ scope }) => {
+    const list = await api("/progress", { signal: scope.signal });
+    if (scope.signal.aborted || !list.length) return;
+    const p = list[0];
+    $("#home-continue").innerHTML =
+      `<div class="card row between"><div><div class="eyebrow" style="margin-bottom:5px">接着上次的好奇心</div><h3 style="margin:0">${e(p.title)}</h3><span class="meta">${Math.round(p.scroll_ratio * 100)}% · ${date(p.updated_at)}</span></div><button id="continue-reading" class="primary">继续阅读 →</button></div>`;
+    scope.on($("#continue-reading"), "click", () =>
+      ctx.jump(p.doc_id, p.anchor || { ratio: p.scroll_ratio }),
+    );
   });
-
-  WR.on("read", async ({ id }) => {
-    const q = new URLSearchParams((location.hash.split("?")[1] || ""));
-    const pin = q.has("at") ? Math.min(1, Math.max(0, +q.get("at") || 0)) : null;
-    try {
-      const ratio = pin != null ? pin : (await WR.api(`/api/documents/${id}/progress`)).scroll_ratio;
-      if (ratio > 0.02) WR.restoreScroll(ratio);
-    } catch (e) { /* ignore */ }
-    let t;
+  const read = ctx.hook("read", async (reader) => {
+    const id = reader.doc.id,
+      scope = reader.scope;
+    let timer = null,
+      last = null,
+      queue = Promise.resolve();
     const save = () => {
-      clearTimeout(t);
-      t = setTimeout(() => {
-        const el = document.scrollingElement || document.documentElement;
-        const max = el.scrollHeight - window.innerHeight;
-        const ratio = max > 0 ? el.scrollTop / max : 0;
-        WR.api(`/api/documents/${id}/progress`, {
-          method: "PUT",
-          body: { scroll_ratio: ratio },
-        }).catch(() => {});
-      }, 400);
+      if (!last) return queue;
+      const anchor = last;
+      last = null;
+      queue = queue
+        .catch(() => {})
+        .then(() =>
+          api(`/documents/${id}/progress`, {
+            method: "PUT",
+            body: { scroll_ratio: anchor.ratio, anchor },
+            keepalive: true,
+          }),
+        )
+        .then(() => {
+          local.remove(`position-pending:${id}`);
+          if (!scope.signal.aborted)
+            $("#reader-save").textContent = "阅读位置已自动保存";
+        })
+        .catch(() => {
+          local.set(`position-pending:${id}`, anchor);
+          if (!scope.signal.aborted)
+            $("#reader-save").textContent = "位置暂存于浏览器，连接恢复后重试";
+        });
+      return queue;
     };
-    if (WR._progressAc) WR._progressAc.abort();
-    WR._progressAc = new AbortController();
-    window.addEventListener("scroll", save, { passive: true, signal: WR._progressAc.signal });
+    const saved = await api(`/documents/${id}/progress`, {
+      signal: scope.signal,
+    });
+    if (scope.signal.aborted) return;
+    const pending = local.get(`position-pending:${id}`);
+    if (!local.get(`jump:${id}`))
+      reader.restore(pending || saved.anchor || { ratio: saved.scroll_ratio });
+    scope.on(
+      window,
+      "scroll",
+      () => {
+        if (reader.restoring || document.hidden) return;
+        last = reader.position();
+        clearTimeout(timer);
+        timer = setTimeout(save, 650);
+      },
+      { passive: true },
+    );
+    scope.on(window, "pagehide", () => {
+      if (last) local.set(`position-pending:${id}`, last);
+      save();
+    });
+    scope.on(window, "online", () => {
+      last = local.get(`position-pending:${id}`);
+      save();
+    });
+    scope.cleanup(() => {
+      clearTimeout(timer);
+      save();
+    });
+    if (pending) {
+      last = pending;
+      save();
+    }
   });
-})();
+  return () => {
+    home();
+    read();
+  };
+}

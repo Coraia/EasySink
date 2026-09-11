@@ -14,12 +14,32 @@ class PluginSpec:
 
 # 顺序即实验室展示顺序。backend 模块只负责路由/表；前端一律 web/plugins/<id>.js
 PLUGINS: tuple[PluginSpec, ...] = (
-    PluginSpec("auth", "本地登录", "用户名密码锁住本机实例；未建账号前保持开放。", backend="auth"),
-    PluginSpec("library", "书架", "把文章收成书，按章节打开。", backend="library"),
-    PluginSpec("importer", "导入 EPUB/TXT", "上传 EPUB、TXT、Markdown，拆章入库。", backend="importer"),
+    PluginSpec(
+        "auth",
+        "本机访问锁",
+        "用户名密码锁住本机实例；未建账号前保持开放。",
+        backend="auth",
+    ),
+    PluginSpec(
+        "library",
+        "书架",
+        "按书籍与章节组织内容。关闭后仍可阅读全部文章。",
+        backend="library",
+    ),
+    PluginSpec(
+        "importer",
+        "导入 EPUB/TXT",
+        "上传 EPUB、TXT、Markdown，拆章入库。",
+        backend="importer",
+    ),
     PluginSpec("immersive", "沉浸阅读", "隐藏顶栏，只留正文。"),
     PluginSpec("notes", "笔记", "划词记下想法，集中在笔记页查看。", backend="notes"),
-    PluginSpec("translate", "翻译书", "对照译文：可粘贴或在配置了 LLM 时生成。", backend="translate"),
+    PluginSpec(
+        "translate",
+        "翻译书",
+        "对照译文：可粘贴或在配置了 LLM 时生成。",
+        backend="translate",
+    ),
     PluginSpec("bookmarks", "书签", "给当前滚动位置打书签。", backend="bookmarks"),
     PluginSpec("progress", "续读", "记住读到哪，首页可继续。", backend="progress"),
     PluginSpec("export", "导出", "导出生词表和笔记。", backend="export"),
