@@ -139,6 +139,7 @@ def validate(raw: dict[str, Any], doc: Document) -> tuple[list[Annotation], int,
                 lemma="",
                 domain=domain,
                 detail=str(item.get("detail") or "")[:100],
+                source="model",
             )
         )
     return kept, len(items), dropped

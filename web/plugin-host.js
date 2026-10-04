@@ -20,7 +20,9 @@ export class PluginHost {
     for (const p of catalog.filter((p) => p.enabled))
       if (!this.active.has(p.id)) {
         try {
-          const module = await import(`/static/plugins/${p.id}.js`);
+          const module = await import(
+            new URL(`./plugins/${p.id}.js`, import.meta.url).href
+          );
           this.active.set(p.id, await module.install(this.ctx));
         } catch (error) {
           console.error(`Plugin ${p.id}`, error);

@@ -21,3 +21,6 @@ data/*.db-*
 node_modules/
 test-results/
 playwright-report/
+
+data/ai-settings.*
+data/speech-cache/

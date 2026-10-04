@@ -1581,3 +1581,48 @@ dialog::backdrop {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+/* Bookmarks belong to source blocks and never enter selected or spoken text. */
+#article [data-block] {
+  position: relative;
+}
+.bookmark-marker {
+  position: absolute;
+  left: -34px;
+  top: 0.3em;
+  width: 26px;
+  height: 28px;
+  padding: 3px;
+  color: var(--accent, #2f5949);
+  border: 0;
+  background: transparent;
+}
+.bookmark-marker svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+.bookmark-marker:hover {
+  background: var(--soft);
+}
+.ai-grid {
+  display: grid;
+  gap: 24px;
+}
+.ai-grid input[type="url"],
+.ai-grid input[type="password"],
+.ai-grid input[type="text"] {
+  width: 100%;
+}
+.ai-grid .setting-row {
+  margin-bottom: 12px;
+}
+.ai-grid audio {
+  width: 100%;
+  margin-top: 18px;
+}
+@media (max-width: 600px) {
+  .bookmark-marker {
+    left: -24px;
+    width: 22px;
+  }
+}

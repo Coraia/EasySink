@@ -149,6 +149,8 @@ class Jobs:
                     "translate"
                 ):
                     raise ValueError("翻译插件已关闭，开启后可重试")
+                if not self.engine.l1_enabled:
+                    raise ValueError("AI 已关闭，重新启用后可重试")
                 doc_id, text = units[index]
                 if row["kind"] == "translate":
                     output = self.engine.llm.chat(

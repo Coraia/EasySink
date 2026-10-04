@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from wise_reader.ai import AIConfig, register_ai
 from wise_reader.engine import Engine
 from wise_reader.jobs import Jobs
 from wise_reader.l1 import NullLLM, OpenAICompatLLM
@@ -60,6 +62,12 @@ class FinishIn(BaseModel):
 
 
 def create_app() -> FastAPI:
+    assets = hashlib.sha256()
+    for path in sorted(WEB.rglob("*")):
+        if path.is_file() and path.suffix in (".js", ".css", ".html"):
+            assets.update(str(path.relative_to(WEB)).encode())
+            assets.update(path.read_bytes())
+    asset_prefix = "/assets/" + assets.hexdigest()[:16]
     settings = Settings()
     lexicon = Lexicon()
     store = Store(Path(settings.wr_user_db) if settings.wr_user_db else None)
@@ -73,6 +81,7 @@ def create_app() -> FastAPI:
         )
         l1_on = True
     engine = Engine(lexicon, store, llm=llm, l1_enabled=l1_on)
+    ai = AIConfig(settings, engine, store)
     tester = VocabTester(lexicon)
     jobs = Jobs(store, engine)
 
@@ -89,6 +98,8 @@ def create_app() -> FastAPI:
     app.state.store = store
     app.state.tester = tester
     app.state.jobs = jobs
+    app.state.ai = ai
+    register_ai(app, ai)
 
     @app.get("/health")
     def health():
@@ -135,7 +146,7 @@ def create_app() -> FastAPI:
             "verdict_count": len(p.known) + len(p.unknown),
             "domain_catalog": DOMAINS,
             "exam_vocab": EXAM_VOCAB,
-            "l1_available": l1_on,
+            "l1_available": engine.l1_enabled,
         }
 
     @app.patch("/api/profile")
@@ -164,7 +175,7 @@ def create_app() -> FastAPI:
             raise HTTPException(400, "请输入英文原文")
         profile = store.get_profile()
         doc = engine.ingest(body.title, body.text, profile, analyze=False)
-        if l1_on and profile.l1_enabled and len(body.text) <= 20000:
+        if engine.l1_enabled and profile.l1_enabled and len(body.text) <= 20000:
             jobs.enqueue([doc["id"]], "annotations")
         return doc
 
@@ -203,6 +214,15 @@ def create_app() -> FastAPI:
         if not target or len(target) > 500:
             raise HTTPException(400, "无效的标注目标")
         with store.transaction():
+            previous = (
+                store.query_one(
+                    "SELECT verdict FROM wr_target WHERE target=?", (target,)
+                )
+                if ":" in target
+                else store.query_one(
+                    "SELECT verdict FROM word_verdict WHERE lemma=?", (target,)
+                )
+            )
             if ":" in target:
                 if body.verdict == "reset":
                     store.execute("DELETE FROM wr_target WHERE target=?", (target,))
@@ -215,7 +235,7 @@ def create_app() -> FastAPI:
                 store.execute("DELETE FROM word_verdict WHERE lemma=?", (target,))
             else:
                 store.set_verdict(target, body.verdict, "feedback")
-        return {"ok": True}
+        return {"ok": True, "previous": previous["verdict"] if previous else "reset"}
 
     @app.post("/api/lookup")
     def lookup(body: LookupIn):
@@ -247,18 +267,25 @@ def create_app() -> FastAPI:
                 store.set_verdict(w, "known", "vocab_test")
         return question_payload(session)
 
-    mount_plugins(
-        app,
-        PluginContext(
-            store=store, engine=engine, llm=llm, l1_on=l1_on, settings=settings
-        ),
+    ctx = PluginContext(
+        store=store,
+        engine=engine,
+        llm=engine.llm,
+        l1_on=engine.l1_enabled,
+        settings=settings,
     )
+    ai.ctx = ctx
+    mount_plugins(app, ctx)
 
     @app.get("/")
     def index():
-        return FileResponse(WEB / "index.html")
+        return HTMLResponse(
+            (WEB / "index.html").read_text().replace("/static/", asset_prefix + "/"),
+            headers={"Cache-Control": "no-store"},
+        )
 
     if WEB.exists():
+        app.mount(asset_prefix, StaticFiles(directory=WEB), name="versioned-assets")
         app.mount("/static", StaticFiles(directory=WEB), name="static")
 
     return app

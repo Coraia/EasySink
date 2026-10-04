@@ -53,7 +53,15 @@ class Engine:
         return self.present(doc_id, profile, l1_stats=l1_stats)
 
     def _l1(self, doc: Document, h: str) -> tuple[list[Annotation], dict]:
-        h = text_hash(h + "|punctuated-v2|" + getattr(self.llm, "model", "offline"))
+        client = self.llm
+        enabled = self.l1_enabled and not isinstance(client, NullLLM)
+        h = text_hash(
+            h
+            + "|punctuated-v2|"
+            + getattr(client, "base_url", "")
+            + "|"
+            + getattr(client, "model", "offline")
+        )
         cached = self.store.get_l1_cache(h)
         if cached is not None:
             return cached, {
@@ -62,8 +70,7 @@ class Engine:
                 "calls": 0,
                 "cache_hit": True,
             }
-        enabled = self.l1_enabled and not isinstance(self.llm, NullLLM)
-        kept, stats = l1.generate(doc, self.llm, enabled=enabled)
+        kept, stats = l1.generate(doc, client, enabled=enabled)
         stats = {**stats, "cache_hit": False}
         if enabled and not stats.get("failed"):
             self.store.put_l1_cache(h, kept)
@@ -142,6 +149,10 @@ class Engine:
             "chapter": chapter,
             "chapters": siblings,
             "forced_count": sum(a.forced for a in shown),
+            "automatic_count": sum(not a.forced for a in shown),
+            "automatic_budget": max(1, round(len(doc.tokens) * dens / 100))
+            if dens > 0
+            else 0,
             "archived": bool(
                 self.store.query_one(
                     "SELECT doc_id FROM wr_archive WHERE doc_id=?", (doc_id,)

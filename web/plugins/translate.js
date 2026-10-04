@@ -18,7 +18,7 @@ export function install(ctx) {
           let version = 0,
             chain = Promise.resolve(),
             timer;
-          el.innerHTML = `<div class="notice">${ctx.profile.l1_available ? "可生成本章译文，任务将在后台执行。" : "AI 尚未配置。你仍可粘贴译文，自动保存并对照阅读。"}</div><button id="generate-translation" ${ctx.profile.l1_available ? "" : "disabled"}>生成本章译文</button>${reader.doc.chapter && ctx.profile.l1_available ? '<button id="translate-whole" class="gap">翻译整本书</button>' : ""}<label for="translation-body" class="gap">译文 · 可编辑</label><textarea id="translation-body" rows="15" placeholder="粘贴中文译文…">${e(draft)}</textarea><p class="save-state" id="translation-state" role="status">${draft ? "已载入译文" : "输入后自动保存"}</p><a class="text-button" href="#/jobs">查看后台任务 →</a>`;
+          el.innerHTML = `<div class="notice">${ctx.profile.l1_available ? "可生成本章译文，任务将在后台执行。" : 'AI 尚未配置。<a href="#/ai">配置文本 AI →</a> 你仍可粘贴译文，自动保存并对照阅读。'}</div><button id="generate-translation" ${ctx.profile.l1_available ? "" : "disabled"}>生成本章译文</button>${reader.doc.chapter && ctx.profile.l1_available ? '<button id="translate-whole" class="gap">翻译整本书</button>' : ""}<label for="translation-body" class="gap">译文 · 可编辑</label><textarea id="translation-body" rows="15" placeholder="粘贴中文译文…">${e(draft)}</textarea><p class="save-state" id="translation-state" role="status">${draft ? "已载入译文" : "输入后自动保存"}</p><a class="text-button" href="#/jobs">查看后台任务 →</a>`;
           const save = () => {
             if (!dirty) return chain;
             clearTimeout(timer);

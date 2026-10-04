@@ -4,11 +4,11 @@
 import argparse
 import json
 import os
-from pathlib import Path
 import signal
 import subprocess
 import time
 import urllib.request
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / ".runtime"

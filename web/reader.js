@@ -183,7 +183,7 @@ export class Reader {
     el.innerHTML = `<div class="panel-header"><h2>${e(title)}</h2><button class="icon-button" aria-label="关闭侧栏">×</button></div><div class="panel-content">${html}</div>`;
     el.hidden = false;
     $(".reader-layout").classList.add("has-panel");
-    $$("[data-tool]").forEach((b) =>
+    $$("[data-tool]:not([data-toggle])").forEach((b) =>
       b.setAttribute("aria-pressed", String(b.dataset.tool === id)),
     );
     scope.on($(".panel-header button", el), "click", () => this.closePanel());
@@ -202,7 +202,9 @@ export class Reader {
     this.panelId = null;
     $("#tool-panel").hidden = true;
     $(".reader-layout").classList.remove("has-panel");
-    $$("[data-tool]").forEach((b) => b.setAttribute("aria-pressed", "false"));
+    $$("[data-tool]:not([data-toggle])").forEach((b) =>
+      b.setAttribute("aria-pressed", "false"),
+    );
   }
   outline() {
     this.panel(
@@ -254,7 +256,7 @@ export class Reader {
           .map((f) => {
             if (f.type === "plain") return this.highlight(f.text);
             const idx = this.annotations.push({ ...f, block: b }) - 1;
-            return `<span class="annotation" role="button" tabindex="0" data-kind="${f.kind}" data-annotation="${idx}" aria-label="${e(f.text)}：${e(f.note)}"><span class="source-text">${this.highlight(f.text)}</span><span class="gloss" aria-hidden="true">${e(f.note)}</span></span>`;
+            return `<span class="annotation" role="button" tabindex="0" data-target="${e(f.target)}" data-kind="${f.kind}" data-annotation="${idx}" aria-label="${e(f.text)}：${e(f.note)}"><span class="source-text">${this.highlight(f.text)}</span><span class="gloss" aria-hidden="true">${e(f.note)}</span></span>`;
           })
           .join("");
         return `<${tag} data-block="${b.id}" class="${b.type === "list-item" ? "list-block" : b.type}">${text}</${tag}>`;
@@ -263,8 +265,11 @@ export class Reader {
     $("#annotation-meta").textContent =
       `${this.doc.annotation_count} 处辅助理解`;
     $("#density-hint").textContent = this.doc.forced_count
-      ? `包含 ${this.doc.forced_count} 处你要求保留的注释，因此可能超过辅助密度。`
-      : "点击中文备注可调整熟悉度；双击任意英文词可就地查阅。";
+      ? `${this.doc.automatic_count} 处自动辅助 + ${this.doc.forced_count} 处你保留的注释；保留词不会占用自动辅助名额。`
+      : this.doc.automatic_count < this.doc.automatic_budget
+        ? "当前档位的可用注释已全部显示；‘多’会扩大词汇解释范围。"
+        : "点击中文备注可调整熟悉度；双击任意英文词可就地查阅。";
+    this.ctx.run("draw", this).catch(console.error);
     $$("[data-density]").forEach((b) => {
       const active = +b.dataset.density === this.doc.density;
       b.classList.toggle("active", active);
@@ -394,7 +399,9 @@ export class Reader {
     )?.closest("[data-block]");
     if (!startEl || startEl !== endEl) return;
     const strip = (fragment) => {
-      fragment.querySelectorAll?.(".gloss").forEach((el) => el.remove());
+      fragment
+        .querySelectorAll?.(".gloss,.bookmark-marker")
+        .forEach((el) => el.remove());
       return fragment.textContent;
     };
     const before = document.createRange();
@@ -463,7 +470,7 @@ export class Reader {
       if (!btn) return;
       $$("footer button", pop).forEach((b) => (b.disabled = true));
       try {
-        await api("/feedback", {
+        const feedback = await api("/feedback", {
           method: "POST",
           body: { target: item.target, verdict: btn.dataset.verdict },
         });
@@ -478,7 +485,10 @@ export class Reader {
             run: async () => {
               await api("/feedback", {
                 method: "POST",
-                body: { target: item.target, verdict: "reset" },
+                body: {
+                  target: item.target,
+                  verdict: feedback.previous || "reset",
+                },
               });
               if (!this.scope.signal.aborted) await this.refresh();
             },

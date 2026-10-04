@@ -51,28 +51,63 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
         )
         return [with_anchor(ctx.store, "bookmark", r) for r in rows]
 
+    def matching(body):
+        if not body.anchor or not body.anchor.block_id:
+            return []
+        return [
+            b
+            for b in list_bm(body.doc_id)
+            if b.get("anchor") and b["anchor"].get("block_id") == body.anchor.block_id
+        ]
+
+    def remove(bm_id):
+        ctx.store.execute("DELETE FROM wr_bookmark WHERE id=?", (bm_id,))
+        ctx.store.execute(
+            "DELETE FROM wr_anchor WHERE owner='bookmark' AND owner_id=?", (bm_id,)
+        )
+
     @router.post("/api/bookmarks")
     def add_bm(body: BookmarkIn):
-        if ctx.store.get_document(body.doc_id) is None:
-            raise HTTPException(404, "document")
-        ratio = max(0.0, min(1.0, body.scroll_ratio))
-        label = body.label.strip() or f"{int(ratio * 100)}%"
-        cur = ctx.store.execute(
-            "INSERT INTO wr_bookmark(doc_id, label, scroll_ratio, created_at) VALUES (?,?,?,?)",
-            (body.doc_id, label, ratio, _now()),
-        )
-        save_anchor(ctx.store, "bookmark", cur.lastrowid, body.doc_id, body.anchor)
-        return with_anchor(
-            ctx.store,
-            "bookmark",
-            ctx.store.query_one(
-                "SELECT * FROM wr_bookmark WHERE id = ?", (int(cur.lastrowid),)
-            ),
-        )
+        with ctx.store.transaction():
+            if ctx.store.get_document(body.doc_id) is None:
+                raise HTTPException(404, "document")
+            existing = matching(body)
+            if existing:
+                return existing[0]
+            ratio = max(0.0, min(1.0, body.scroll_ratio))
+            label = body.label.strip() or f"{int(ratio * 100)}%"
+            cur = ctx.store.execute(
+                "INSERT INTO wr_bookmark(doc_id,label,scroll_ratio,created_at) VALUES(?,?,?,?)",
+                (body.doc_id, label, ratio, _now()),
+            )
+            save_anchor(ctx.store, "bookmark", cur.lastrowid, body.doc_id, body.anchor)
+            return with_anchor(
+                ctx.store,
+                "bookmark",
+                ctx.store.query_one(
+                    "SELECT * FROM wr_bookmark WHERE id=?", (cur.lastrowid,)
+                ),
+            )
+
+    @router.post("/api/bookmarks/toggle")
+    def toggle(body: BookmarkIn):
+        with ctx.store.transaction():
+            if ctx.store.get_document(body.doc_id) is None:
+                raise HTTPException(404, "document")
+            if not body.anchor or not body.anchor.block_id:
+                raise HTTPException(400, "请提供正文段落位置")
+            existing = matching(body)
+            if existing:
+                for b in existing:
+                    remove(b["id"])
+            else:
+                add_bm(body)
+            return {"active": not bool(existing), "bookmarks": list_bm(body.doc_id)}
 
     @router.delete("/api/bookmarks/{bm_id}")
     def del_bm(bm_id: int):
-        ctx.store.execute("DELETE FROM wr_bookmark WHERE id = ?", (bm_id,))
+        with ctx.store.transaction():
+            remove(bm_id)
         return {"ok": True}
 
     app.include_router(router)

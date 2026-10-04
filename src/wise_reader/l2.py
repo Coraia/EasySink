@@ -10,6 +10,12 @@ def filter_candidates(l0, l1, profile, word_count, density=None, verdicts=None):
     density = profile.density if density is None else density
     budget = max(1, round(word_count * density / 100)) if density > 0 else 0
     verdicts = verdicts or {}
+    # More assistance widens the candidate vocabulary, not just the cap.
+    threshold = (
+        profile.rank_threshold() * min(1.0, 4 / density)
+        if density > 0
+        else profile.rank_threshold()
+    )
     eligible = []
     for a in l0 + l1:
         key = target(a)
@@ -17,9 +23,7 @@ def filter_candidates(l0, l1, profile, word_count, density=None, verdicts=None):
             continue
         forced = profile.struggles_with(key) or verdicts.get(key) == "unknown"
         if a.kind == Kind.WORD:
-            if not forced and (
-                a.suppressed or 0 < a.rarity <= profile.rank_threshold()
-            ):
+            if not forced and (a.suppressed or 0 < a.rarity <= threshold):
                 continue
         else:
             if not profile.l1_enabled and not forced:
@@ -32,14 +36,17 @@ def filter_candidates(l0, l1, profile, word_count, density=None, verdicts=None):
     chosen = []
     occupied = set()
     seen = set()
+    automatic_count = 0
     for a in eligible:
         key = target(a)
         span = set(range(a.first_token, a.last_token + 1))
         if (not profile.repeat and key in seen) or span & occupied:
             continue
-        if not a.forced and len(chosen) >= budget:
+        if not a.forced and automatic_count >= budget:
             continue
         chosen.append(a)
+        if not a.forced:
+            automatic_count += 1
         occupied |= span
         seen.add(key)
     return sorted(chosen, key=lambda a: a.first_token)

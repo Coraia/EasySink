@@ -13,6 +13,7 @@ import {
 } from "./core.js";
 import { PluginHost } from "./plugin-host.js";
 import { Reader } from "./reader.js";
+import { renderAI } from "./ai-settings.js";
 const hooks = new Map(),
   routes = new Map();
 const ctx = {
@@ -100,6 +101,7 @@ async function route() {
       await ctx.reader.mount();
     } else if (name === "profile" || name === "settings")
       await renderProfile(scope);
+    else if (name === "ai") await renderAI(ctx, scope);
     else if (name === "labs") await renderLabs(scope);
     else if (name === "jobs") await renderJobs(scope);
     else if (routes.has(name)) await routes.get(name)(scope, id);
@@ -239,7 +241,7 @@ async function renderProfile(scope) {
     )
     .join(
       "",
-    )}</div><p class="save-state" id="domain-state">已选择 ${domains.size} 个领域 · 自动保存</p></section><section class="card"><div class="row between"><div><h2>了解我的阅读起点</h2><p class="muted" style="margin:0;font-size:14px">可选的短测试，给出词频熟悉度范围。</p></div><button id="vocab-test">试一试 →</button></div><div id="vocab-test-area"></div></section><div id="profile-extensions" class="stack"></div><section class="card row between"><div><h3>让功能保持轻盈</h3><span class="muted">按需开关 15 个功能，已有数据会保留。</span></div><a class="button" href="#/labs">功能管理 →</a></section></div>`;
+    )}</div><p class="save-state" id="domain-state">已选择 ${domains.size} 个领域 · 自动保存</p></section><section class="card"><div class="row between"><div><h2>了解我的阅读起点</h2><p class="muted" style="margin:0;font-size:14px">可选的短测试，给出词频熟悉度范围。</p></div><button id="vocab-test">试一试 →</button></div><div id="vocab-test-area"></div></section><section class="card row between"><div><h3>AI 与自然语音</h3><p class="muted">连接服务后，生成注释、翻译与更自然的朗读。</p></div><a class="button" href="#/ai">配置服务 →</a></section><div id="profile-extensions" class="stack"></div><section class="card row between"><div><h3>让功能保持轻盈</h3><span class="muted">按需开关 15 个功能，已有数据会保留。</span></div><a class="button" href="#/labs">功能管理 →</a></section></div>`;
   const save = (fields) => {
     const version = ++latest;
     $("#profile-save").textContent = "保存中…";

@@ -43,7 +43,7 @@ PLUGINS: tuple[PluginSpec, ...] = (
     PluginSpec("bookmarks", "书签", "给当前滚动位置打书签。", backend="bookmarks"),
     PluginSpec("progress", "续读", "记住读到哪，首页可继续。", backend="progress"),
     PluginSpec("export", "导出", "导出生词表和笔记。", backend="export"),
-    PluginSpec("tts", "朗读", "用浏览器语音读正文。"),
+    PluginSpec("tts", "朗读", "自然语音或可选的本机英文音色。", backend="tts"),
     PluginSpec("theme", "主题", "纸色 / 夜间 / 羊皮纸。"),
     PluginSpec("typography", "排版", "字号、行距、栏宽。"),
     PluginSpec("search", "文内搜索", "在当前篇里找词并跳转。"),
