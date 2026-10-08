@@ -200,8 +200,11 @@ class Store:
             "wr_bookmark",
             "wr_progress",
             "wr_translation",
+            "wr_assist",
+            "wr_review",
             "wr_session_time",
             "wr_chapter",
+            "wr_source_analysis",
         ):
             exists = self._con.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",

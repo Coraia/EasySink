@@ -94,8 +94,17 @@ export function toast(message, action) {
     const btn = document.createElement("button");
     btn.textContent = action.label;
     btn.onclick = async () => {
-      await action.run();
-      el.hidden = true;
+      btn.disabled = true;
+      try {
+        await action.run();
+        el.hidden = true;
+      } catch (err) {
+        el.firstChild.textContent = "操作失败，可重试：" + err.message;
+        el.hidden = false;
+        clearTimeout(toastTimer);
+      } finally {
+        btn.disabled = false;
+      }
     };
     el.append(btn);
   }

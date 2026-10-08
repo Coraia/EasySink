@@ -6,14 +6,26 @@ export function install(ctx) {
     for (const b of r.bookmarks) {
       const blocks = [...document.querySelectorAll("#article [data-block]")];
       const block =
-        blocks.find((el) => el.dataset.block === b.anchor?.block_id) ||
-        blocks[
-          Math.min(
-            blocks.length - 1,
-            Math.floor((b.scroll_ratio || 0) * blocks.length),
-          )
-        ];
+        blocks.find(
+          (el) =>
+            el.dataset.block === b.anchor?.block_id &&
+            b.anchor.start >= +el.dataset.start &&
+            b.anchor.start < +el.dataset.end,
+        ) ||
+        (!b.anchor?.block_id &&
+          blocks[
+            Math.min(
+              blocks.length - 1,
+              Math.floor((b.scroll_ratio || 0) * blocks.length),
+            )
+          ]);
       if (!block || block.querySelector(".bookmark-marker")) continue;
+      if (
+        b.anchor &&
+        (b.anchor.start < +block.dataset.start ||
+          b.anchor.start >= +block.dataset.end)
+      )
+        continue;
       const btn = document.createElement("button");
       btn.className = "bookmark-marker";
       btn.dataset.bookmark = b.id;
@@ -35,7 +47,7 @@ export function install(ctx) {
       if (button.disabled) return;
       button.disabled = true;
       try {
-        const anchor = r.position();
+        const anchor = r.selection || r.position();
         const result = await api("/bookmarks/toggle", {
           method: "POST",
           body: {
@@ -55,6 +67,7 @@ export function install(ctx) {
       }
     });
     button.dataset.toggle = "true";
+    r.selectionAction("bookmarks", "在选区加书签", () => button.click());
     r.updateBookmark = () => {
       const block = r.position().block_id;
       const active = r.bookmarks.some((b) => b.anchor?.block_id === block);
@@ -63,6 +76,7 @@ export function install(ctx) {
       button.title = active ? "移除当前段落的书签" : "为当前段落添加书签";
     };
     r.scope.on(window, "scroll", r.updateBookmark, { passive: true });
+    r.on("position", r.updateBookmark);
     r.scope.on($("#article"), "click", async (ev) => {
       const marker = ev.target.closest(".bookmark-marker");
       if (!marker || marker.disabled) return;

@@ -1,4 +1,17 @@
+import {
+  chapter,
+  tools,
+  focus,
+  home,
+  density,
+  pageIndex,
+  pageCount,
+  goPage,
+  readerDefaults,
+  selectParagraph as selectCurrent,
+} from "./reader-helpers.js";
 import { test, expect } from "@playwright/test";
+test.beforeEach(async ({ page }) => readerDefaults(page));
 import fs from "node:fs";
 const sample = fs.readFileSync("web/sample.txt", "utf8");
 const provider = "http://127.0.0.1:18768";
@@ -11,13 +24,16 @@ async function document(request) {
   ).json();
 }
 async function openReader(page, id) {
-  await page.goto("/#/read/" + id);
+  if (page.url().endsWith("/#/read/" + id)) await page.reload();
+  else await page.goto("/#/read/" + id);
   await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");
 }
 async function targets(page) {
-  return page
-    .locator("[data-annotation]")
-    .evaluateAll((els) => els.map((el) => el.dataset.target));
+  const id = page.url().match(/read\/(\d+)/)[1];
+  const doc = await (await page.request.get("/api/documents/" + id)).json();
+  return doc.blocks.flatMap((b) =>
+    b.fragments.filter((f) => f.type !== "plain").map((f) => f.target),
+  );
 }
 async function doubleClickWord(page, word) {
   const point = await page.locator("#article").evaluate((el, word) => {
@@ -124,7 +140,7 @@ test("moderate and more assistance respond for the reported sample", async ({
     body: await page.screenshot(),
     contentType: "image/png",
   });
-  await page.locator('[data-density="8"]').click();
+  await density(page, 8);
   await expect(page.locator("#reader-save")).toHaveText("辅助偏好已自动保存");
   const more = await targets(page);
   await testInfo.attach("density-more.png", {
@@ -144,19 +160,19 @@ test("bookmark toggles, has an inline marker and survives redraw", async ({
 }, testInfo) => {
   const d = await document(request);
   await openReader(page, d.id);
-  await page.locator("#tool-bookmarks").click();
+  await tools(page, "bookmarks");
   await expect(page.locator(".bookmark-marker")).toHaveCount(1);
   await expect(page.locator("#tool-bookmarks")).toHaveAttribute(
     "aria-pressed",
     "true",
   );
-  await page.locator("#tool-bookmarks").click();
+  await tools(page, "bookmarks");
   await expect(page.locator(".bookmark-marker")).toHaveCount(0);
   expect(
     await (await request.get("/api/bookmarks?doc_id=" + d.id)).json(),
   ).toHaveLength(0);
-  await page.locator("#tool-bookmarks").click();
-  await page.locator('[data-density="8"]').click();
+  await tools(page, "bookmarks");
+  await density(page, 8);
   await expect(page.locator(".bookmark-marker")).toHaveCount(1);
   await page.reload();
   await expect(page.locator(".bookmark-marker")).toHaveCount(1);
@@ -164,6 +180,7 @@ test("bookmark toggles, has an inline marker and survives redraw", async ({
     body: await page.screenshot(),
     contentType: "image/png",
   });
+  await focus(page);
   await page.locator(".bookmark-marker").click();
   await expect(page.locator(".bookmark-marker")).toHaveCount(0);
 });
@@ -194,29 +211,15 @@ test("AI config masks keys, hot-enables models, validates errors and translates 
     /已保存/,
   );
   const d = await document(request);
-  await expect
-    .poll(async () => {
-      const list = await (await request.get("/api/jobs")).json();
-      return list.find(
-        (j) => j.kind === "annotations" && j.doc_ids.includes(d.id),
-      )?.status;
-    })
-    .toBe("complete");
   await openReader(page, d.id);
-  await expect(page.locator("#article")).toContainText("测试背景");
-  await page.locator("#tool-translate").click();
-  await page.locator("#generate-translation").click();
-  await expect
-    .poll(async () => {
-      const list = await (await request.get("/api/jobs")).json();
-      return list.find(
-        (j) => j.kind === "translate" && j.doc_ids.includes(d.id),
-      )?.status;
-    })
-    .toBe("complete");
-  await openReader(page, d.id);
-  await page.locator("#tool-translate").click();
-  await expect(page.locator("#translation-body")).toContainText("测试译文");
+  await expect(page.locator("#article")).not.toContainText("测试背景");
+  await selectCurrent(page);
+  await page.locator('[data-selection-action="translation"]').click();
+  await expect(page.locator("#translation-pane")).toContainText("测试译文");
+  await expect(page).toHaveURL(new RegExp("read/" + d.id + "$"));
+  await page.reload();
+  await tools(page, "traces");
+  await expect(page.locator(".trace-entries")).toContainText("测试译文");
   await page.goto("/#/ai");
   await page.locator("#ai-text-model").fill("broken-json");
   await page.locator("#ai-text-save").click();
@@ -233,11 +236,14 @@ test("AI config masks keys, hot-enables models, validates errors and translates 
   });
   await page.locator("#ai-text-enabled").uncheck();
   await page.locator("#ai-text-save").click();
-  expect(
-    (await (await request.get("/api/profile")).json()).l1_available,
-  ).toBeFalsy();
+  await expect
+    .poll(
+      async () =>
+        (await (await request.get("/api/profile")).json()).l1_available,
+    )
+    .toBeFalsy();
 });
-test("natural speech preview, original text, cache, pause and cancellation", async ({
+test("natural speech preview, selected English source, cache, local stop and cancellation", async ({
   page,
   request,
 }, testInfo) => {
@@ -248,49 +254,70 @@ test("natural speech preview, original text, cache, pause and cancellation", asy
   await page.locator("#ai-speech-enabled").check();
   await page.locator("#ai-speech-save").click();
   await expect(page.locator("#ai-speech-status")).toContainText("已保存");
+  await page.locator("#speech-preferred-mode").selectOption("natural");
+  await page.locator("#speech-preference-save").click();
+  await expect(page.locator("#speech-preference-status")).toContainText(
+    "已保存",
+  );
   await page.locator("#ai-speech-preview").click();
   await expect(page.locator("#ai-speech-audio")).toBeVisible();
   const d = await document(request);
   await openReader(page, d.id);
-  await page.locator("#tool-tts").click();
-  await page.locator("#speech-mode").selectOption("natural");
-  await page.locator("#speech-play").click();
-  await expect(page.locator("#speech-state")).toContainText("正在朗读");
-  await testInfo.attach("natural-speech-panel.png", {
+  await tools(page, "tts");
+  await expect(page.locator(".reader")).toHaveAttribute(
+    "data-audio-state",
+    "playing",
+  );
+  await expect(page.locator("#tool-panel")).toBeHidden();
+  await expect(page.locator("#article audio")).toHaveCount(0);
+  await testInfo.attach("natural-speech-in-place.png", {
     body: await page.screenshot(),
     contentType: "image/png",
   });
-  await page.locator("#speech-pause").click();
-  await expect(page.locator("#speech-state")).toContainText("已暂停");
-  await page.locator("#speech-stop").click();
-  await expect(page.locator("#speech-state")).toHaveText("朗读已停止");
+  await tools(page, "tts");
+  await expect(page.locator(".reader")).toHaveAttribute(
+    "data-audio-state",
+    "stopped",
+  );
   const before = await (await request.get(provider + "/observed")).json();
-  await page.locator("#speech-play").click();
-  await expect(page.locator("#speech-state")).toContainText("正在朗读");
+  await tools(page, "tts");
+  await expect(page.locator(".reader")).toHaveAttribute(
+    "data-audio-state",
+    "playing",
+  );
   const cached = await (await request.get(provider + "/observed")).json();
   expect(cached.speech.length).toBe(before.speech.length);
-  await page.locator("#speech-stop").click();
-  await page.locator("#speech-voice").fill("bad-audio");
-  await page.locator("#speech-play").click();
-  await expect(page.locator("#speech-state")).toContainText("无法读取");
-  await expect(page.locator("#speech-mode")).toHaveValue("natural");
-  await expect(page.locator("#speech-audio")).toHaveCount(0);
-  await page.locator("#speech-voice").fill("slow");
-  await page.locator("#speech-play").click();
-  await expect(page.locator("#speech-state")).toContainText("生成");
-  await page.locator(".brand").click();
+  await tools(page, "tts");
+  await request.put("/api/ai/config", {
+    data: { speech: { voice: "bad-audio" } },
+  });
+  await openReader(page, d.id);
+  await tools(page, "tts");
+  await expect(page.locator("#reader-save")).toContainText("无法读取");
+  await expect(page.locator(".reader")).toHaveAttribute(
+    "data-speech-engine",
+    "natural",
+  );
+  await request.put("/api/ai/config", { data: { speech: { voice: "slow" } } });
+  await openReader(page, d.id);
+  await tools(page, "tts");
+  await expect(page.locator(".reader")).toHaveAttribute(
+    "data-audio-state",
+    "loading",
+  );
+  await home(page);
   await expect(page.locator(".welcome")).toBeVisible();
   await page.waitForTimeout(1500);
-  expect(
-    await page.evaluate(() => !!document.querySelector("#speech-audio")),
-  ).toBeFalsy();
+  await expect(page.locator("audio")).toHaveCount(0);
   const observed = await (await request.get(provider + "/observed")).json();
   expect(observed.speech.every((p) => !/[一-鿿]/.test(p.input))).toBeTruthy();
   await testInfo.attach("speech-requests.json", {
     body: JSON.stringify(observed.speech, null, 2),
     contentType: "application/json",
   });
-  await request.put("/api/ai/config", { data: { speech: { enabled: false } } });
+  await request.put("/api/ai/config", {
+    data: { speech: { enabled: false, mode: "browser", voice: "marin" } },
+  });
 });
 
 test("repeated feedback remains additive across densities; pure source remains intact", async ({
@@ -303,15 +330,17 @@ test("repeated feedback remains additive across densities; pure source remains i
   const baseline = await targets(page);
   for (let i = 0; i < 6; i++) {
     for (const word of ["phone", "morning"]) {
+      if (await page.locator("[data-selection-clear]").isVisible())
+        await page.locator("[data-selection-clear]").click();
       if (i === 0) await doubleClickWord(page, word);
       else await page.locator(`[data-target="${word}"]`).click();
       await page.getByRole("button", { name: "保留注释", exact: true }).click();
       await expect(page.locator(".annotation-pop")).toHaveCount(0);
       await expect(page.locator(`[data-target="${word}"]`)).toHaveCount(1);
     }
-    await page.locator('[data-density="4"]').click();
+    await density(page, 4);
     await expect(page.locator("#reader-save")).toHaveText("辅助偏好已自动保存");
-    await page.locator('[data-density="2"]').click();
+    await density(page, 2);
     await expect(page.locator('[data-density="2"]')).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -325,14 +354,31 @@ test("repeated feedback remains additive across densities; pure source remains i
     const current = await targets(page);
     expect(baseline.every((t) => current.includes(t))).toBeTruthy();
   }
-  await page.locator('[data-density="0"]').click();
+  await density(page, 0);
   await expect(page.locator("[data-annotation]")).toHaveCount(2);
-  const source = await page.locator("#article").evaluate((el) => {
-    const copy = el.cloneNode(true);
-    copy.querySelectorAll(".gloss,.bookmark-marker").forEach((n) => n.remove());
-    return [...copy.children].map((n) => n.textContent);
-  });
-  expect(source).toEqual(sample.trim().split(/\n\n+/));
+  const source = new Map();
+  await expect(page.locator(".reader")).toHaveAttribute(
+    "data-pagination-ready",
+    "true",
+  );
+  const n = await pageCount(page);
+  for (let i = 0; i < n; i++) {
+    await goPage(page, i);
+    const parts = await page
+      .locator("#article [data-block]")
+      .evaluateAll((els) =>
+        els.map((el) => {
+          const c = el.cloneNode(true);
+          c.querySelectorAll(".gloss,.bookmark-marker").forEach((n) =>
+            n.remove(),
+          );
+          return { id: el.dataset.block, text: c.textContent };
+        }),
+      );
+    for (const part of parts)
+      source.set(part.id, (source.get(part.id) || "") + part.text);
+  }
+  expect([...source.values()]).toEqual(d.blocks.map((b) => b.text));
   expect(
     (await (await request.get("/api/documents/" + d.id)).json()).text,
   ).toBe(sample);
@@ -418,12 +464,13 @@ test("mobile AI configuration and bookmark markers fit and remain accessible", a
   });
   const d = await document(request);
   await openReader(page, d.id);
-  await page.locator("#tool-bookmarks").click();
+  await tools(page, "bookmarks");
   const marker = page.locator(".bookmark-marker");
   await expect(marker).toHaveCount(1);
   expect(
     await marker.evaluate((el) => el.getBoundingClientRect().left),
   ).toBeGreaterThanOrEqual(0);
+  await focus(page);
   await marker.focus();
   await page.keyboard.press("Enter");
   await expect(marker).toHaveCount(0);
@@ -445,14 +492,17 @@ test("entry, styles and dynamically imported plugins share a cache-busting sourc
   await page.goto("/");
   await expect(page.locator(".welcome")).toBeVisible();
   const entry = await page.locator('script[type="module"]').getAttribute("src");
-  expect(entry).toMatch(/^\/assets\/[a-f0-9]{16}\/app\.js$/);
-  const prefix = entry.replace("app.js", "");
+  expect(entry).toMatch(/^\/assets\/[a-f0-9]{16}\/app\.js(?:\?.*)?$/);
+  const prefix = entry.split("app.js")[0];
   expect(
     await page.locator('link[rel="stylesheet"]').getAttribute("href"),
-  ).toBe(prefix + "style.css");
+  ).toMatch(new RegExp("^" + prefix + "style\\.css(?:\\?.*)?$"));
   const imported = [];
   page.on("request", (req) => {
-    if (req.url().includes("/plugins/") && req.url().endsWith(".js"))
+    if (
+      req.url().includes("/plugins/") &&
+      new URL(req.url()).pathname.endsWith(".js")
+    )
       imported.push(new URL(req.url()).pathname);
   });
   await page.reload();

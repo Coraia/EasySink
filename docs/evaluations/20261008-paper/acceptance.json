@@ -1,0 +1,17 @@
+{
+  "version": "20261008-paper",
+  "automatedAcceptance": "110 passed, 1 optional external EPUB skipped, 0 failed, 0 flaky",
+  "humanAcceptance": "User accepted prototype and production before requesting commit and push.",
+  "reproduce": "WR_E2E_EVIDENCE=outputs/paper-production-reproduce npx playwright test",
+  "firstFullRun": {
+    "passed": 109,
+    "failed": 1,
+    "skipped": 1,
+    "failure": "Software frame P95 34.1ms exceeded unchanged 34ms threshold"
+  },
+  "fix": "Software animation and matching texture pixel budget 400000 to 320000; hardware Retina budgets unchanged.",
+  "finalSoftwareFrameP95MaxMs": 32.0,
+  "evidenceScope": "Production DOM and GPU, synthetic native phase fixtures and AI provider fixture; physical finger-to-display latency and actual remote model quality are separate.",
+  "localRawEvidence": "outputs/wise-reader-paper-production-20261008/",
+  "rawEvidencePolicy": "Local reports, user reading snapshots, runtime tokens, databases and AI credentials are not committed."
+}

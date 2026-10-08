@@ -113,7 +113,7 @@ class SemanticHTML(HTMLParser):
         "figcaption": "caption",
         "dt": "heading",
         "dd": "paragraph",
-        "tr": "paragraph",
+        "tr": "table-row",
     }
 
     def __init__(self):
@@ -122,11 +122,30 @@ class SemanticHTML(HTMLParser):
         self.buf = []
         self.kind = "paragraph"
         self.skip = 0
+        self.stack = []
+        self.rows = []
+
+    def current_kind(self):
+        if "pre" in self.stack:
+            return "code"
+        for tag in reversed(self.stack):
+            if tag in ("li", "blockquote"):
+                return self.TYPES[tag]
+        return next((self.TYPES[tag] for tag in reversed(self.stack)
+                     if tag in self.TYPES), "paragraph")
+
+    def finish_cell(self):
+        row = self.rows[-1]
+        if row["cell"] is not None:
+            row["cells"].append(re.sub(r"\s+", " ", "".join(row["cell"])).strip())
+            row["cell"] = None
 
     def flush(self):
+        if self.rows:
+            return
         text = "".join(self.buf)
         text = (
-            text.strip() if self.kind == "code" else re.sub(r"\s+", " ", text).strip()
+            text.strip("\r\n") if self.kind == "code" else re.sub(r"\s+", " ", text).strip()
         )
         if text:
             self.blocks.append({"type": self.kind, "text": text})
@@ -137,34 +156,71 @@ class SemanticHTML(HTMLParser):
             self.skip += 1
         if self.skip:
             return
+        if tag == "tr":
+            self.flush()
+            self.rows.append({"cells": [], "cell": None})
+        elif tag in ("td", "th") and self.rows:
+            self.finish_cell()
+            self.rows[-1]["cell"] = []
+        elif self.rows and tag in self.TYPES:
+            if self.rows[-1]["cell"] is not None:
+                self.rows[-1]["cell"].append(" ")
         if tag in self.TYPES:
             self.flush()
-            self.kind = self.TYPES[tag]
         elif tag == "br":
-            self.buf.append("\n")
+            self.handle_data("\n")
         elif tag == "img":
             self.flush()
             alt = dict(attrs).get("alt", "插图")
-            self.blocks.append({"type": "caption", "text": f"[图片：{alt}]"})
-        elif tag in ("td", "th"):
-            self.buf.append(" · ")
+            if self.rows:
+                self.handle_data(f"[图片：{alt}]")
+            else:
+                self.blocks.append({"type": "caption", "text": f"[图片：{alt}]"})
+        if tag not in ("br", "img", "hr", "meta", "link", "input", "wbr", "source"):
+            self.stack.append(tag)
+        self.kind = self.current_kind()
 
     def handle_endtag(self, tag):
         if tag in ("script", "style", "head"):
             self.skip = max(0, self.skip - 1)
             return
-        if not self.skip and (tag in self.TYPES or tag == "div"):
+        if self.skip:
+            return
+        if tag in ("td", "th") and self.rows:
+            self.finish_cell()
+        elif tag == "tr" and self.rows:
+            self.finish_cell()
+            row = self.rows.pop()
+            text = " · ".join(row["cells"])
+            if any(row["cells"]):
+                if self.rows:
+                    self.handle_data(text)
+                else:
+                    self.blocks.append({"type": "table-row", "text": text,
+                                        "cells": row["cells"]})
+        elif tag in self.TYPES or tag == "div":
             self.flush()
-            self.kind = "paragraph"
+        if tag in self.stack:
+            # Tolerate missing closing tags without leaking a child role.
+            i = len(self.stack) - 1 - self.stack[::-1].index(tag)
+            del self.stack[i:]
+        self.kind = self.current_kind()
 
     def handle_data(self, data):
         if not self.skip:
-            self.buf.append(data)
+            if self.rows:
+                if self.rows[-1]["cell"] is not None:
+                    self.rows[-1]["cell"].append(data)
+            else:
+                self.buf.append(data)
 
 
 def html_blocks(raw):
     parser = SemanticHTML()
     parser.feed(raw)
+    parser.close()
+    while parser.rows:
+        parser.handle_endtag("tr")
     parser.flush()
     pos = 0
     for b in parser.blocks:

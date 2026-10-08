@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from wise_reader.jobs import chunks as _chunks
 from wise_reader.plugins.runtime import PluginContext, require_plugin
 from wise_reader.store import Store
+from wise_reader.reading_assist import SelectionIn, assist
 
 PLUGIN_ID = "translate"
 SYS = "将下面英文译为流畅中文。只输出译文，不要解释，不要加标题。"
@@ -44,6 +45,10 @@ __all__ = ["_chunks", "migrate", "register"]
 def register(app: FastAPI, ctx: PluginContext) -> None:
     router = APIRouter(dependencies=[Depends(require_plugin(PLUGIN_ID))])
 
+    @router.post("/api/documents/{doc_id}/translate-selection")
+    async def translate_selection(doc_id: int, body: SelectionIn, request: Request):
+        return await assist(app, ctx, request, doc_id, "translation", body.anchor, body.request_id)
+
     @router.get("/api/documents/{doc_id}/translation")
     def get_tr(doc_id: int, lang: str = "zh"):
         row = ctx.store.query_one(
@@ -61,11 +66,7 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
         source = "paste"
         text = body.body.strip()
         if body.generate:
-            if not ctx.l1_on:
-                raise HTTPException(
-                    400, "未配置 LLM。可粘贴译文，或在 .env 开启 WR_LLM。"
-                )
-            return app.state.jobs.enqueue([doc_id])
+            raise HTTPException(400, "请在阅读页选择文字后翻译，不再生成整章译文")
         if not text:
             raise HTTPException(400, "empty translation")
         ctx.store.execute(
@@ -82,12 +83,6 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
 
     @router.post("/api/translate/books/{book_id}")
     def translate_book(book_id: int):
-        ids = [
-            r["doc_id"]
-            for r in ctx.store.query(
-                "SELECT doc_id FROM wr_chapter WHERE book_id=? ORDER BY idx", (book_id,)
-            )
-        ]
-        return app.state.jobs.enqueue(ids)
+        raise HTTPException(400, "请在阅读页选择文字后翻译，不提供整书翻译")
 
     app.include_router(router)

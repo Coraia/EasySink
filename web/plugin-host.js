@@ -21,7 +21,10 @@ export class PluginHost {
       if (!this.active.has(p.id)) {
         try {
           const module = await import(
-            new URL(`./plugins/${p.id}.js`, import.meta.url).href
+            new URL(
+              `./plugins/${p.id}.js?v=20261005-open3`,
+              import.meta.url,
+            ).href
           );
           this.active.set(p.id, await module.install(this.ctx));
         } catch (error) {

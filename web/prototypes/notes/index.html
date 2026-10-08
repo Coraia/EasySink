@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wise Reader · 笔记交互原型</title><link rel="stylesheet" href="style.css?v=20261005-notes4"></head>
+<body>
+<button id="show-tools" aria-label="显示阅读工具" title="点击顶部显示工具"></button>
+<section id="chrome" hidden aria-label="阅读工具">
+  <button id="dismiss" aria-label="收起阅读工具"></button>
+  <header><a href="/#/read/3" aria-label="返回正式版阅读">←</a><span>On knowledge and relations</span><button id="prototype-help" class="text-button">笔记交互原型</button><button id="fullscreen" class="icon" aria-label="进入全屏"></button></header>
+  <nav id="toolbar" aria-label="阅读工具栏">
+    <button data-tool="directory" aria-label="目录" title="目录" aria-expanded="false"></button>
+    <button data-tool="notes" aria-label="阅读笔记" title="笔记" aria-expanded="false"><span class="badge" id="note-count"></span></button>
+    <button data-tool="progress" aria-label="阅读进度" title="进度" aria-expanded="false"></button>
+    <button data-tool="style" aria-label="阅读样式" title="样式" aria-expanded="false"></button>
+    <button data-tool="font" aria-label="字体调整" title="字体" aria-expanded="false"></button>
+    <button data-tool="more" aria-label="更多" title="更多" aria-expanded="false"></button>
+  </nav>
+</section>
+<main id="stage" aria-label="英文正文"><div id="spread"></div><div class="caption"><span id="chapter-caption"></span><button id="return-position" hidden>↶ 回到刚才</button><span id="page-caption"></span></div></main>
+<div id="selection-menu" class="selection-menu" role="toolbar" aria-label="所选原文操作" hidden><button id="selection-translate">翻译</button><button id="selection-grammar">语法分析</button><button id="selection-bookmark" aria-pressed="false">书签</button><button id="selection-speak" aria-pressed="false">朗读</button><span id="selection-ipa" hidden></span><button id="selection-note">记一笔</button><button id="selection-cancel" class="icon" aria-label="取消选择"></button></div>
+<aside id="panel" class="panel" role="dialog" aria-label="阅读笔记" hidden></aside>
+<aside id="preview" class="preview" role="dialog" aria-label="这段的笔记" hidden></aside>
+<aside id="editor" class="editor" role="dialog" aria-label="笔记编辑" hidden>
+  <div class="panel-head"><button id="editor-back" class="icon" aria-label="返回笔记列表" hidden></button><h2 id="editor-title">记一笔</h2><button id="editor-close" class="icon" aria-label="关闭笔记编辑"></button></div>
+  <div id="editor-context" class="meta"></div><button id="editor-quote" class="quote excerpt" hidden></button>
+  <label class="sr-only" for="note-body">笔记内容</label><textarea id="note-body" rows="3" placeholder="记下此刻的想法…"></textarea>
+  <div class="editor-footer"><span id="save-state" role="status"></span><button id="retry-save" class="text-button" hidden>重试保存</button><button id="done" class="text-button">完成</button></div>
+</aside>
+<div id="toast" role="status" hidden><span></span><button hidden></button></div>
+<script type="module" src="app.js?v=20261005-notes7"></script>
+</body></html>

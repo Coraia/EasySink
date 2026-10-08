@@ -43,20 +43,23 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
     router = APIRouter(dependencies=[Depends(require_plugin(PLUGIN_ID))])
 
     @router.get("/api/notes")
-    def list_notes(doc_id: int | None = None):
-        if doc_id is None:
-            rows = ctx.store.query(
-                "SELECT n.*, d.title FROM wr_note n"
-                " LEFT JOIN document d ON d.id = n.doc_id"
-                " ORDER BY n.id DESC"
-            )
-        else:
-            rows = ctx.store.query(
-                "SELECT n.*, d.title FROM wr_note n"
-                " LEFT JOIN document d ON d.id = n.doc_id"
-                " WHERE n.doc_id = ? ORDER BY n.id DESC",
-                (doc_id,),
-            )
+    def list_notes(doc_id: int | None = None, book_id: int | None = None):
+        # Pick one membership even if an older library adopted a document twice.
+        sql = (
+            "SELECT n.*, d.title, c.book_id, c.idx AS chapter_idx,"
+            " c.title AS chapter_title FROM wr_note n"
+            " LEFT JOIN document d ON d.id = n.doc_id"
+            " LEFT JOIN wr_chapter c ON c.id ="
+            " (SELECT MIN(id) FROM wr_chapter WHERE doc_id = n.doc_id)"
+        )
+        params = ()
+        if book_id is not None:
+            sql += " WHERE EXISTS (SELECT 1 FROM wr_chapter b WHERE b.doc_id=n.doc_id AND b.book_id=?)"
+            params = (book_id,)
+        elif doc_id is not None:
+            sql += " WHERE n.doc_id = ?"
+            params = (doc_id,)
+        rows = ctx.store.query(sql + " ORDER BY n.id DESC", params)
         return [with_anchor(ctx.store, "note", r) for r in rows]
 
     @router.post("/api/notes")

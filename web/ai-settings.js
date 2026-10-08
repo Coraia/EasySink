@@ -31,12 +31,50 @@ export async function speechBlob(text, voice, signal) {
 export async function renderAI(ctx, scope) {
   const config = await api("/ai/config", { signal: scope.signal });
   if (scope.signal.aborted) return;
+  let native = { local: { available: false, voices: [] } };
+  if (ctx.enabled("tts")) {
+    try {
+      native = await api("/speech/status", { signal: scope.signal });
+    } catch (err) {
+      if (err.name === "AbortError") return;
+    }
+  }
   const form = (kind) => {
     const p = config[kind],
       speech = kind === "speech";
-    return `<form id="ai-${kind}-form" class="card"><div class="setting-row"><div><h2>${speech ? "自然语音" : "文本 AI"}</h2><p>${speech ? "通过兼容 /audio/speech 的服务生成音频，音质由模型与音色决定。" : "生成语法、表达和文化注释，以及章节或整书译文。支持 Chat Completions 兼容服务。"}</p></div><input type="checkbox" class="switch" id="ai-${kind}-enabled" aria-label="启用${speech ? "自然语音" : "文本 AI"}" ${p.enabled ? "checked" : ""}></div>${!speech ? '<div class="row wrap"><button type="button" data-preset="deepseek">DeepSeek</button><button type="button" data-preset="openai">OpenAI 兼容接口</button></div>' : ""}<label for="ai-${kind}-url">服务基础地址</label><input id="ai-${kind}-url" type="url" required value="${e(p.base_url)}"><label for="ai-${kind}-model">模型名称</label><input id="ai-${kind}-model" type="text" required value="${e(p.model)}">${speech ? `<label for="ai-speech-voice">音色</label><input id="ai-speech-voice" type="text" required list="speech-voices" value="${e(p.voice)}"><datalist id="speech-voices">${voices.map((v) => `<option value="${v}">`).join("")}</datalist>` : ""}<label for="ai-${kind}-key">API Key</label><input id="ai-${kind}-key" type="password" autocomplete="off" placeholder="${p.has_api_key ? "已保存 · 留空保留现有凭据" : "填写此服务的 API Key"}"><div class="row gap wrap"><button type="submit" class="primary" id="ai-${kind}-save">保存配置</button><button type="button" id="ai-${kind}-${speech ? "preview" : "test"}">${speech ? "试听自然语音" : "测试连接"}</button><button type="button" class="text-button" id="ai-${kind}-clear">移除凭据并关闭</button></div><p id="ai-${kind}-status" class="save-state gap" role="status">${p.available ? "已启用" : "未启用"} · 修改后点击保存配置</p>${speech ? '<audio id="ai-speech-audio" controls hidden></audio><p class="muted">自然语音由 AI 生成。启用后会将原文片段发送给该服务，并可能按其定价计费。文本 AI 的凭据不会自动用于语音。</p>' : '<p class="muted">启用后，生成操作会发送原文给此服务，并可能产生费用。</p>'}</form>`;
+    return `<form id="ai-${kind}-form" class="card"><div class="setting-row"><div><h2>${speech ? "自然语音服务" : "文本 AI"}</h2><p>${speech ? "可选的 /audio/speech 兼容服务；阅读时只有明确选择自然语音才使用。" : "按需解释选词、分析语法、翻译所选文字与整理阅读痕迹。支持 Chat Completions 兼容服务。"}</p></div><input type="checkbox" class="switch" id="ai-${kind}-enabled" aria-label="启用${speech ? "自然语音" : "文本 AI"}" ${p.enabled ? "checked" : ""}></div>${!speech ? '<div class="row wrap"><button type="button" data-preset="deepseek">DeepSeek</button><button type="button" data-preset="openai">OpenAI 兼容接口</button></div>' : ""}<label for="ai-${kind}-url">服务基础地址</label><input id="ai-${kind}-url" type="url" required value="${e(p.base_url)}"><label for="ai-${kind}-model">模型名称</label><input id="ai-${kind}-model" type="text" required value="${e(p.model)}">${speech ? `<label for="ai-speech-voice">音色</label><input id="ai-speech-voice" type="text" required list="speech-voices" value="${e(p.voice)}"><datalist id="speech-voices">${voices.map((v) => `<option value="${v}">`).join("")}</datalist>` : ""}<label for="ai-${kind}-key">API Key</label><input id="ai-${kind}-key" type="password" autocomplete="off" placeholder="${p.has_api_key ? "已保存 · 留空保留现有凭据" : "填写此服务的 API Key"}"><div class="row gap wrap"><button type="submit" class="primary" id="ai-${kind}-save">保存配置</button><button type="button" id="ai-${kind}-${speech ? "preview" : "test"}">${speech ? "试听自然语音" : "测试连接"}</button><button type="button" class="text-button" id="ai-${kind}-clear">移除凭据并关闭</button></div><p id="ai-${kind}-status" class="save-state gap" role="status">${p.available ? "已启用" : "未启用"} · 修改后点击保存配置</p>${speech ? '<audio id="ai-speech-audio" controls hidden></audio><p class="muted">自然语音由 AI 生成。试听会将原文片段发送给该服务，并可能按其定价计费。文本 AI 的凭据不会自动用于语音。</p>' : '<p class="muted">主动生成时，仅发送选区或必要的上下文给此服务，并可能产生费用。</p>'}</form>`;
   };
   ctx.root.innerHTML = `<div class="settings-layout"><div class="page-head"><div><div class="eyebrow">UNDERSTAND & LISTEN</div><h1>AI 与语音。</h1><p>分别选择理解和朗读服务，保存后立即生效。凭据只保存在本机服务端，不会回填到页面。</p></div><a class="text-button" href="#/profile">阅读偏好 →</a></div><div class="ai-grid">${form("text")}${form("speech")}</div></div>`;
+  $(".ai-grid").insertAdjacentHTML(
+    "beforebegin",
+    `<section class="card gap"><h2>阅读发音</h2><p>默认优先使用电脑已安装的英文音色。发音在原入口播放与停止，不打开播放器。</p><label for="speech-preferred-mode">朗读方式</label><select id="speech-preferred-mode"><option value="local">电脑本地语音${native.local.available ? " · 已可用" : " · 不可用时使用浏览器本机语音"}</option><option value="browser">浏览器本机语音</option><option value="natural">自然语音服务 · 需要已配置的服务</option></select><label for="speech-local-voice">电脑英文音色</label><select id="speech-local-voice">${native.local.voices.map((v) => `<option value="${e(v.name)}">${e(v.name)} · ${e(v.lang)}</option>`).join("") || '<option value="Samantha">无可用音色</option>'}</select><button type="button" id="speech-preference-save" class="gap">保存发音偏好</button><p id="speech-preference-status" role="status" class="save-state gap">更换方式后点击保存；不会自动改用远程服务。</p></section>`,
+  );
+  $("#speech-preferred-mode").value = config.speech.mode || "local";
+  if (native.local.voices.some((v) => v.name === config.speech.local_voice))
+    $("#speech-local-voice").value = config.speech.local_voice;
+  scope.on($("#speech-preference-save"), "click", async (ev) => {
+    ev.target.disabled = true;
+    $("#speech-preference-status").textContent = "保存中…";
+    try {
+      await api("/ai/config", {
+        method: "PUT",
+        body: {
+          speech: {
+            mode: $("#speech-preferred-mode").value,
+            local_voice: $("#speech-local-voice").value,
+          },
+        },
+        signal: scope.signal,
+      });
+      if (!scope.signal.aborted)
+        $("#speech-preference-status").textContent = "已保存 ✓";
+    } catch (err) {
+      if (err.name !== "AbortError" && !scope.signal.aborted)
+        $("#speech-preference-status").textContent = err.message;
+    } finally {
+      ev.target.disabled = false;
+    }
+  });
   let objectURL;
   scope.cleanup(() => {
     $("#ai-speech-audio")?.pause();

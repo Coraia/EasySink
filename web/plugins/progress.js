@@ -47,7 +47,16 @@ export function install(ctx) {
     if (scope.signal.aborted) return;
     const pending = local.get(`position-pending:${id}`);
     if (!local.get(`jump:${id}`))
-      reader.restore(pending || saved.anchor || { ratio: saved.scroll_ratio });
+      await reader.restore(
+        pending || saved.anchor || { ratio: saved.scroll_ratio },
+      );
+    const changed = () => {
+      if (reader.restoring || document.hidden) return;
+      last = reader.position();
+      clearTimeout(timer);
+      timer = setTimeout(save, 650);
+    };
+    reader.on("position", changed);
     scope.on(
       window,
       "scroll",

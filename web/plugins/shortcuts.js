@@ -10,8 +10,13 @@ export function install(ctx) {
           $("#tool-immersive")?.click();
         return;
       }
+      if (ev.key.toLowerCase() === "f") {
+        ev.preventDefault();
+        if (r.focus.isOpen()) r.focus.close(true);
+        else r.focus.open();
+        return;
+      }
       const tools = {
-        f: "immersive",
         "/": "search",
         n: "notes",
         b: "bookmarks",
@@ -19,6 +24,7 @@ export function install(ctx) {
       const tool = tools[ev.key.toLowerCase()];
       if (tool) {
         ev.preventDefault();
+        r.focus.close();
         $("#tool-" + tool)?.click();
       }
       if (ev.key === "[" || ev.key === "]") {

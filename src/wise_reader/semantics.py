@@ -20,6 +20,8 @@ PHRASES = {
 
 def contextualize(doc, candidates):
     for a in candidates:
+        if a.lemma not in {"redistricting", "bank", "battery"}:
+            continue
         sent = doc.sentences[doc.tokens[a.first_token].sent_id]
         context = doc.text[sent.start : sent.end].lower()
         senses = {
@@ -51,6 +53,8 @@ def phrases(doc):
     for surface, (note, detail) in PHRASES.items():
         words = surface.split()
         for start in range(len(tokens)):
+            if tokens[start].split()[0] != words[0]:
+                continue
             for width in range(max(1, len(words) - 2), len(words) + 1):
                 end = start + width - 1
                 if end >= len(tokens):

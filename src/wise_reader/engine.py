@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from collections import OrderedDict
+from threading import RLock
 
 from wise_reader import content, l0, l1, l2, render, semantics
 from wise_reader.l1 import LLMClient, NullLLM
@@ -10,6 +13,8 @@ from wise_reader.lexicon import Lexicon
 from wise_reader.models import Annotation
 from wise_reader.profile import ReaderProfile
 from wise_reader.store import Store
+from wise_reader.store import _now
+from wise_reader.source_cache import SourceCache
 from wise_reader.tokenize import Document, parse
 
 
@@ -32,6 +37,11 @@ class Engine:
         self.store = store
         self.llm = llm or NullLLM()
         self.l1_enabled = l1_enabled
+        # Only content-derived analysis is cached. Personal selection stays live.
+        self._analysis = OrderedDict()
+        self._analysis_lock = RLock()
+        self._analysis_tokens = 0
+        self._source_cache = SourceCache(store, lexicon)
 
     def ingest(
         self, title: str, text: str, profile: ReaderProfile, analyze: bool = True
@@ -51,6 +61,40 @@ class Engine:
             l1=l1_cands,
         )
         return self.present(doc_id, profile, l1_stats=l1_stats)
+
+    def prepare_import(self, title, text, blocks):
+        """Prepare content-derived analysis without touching the user Store."""
+        doc = parse(text)
+        candidates = l0.candidates(doc, self.lexicon)
+        words = semantics.contextualize(doc, candidates)
+        expressions = semantics.phrases(doc)
+        row = {
+            "title": title or _title_from(text), "text": text,
+            "word_count": len(doc.tokens), "text_hash": text_hash(text),
+            "l0_json": json.dumps([a.to_dict() for a in candidates], ensure_ascii=False),
+            "l1_json": "[]", "created_at": _now(),
+        }
+        return {
+            "row": row,
+            "version": hashlib.sha256(text.encode()).hexdigest(),
+            "blocks": json.dumps(blocks, ensure_ascii=False),
+            "analysis": self._source_cache.prepare(words, expressions),
+            "cache_key": self._source_cache.key(row),
+        }
+
+    def persist_import(self, prepared):
+        """Caller owns a short book-wide atomic transaction; no analysis here."""
+        row = prepared["row"]
+        doc_id = int(self.store.execute(
+            "INSERT INTO document(title,text,word_count,text_hash,l0_json,l1_json,created_at) "
+            "VALUES(?,?,?,?,?,?,?)", tuple(row[k] for k in (
+                "title", "text", "word_count", "text_hash", "l0_json", "l1_json", "created_at"
+            ))
+        ).lastrowid)
+        self.store.execute("INSERT INTO wr_content(doc_id,version,blocks) VALUES(?,?,?)",
+                           (doc_id, prepared["version"], prepared["blocks"]))
+        self._source_cache.save_prepared({**row, "id": doc_id}, prepared["analysis"], prepared["cache_key"])
+        return {"id": doc_id, "title": row["title"], "word_count": row["word_count"]}
 
     def _l1(self, doc: Document, h: str) -> tuple[list[Annotation], dict]:
         client = self.llm
@@ -76,20 +120,59 @@ class Engine:
             self.store.put_l1_cache(h, kept)
         return kept, stats
 
+    def _source_analysis(self, row):
+        key = (row["id"], row["text_hash"], row["l1_json"])
+        with self._analysis_lock:
+            cached = self._analysis.get(key)
+            if cached is not None and cached[0].text == row["text"]:
+                self._analysis.move_to_end(key)
+                return cached
+        doc = parse(row["text"])
+        persisted = self._source_cache.load(row, doc)
+        if persisted is not None:
+            words, expressions = persisted
+        else:
+            words = semantics.contextualize(doc, l0.candidates(doc, self.lexicon))
+            expressions = [Annotation.from_dict(d) for d in _loads(row["l1_json"])]
+            # Old tokenization split PDF ligatures: reject shifted annotations.
+            expressions = [
+                a for a in expressions
+                if 0 <= a.first_token <= a.last_token < len(doc.tokens)
+                and doc.text[slice(*doc.slice(a.first_token, a.last_token))] == a.surface
+            ]
+            expressions += semantics.phrases(doc)
+            self._source_cache.save(row, words, expressions)
+        result = (doc, words, expressions)
+        with self._analysis_lock:
+            # Token and entry bounds prevent a collection of large books accumulating.
+            previous = self._analysis.pop(key, None)
+            if previous is not None:
+                self._analysis_tokens -= len(previous[0].tokens)
+            if len(doc.tokens) <= 150000:
+                self._analysis[key] = result
+                self._analysis_tokens += len(doc.tokens)
+            while self._analysis and (
+                self._analysis_tokens > 150000 or len(self._analysis) > 4
+            ):
+                _, removed = self._analysis.popitem(last=False)
+                self._analysis_tokens -= len(removed[0].tokens)
+        return result
+
     def present(
         self,
         doc_id: int,
         profile: ReaderProfile,
         density: float | None = None,
         l1_stats: dict | None = None,
+        compact: bool = False,
     ) -> dict:
-        row = self.store.get_document(doc_id)
+        row = self.store.query_one(
+            "SELECT id,title,text,word_count,text_hash,l1_json,created_at "
+            "FROM document WHERE id=?", (doc_id,)
+        )
         if row is None:
             raise KeyError(doc_id)
-        doc = parse(row["text"])
-        l0_cands = semantics.contextualize(doc, l0.candidates(doc, self.lexicon))
-        l1_cands = [Annotation.from_dict(d) for d in _loads(row["l1_json"])]
-        l1_cands += semantics.phrases(doc)
+        doc, l0_cands, l1_cands = self._source_analysis(row)
         verdicts = {
             r["target"]: r["verdict"]
             for r in self.store.query("SELECT * FROM wr_target")
@@ -97,15 +180,18 @@ class Engine:
         shown = l2.filter_candidates(
             l0_cands, l1_cands, profile, len(doc.tokens), density, verdicts
         )
-        frags = render.fragments(doc, shown)
+        frags = render.fragments(doc, shown) if not compact else []
         dens = profile.density if density is None else density
         version, blocks = content.get_content(self.store, row)
         rendered = []
+        annotations = iter((a, *doc.slice(a.first_token, a.last_token)) for a in shown)
+        current = next(annotations, None)
         for block in blocks:
             pieces = []
             pos = block["start"]
-            for a in shown:
-                start, end = doc.slice(a.first_token, a.last_token)
+            while current is not None and current[1] < block["end"]:
+                a, start, end = current
+                current = next(annotations, None)
                 if start < block["start"] or end > block["end"]:
                     continue
                 if start > pos:
@@ -141,7 +227,7 @@ class Engine:
             if chapter
             else []
         )
-        return {
+        result = {
             "id": doc_id,
             "text": row["text"],
             "version": version,
@@ -168,6 +254,12 @@ class Engine:
             "l1": l1_stats or {"cache_hit": True},
             "created_at": row["created_at"],
         }
+
+        if compact:
+            # The Web reader consumes canonical blocks, never these duplicate copies.
+            for field in ("text", "fragments", "fragment_count"):
+                result.pop(field)
+        return result
 
     def lookup(self, word: str) -> dict:
         entry = self.lexicon.lookup(word)

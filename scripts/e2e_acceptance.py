@@ -106,6 +106,21 @@ if __name__ == "__main__":
         manifest["stats"] = json.loads((destination / "results.json").read_text())[
             "stats"
         ]
+    package = os.environ.get("WR_E2E_EPUB_PACKAGE")
+    package_command = ""
+    if package:
+        package_path = Path(package).resolve()
+        manifest["epub_package"] = {
+            "path": str(package_path),
+            "sha256": digest(package_path),
+            "scope": "local browser import of the supplied book; no external model calls",
+        }
+        package_command = (
+            f'\nThis run also requires the same local book archive: '
+            f'`WR_E2E_EPUB_PACKAGE="{package_path}" .venv/bin/python scripts/e2e_acceptance.py`. '
+            'The archive hash is in manifest; original package file hashes are attached '
+            'to its browser scenario. The actual book is not included in source.zip.\n'
+        )
     (destination / "manifest.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False)
     )
@@ -127,6 +142,7 @@ Reproduce in this checkout, with the same lexicon hash from manifest:
 For a trace: `npx playwright show-trace <path-to-trace.zip>`.
 AI fixture uses only dummy credentials. Its WAV tone does not evaluate voice naturalness.
 Real-provider credentials, sound quality and translation quality are not accepted by this run.
+{package_command}
 """)
     hashes = {
         str(p.relative_to(destination)): digest(p)

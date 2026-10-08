@@ -17,6 +17,48 @@ PLUGIN_ID = "importer"
 MAX_BYTES = 20 * 1024 * 1024
 MAX_CHAPTERS = 500
 MAX_EXPANDED = 100 * 1024 * 1024
+EPUB_CONTAINER = "META-INF/container.xml"
+
+
+def _epub_roots(archive):
+    """Mac packages may be zipped beneath one or more wrapper directories."""
+    return sorted(
+        {
+            name[: -len(EPUB_CONTAINER)]
+            for name in archive.namelist()
+            if (name == EPUB_CONTAINER or name.endswith("/" + EPUB_CONTAINER))
+            and not name.startswith("__MACOSX/")
+        }
+    )
+
+
+def _epub_root(archive):
+    roots = _epub_roots(archive)
+    if not roots:
+        raise ValueError("EPUB 缺少容器清单 META-INF/container.xml，尚未导入")
+    if len(roots) != 1:
+        raise ValueError("压缩包中包含多本 EPUB，请每次选择一本书（尚未导入）")
+    root = roots[0]
+    if root.startswith("/") or ".." in root.split("/") or "\\" in root:
+        raise ValueError("EPUB 路径越界")
+    return root
+
+
+def is_epub_upload(data, filename, content_type):
+    """A transport name is not authoritative; EPUB's container identifies it."""
+    mime = (content_type or "").split(";", 1)[0].strip().lower()
+    if (
+        filename.lower().endswith((".epub", ".epub.zip"))
+        or mime == "application/epub+zip"
+    ):
+        return True
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            # Detection only: the parser still enforces bounds and validates the
+            # container, package and every chapter before anything is persisted.
+            return bool(_epub_roots(archive))
+    except (zipfile.BadZipFile, KeyError, OSError):
+        return False
 
 
 def html_to_text(raw):
@@ -40,6 +82,11 @@ def _resolve(base, href):
 
 
 def parse_epub_structured(data):
+    if data.startswith(b"__CLOUDSYNC_ENC__"):
+        raise ValueError(
+            "这是群晖 Cloud Sync 加密的文件，暂不能直接读取。"
+            "请从 NAS 获取未加密的 EPUB 原文件，或先解密后再导入（尚未导入）。"
+        )
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             infos = z.infolist()
@@ -47,12 +94,14 @@ def parse_epub_structured(data):
                 raise ValueError("EPUB 解压后超过 100 MB 或文件数超过 5000")
             if any(i.file_size > 8 * 1024 * 1024 for i in infos):
                 raise ValueError("EPUB 单个资源超过 8 MB")
-            if "META-INF/encryption.xml" in z.namelist():
+            root = _epub_root(z)
+            encryption_path = root + "META-INF/encryption.xml"
+            if encryption_path in z.namelist():
                 # Font obfuscation can coexist with readable chapters; encrypted text cannot.
-                enc = z.read("META-INF/encryption.xml").decode("utf-8")
+                enc = z.read(encryption_path).decode("utf-8")
                 if "xmlenc#aes" in enc:
                     raise ValueError("不支持加密的 EPUB 内容")
-            container = ET.fromstring(z.read("META-INF/container.xml"))
+            container = ET.fromstring(z.read(root + EPUB_CONTAINER))
             opf_path = next(
                 (
                     e.attrib.get("full-path")
@@ -63,7 +112,7 @@ def parse_epub_structured(data):
             )
             if not opf_path:
                 raise ValueError("EPUB 缺少书籍清单")
-            opf = ET.fromstring(z.read(_resolve("", opf_path)))
+            opf = ET.fromstring(z.read(root + _resolve("", opf_path)))
             base = posixpath.dirname(opf_path)
             title = next(
                 (e.text for e in opf.iter() if _local(e.tag) == "title" and e.text),
@@ -91,7 +140,7 @@ def parse_epub_structured(data):
                 if ref not in manifest:
                     raise ValueError(f"第 {idx + 1} 章缺少清单记录")
                 path = _resolve(base, manifest[ref])
-                raw = z.read(path).decode("utf-8-sig")
+                raw = z.read(root + path).decode("utf-8-sig")
                 blocks = content.html_blocks(raw)
                 if not blocks:
                     continue
@@ -146,9 +195,9 @@ def register(app: FastAPI, ctx: PluginContext):
         data = file.file.read(MAX_BYTES + 1)
         if len(data) > MAX_BYTES:
             raise HTTPException(413, "文件超过 20 MB")
-        name = file.filename or "upload.txt"
+        name = (file.filename or "upload.txt").strip()
         try:
-            if name.lower().endswith(".epub"):
+            if is_epub_upload(data, name, file.content_type):
                 title, author, chapters = parse_epub_structured(data)
                 source = "epub"
             elif name.lower().endswith((".txt", ".md", ".markdown")):
@@ -156,18 +205,25 @@ def register(app: FastAPI, ctx: PluginContext):
                 source = "txt"
                 chapters = [(t, s, content.blocks_from_text(s)) for t, s in plain]
             else:
-                raise ValueError("支持 EPUB、TXT 和 Markdown 文件")
+                display_name = posixpath.basename(name.replace("\\", "/"))[:120]
+                raise ValueError(
+                    "支持 EPUB、TXT 和 Markdown 文件"
+                    f"（收到的文件名：{display_name}）。"
+                    "支持完整 EPUB 文件包的 ZIP，不支持只上传书籍中的单个资源。"
+                )
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+        # Parsing, lexical analysis, cache compression and JSON serialization
+        # happen in this sync endpoint's worker, before taking the Store lock.
+        prepared = [ctx.engine.prepare_import(heading, text, blocks)
+                    for heading, text, blocks in chapters]
         saved = []
-        # No model/network calls inside this atomic transaction. Other API requests remain responsive.
+        # Only writes enter the book-wide atomic transaction.
         with ctx.store.transaction():
             book_id = content.add_book(ctx.store, title, author, source)
-            for idx, (heading, text, blocks) in enumerate(chapters):
-                doc = ctx.engine.ingest(
-                    heading, text, ctx.store.get_profile(), analyze=False
-                )
-                content.put_content(ctx.store, doc["id"], text, blocks)
+            for idx, entry in enumerate(prepared):
+                doc = ctx.engine.persist_import(entry)
+                heading = doc["title"]
                 content.add_chapter(ctx.store, book_id, idx, heading, doc["id"])
                 saved.append(
                     {
@@ -176,10 +232,7 @@ def register(app: FastAPI, ctx: PluginContext):
                         "word_count": doc["word_count"],
                     }
                 )
-        if ctx.l1_on and ctx.store.get_profile().l1_enabled:
-            for chapter in saved:
-                if len(ctx.store.get_document(chapter["doc_id"])["text"]) <= 20000:
-                    app.state.jobs.enqueue([chapter["doc_id"]], "annotations")
+
         return {
             "book_id": book_id,
             "title": title,

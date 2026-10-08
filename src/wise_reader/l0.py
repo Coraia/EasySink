@@ -40,13 +40,26 @@ def _has_authority(entry) -> bool:
 def candidates(doc: Document, lexicon: Lexicon) -> list[Annotation]:
     """产出全部词汇候选。不含密度截断、不含读者阈值。"""
     out: list[Annotation] = []
-    for token in doc.tokens:
+    keys = [token.key for token in doc.tokens]
+    lexicon.prefetch(keys)
+    # Glosses and ranks are content-derived; compute once per distinct surface.
+    entries = {}
+    for key in set(keys):
+        entry = lexicon.lookup(key)
+        entries[key] = (
+            entry,
+            lexicon.lemma(key),
+            entry.gloss() if entry else "",
+            entry.rank if entry else 0,
+            entry.translation.strip().splitlines()[0][:100]
+            if entry and entry.translation else "",
+        )
+    for token, key in zip(doc.tokens, keys):
         suppressed = _is_acronym(token)
 
-        entry = lexicon.lookup(token.key)
-        lemma = lexicon.lemma(token.key)
+        entry, lemma, gloss, rank, detail = entries[key]
 
-        if token.key in _FUNCTION or lemma in _FUNCTION:
+        if key in _FUNCTION or lemma in _FUNCTION:
             suppressed = True
 
         capitalized = token.text[:1].isupper()
@@ -60,14 +73,13 @@ def candidates(doc: Document, lexicon: Lexicon) -> list[Annotation]:
             # 句首人名地名：BNC 可能有词频，但无词性/考纲/柯林斯标记
             continue
 
-        if entry.rank == 0 and not _has_authority(entry):
+        if rank == 0 and not _has_authority(entry):
             continue
 
-        gloss = entry.gloss()
         if not gloss or "姓氏" in gloss:
             continue
 
-        rarity = entry.rank if entry.rank > 0 else ZERO_RANK_FALLBACK
+        rarity = rank if rank > 0 else ZERO_RANK_FALLBACK
         start, end = doc.slice(token.id, token.id)
         out.append(
             Annotation(
@@ -79,9 +91,7 @@ def candidates(doc: Document, lexicon: Lexicon) -> list[Annotation]:
                 rarity=rarity,
                 suppressed=suppressed,
                 lemma=lemma,
-                detail=entry.translation.strip().splitlines()[0][:100]
-                if entry.translation
-                else "",
+                detail=detail,
             )
         )
     return out

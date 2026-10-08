@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
-_WORD = re.compile(r"[A-Za-z]+(?:['\u2019\-][A-Za-z]+)*")
+_WORD = re.compile(r"[A-Za-z\uFB00-\uFB06]+(?:['\u2019\-][A-Za-z\uFB00-\uFB06]+)*")
 
 _ABBREV = frozenset(
     """mr mrs ms dr prof sr jr st vs etc al inc ltd co corp dept est fig
@@ -29,7 +30,7 @@ class Token:
 
     @property
     def key(self) -> str:
-        return self.text.lower().replace("\u2019", "'")
+        return unicodedata.normalize("NFKC", self.text).lower().replace("\u2019", "'")
 
 
 @dataclass(frozen=True, slots=True)

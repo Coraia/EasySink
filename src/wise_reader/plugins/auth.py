@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from wise_reader.plugins.catalog import BY_ID
 from wise_reader.plugins.runtime import PluginContext, require_plugin
@@ -154,16 +155,18 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
 
     @app.middleware("http")
     async def auth_gate(request: Request, call_next):
-        spec = BY_ID[PLUGIN_ID]
-        if not ctx.store.is_plugin_enabled(PLUGIN_ID, spec.default_on):
-            return await call_next(request)
         path = request.url.path
         if _is_public(path, request.method):
             return await call_next(request)
-        if _user_count(ctx.store) == 0:
-            return await call_next(request)
-        user = _session_user(ctx.store, request.cookies.get(COOKIE))
-        if user:
+
+        def permitted():
+            spec = BY_ID[PLUGIN_ID]
+            return (not ctx.store.is_plugin_enabled(PLUGIN_ID, spec.default_on)
+                    or _user_count(ctx.store) == 0
+                    or _session_user(ctx.store, request.cookies.get(COOKIE)))
+
+        # The serialized SQLite lock must never block the event-loop thread.
+        if await run_in_threadpool(permitted):
             return await call_next(request)
         if path.startswith("/api/"):
             return JSONResponse({"detail": "login required"}, status_code=401)

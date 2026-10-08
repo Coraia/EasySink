@@ -15,8 +15,10 @@ from wise_reader.engine import Engine
 from wise_reader.jobs import Jobs
 from wise_reader.l1 import NullLLM, OpenAICompatLLM
 from wise_reader.lexicon import Lexicon
+from wise_reader.native_input import register as register_native_input
 from wise_reader.plugins import PluginContext, mount_plugins
 from wise_reader.profile import DOMAINS, EXAM_VOCAB
+from wise_reader.reading_assist import close_assistance, register as register_reading_assist
 from wise_reader.settings import ROOT, Settings
 from wise_reader.store import Store, _now
 from wise_reader.vocab_test import VocabTester, question_payload
@@ -89,6 +91,7 @@ def create_app() -> FastAPI:
     async def lifespan(_app: FastAPI):
         jobs.start()
         yield
+        await close_assistance(_app)
         jobs.close()
         lexicon.close()
         store.close()
@@ -99,11 +102,12 @@ def create_app() -> FastAPI:
     app.state.tester = tester
     app.state.jobs = jobs
     app.state.ai = ai
+    register_native_input(app, ROOT)
     register_ai(app, ai)
 
     @app.get("/health")
     def health():
-        return {"ok": True, "version": "0.2.0"}
+        return {"ok": True, "version": "0.2.0", "web_revision": "20261008-paper"}
 
     @app.get("/api/jobs")
     def job_list():
@@ -175,8 +179,6 @@ def create_app() -> FastAPI:
             raise HTTPException(400, "请输入英文原文")
         profile = store.get_profile()
         doc = engine.ingest(body.title, body.text, profile, analyze=False)
-        if engine.l1_enabled and profile.l1_enabled and len(body.text) <= 20000:
-            jobs.enqueue([doc["id"]], "annotations")
         return doc
 
     @app.get("/api/documents")
@@ -186,11 +188,13 @@ def create_app() -> FastAPI:
 
     @app.get("/api/documents/{doc_id}")
     def get_document(
-        doc_id: int, density: float | None = Query(default=None, ge=0, le=15)
+        doc_id: int,
+        density: float | None = Query(default=None, ge=0, le=15),
+        compact: bool = False,
     ):
         profile = store.get_profile()
         try:
-            return engine.present(doc_id, profile, density=density)
+            return engine.present(doc_id, profile, density=density, compact=compact)
         except KeyError:
             raise HTTPException(404, "not found")
 
@@ -275,6 +279,7 @@ def create_app() -> FastAPI:
         settings=settings,
     )
     ai.ctx = ctx
+    register_reading_assist(app, ctx)
     mount_plugins(app, ctx)
 
     @app.get("/")

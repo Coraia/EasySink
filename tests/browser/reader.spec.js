@@ -1,103 +1,56 @@
 import { test, expect } from "@playwright/test";
 import fs from "node:fs";
+import {
+  read,
+  tools,
+  focus,
+  home,
+  readerDefaults,
+  enableAll,
+  selectParagraph,
+  density,
+  goPage,
+  pageCount,
+} from "./reader-helpers.js";
 const sample = fs.readFileSync("web/sample.txt", "utf8");
-const pluginIds = [
-  "auth",
-  "library",
-  "importer",
-  "immersive",
-  "notes",
-  "translate",
-  "bookmarks",
-  "progress",
-  "export",
-  "tts",
-  "theme",
-  "typography",
-  "search",
-  "stats",
-  "shortcuts",
-];
-let errors = [];
-async function doc(request, title = "Browser acceptance") {
-  return (
-    await request.post("/api/documents", { data: { title, text: sample } })
-  ).json();
-}
-async function read(page, id) {
-  await page.goto("/#/read/" + id);
-  await expect(page.locator("#article")).toBeVisible();
-  await expect(page.locator("#tool-notes")).toBeVisible();
-  await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");
+async function document(request, text = sample) {
+  const r = await request.post("/api/documents", {
+    data: { title: "Reader acceptance " + Date.now(), text },
+  });
+  expect(r.ok()).toBeTruthy();
+  return r.json();
 }
 test.beforeEach(async ({ page, request }) => {
-  errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  page.on("console", (m) => {
-    if (
-      m.text().includes("Optional feature failed") ||
-      /^Plugin /.test(m.text())
-    )
-      errors.push(m.text());
-  });
-  for (const id of pluginIds)
-    await request.patch("/api/plugins/" + id, { data: { enabled: true } });
-  await request.patch("/api/profile", {
-    data: {
-      density: 8,
-      domains: [],
-      vocab_size: 8000,
-      repeat: false,
-      l1_enabled: true,
-    },
-  });
+  await readerDefaults(page);
+  await enableAll(request);
+  page.__errors = [];
+  page.on("pageerror", (e) => page.__errors.push(e.message));
 });
-test.afterEach(() => expect(errors).toEqual([]));
-
-test("home, paste import, draft restoration and real document", async ({
+test.afterEach(async ({ page }) => expect(page.__errors).toEqual([]));
+test("paste import persists a draft and opens an immersive source", async ({
   page,
 }) => {
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "留在故事里。" }),
-  ).toBeVisible();
-  await page.screenshot({
-    path: "test-results/desktop-home.png",
-    fullPage: true,
-  });
   await page.getByRole("button", { name: "＋ 添加阅读" }).click();
-  await page.locator("#paste-title").fill("My browser article");
+  await page.locator("#paste-title").fill("My article");
   await page.locator("#paste-text").fill(sample);
   await expect(page.locator("#paste-state")).toContainText("草稿已自动保存");
   await page.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "＋ 添加阅读" }).click();
   await expect(page.locator("#paste-text")).toHaveValue(sample);
   await page.getByRole("button", { name: "开始阅读 →", exact: true }).click();
-  await expect(page.locator("#article")).toBeVisible();
-  await expect(page.locator(".reading-heading h1")).toHaveText(
-    "My browser article",
+  await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");
+  await expect(page.locator(".reader")).toHaveAttribute(
+    "data-chrome",
+    "closed",
   );
-  await page.screenshot({
-    path: "test-results/desktop-reader.png",
-    fullPage: false,
-  });
+  await expect(page.locator("#article")).toContainText("On a mild");
 });
-
-test("settings show autosave and survive reload; themes stay readable", async ({
-  page,
-  request,
-}) => {
+test("profile autosave, domains and theme survive reload", async ({ page }) => {
   await page.goto("/#/profile");
   await page.locator("[data-domain=politics]").click();
-  await page.locator("[data-domain=science]").click();
-  await expect(page.locator("#profile-save")).toHaveText("已自动保存 ✓");
-  await expect
-    .poll(
-      async () =>
-        new Set((await (await request.get("/api/profile")).json()).domains)
-          .size,
-    )
-    .toBe(2);
+  await page.locator("[data-domain=religion]").click();
+  await expect(page.locator("#profile-save")).toContainText("已自动保存");
   await page.locator("[data-theme-choice=night]").click();
   await page.reload();
   await expect(page.locator("[data-domain=politics]")).toHaveAttribute(
@@ -105,185 +58,218 @@ test("settings show autosave and survive reload; themes stay readable", async ({
     "true",
   );
   await expect(page.locator("html")).toHaveAttribute("data-theme", "night");
-  const d = await doc(request, "Night reading");
-  await read(page, d.id);
-  await page.locator("[data-annotation]").first().click();
-  await expect(page.locator(".annotation-pop")).toBeVisible();
-  const colors = await page.locator(".annotation-pop").evaluate((el) => ({
-    bg: getComputedStyle(el).backgroundColor,
-    color: getComputedStyle(el).color,
-  }));
-  expect(colors.bg).not.toBe("rgb(255, 255, 255)");
-  expect(colors.bg).not.toBe(colors.color);
 });
-
-test("known feedback remains hidden after navigating away and reloading", async ({
+test("notes: selection creates one autosaved note, edits, marker, list, deletion and undo", async ({
   page,
   request,
-}) => {
-  const d = await doc(request);
+}, info) => {
+  const d = await document(request);
   await read(page, d.id);
-  const first = page.locator("[data-annotation]").first();
-  const surface = await first.locator(".source-text").textContent();
-  await first.click();
-  await page.getByRole("button", { name: "已掌握 ✓", exact: true }).click();
-  await expect(
-    page.locator(".source-text").filter({
-      hasText: new RegExp(
-        "^" + surface.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$",
-      ),
-    }),
-  ).toHaveCount(0);
-  await page.locator(".brand").click();
-  await read(page, d.id);
-  await expect(
-    page
-      .locator(".source-text")
-      .filter({ hasText: new RegExp("^" + surface + "$") }),
-  ).toHaveCount(0);
-});
-
-test("density changes preserve note draft, quote, side panel and reading position", async ({
-  page,
-  request,
-}) => {
-  const d = await doc(request);
-  await read(page, d.id);
-  await page.locator("[data-block]").nth(6).scrollIntoViewIfNeeded();
-  await page.locator("#tool-notes").click();
-  await page
-    .locator("#note-body")
-    .fill("A thought which must survive density changes.");
-  await expect(page.locator("#note-state")).toHaveText("已自动保存 ✓");
-  const before = await page.evaluate(() => scrollY);
-  await page.locator('[data-density="2"]').click();
-  await expect(page.locator("#reader-save")).toHaveText("辅助偏好已自动保存");
-  await expect(page.locator("#note-body")).toHaveValue(
-    "A thought which must survive density changes.",
+  await selectParagraph(page, 1);
+  const quote = await page
+    .locator(".reader")
+    .getAttribute("data-source-position");
+  await page.locator("[data-selection-action=notes]").click();
+  await expect(page.locator("#note-quote")).toContainText("On a mild");
+  expect(await page.locator("#note-quote").textContent()).not.toMatch(
+    /[一-鿿]/,
   );
-  expect(Math.abs((await page.evaluate(() => scrollY)) - before)).toBeLessThan(
-    450,
-  );
-  await page.reload();
-  await page.locator("#tool-notes").click();
-  await expect(page.locator("#note-body")).toHaveValue(
-    "A thought which must survive density changes.",
-  );
+  await page.locator("#note-body").fill("First thought");
+  await expect(page.locator("#note-state")).toContainText("已保存");
+  await page.locator("#note-done").click();
+  await expect(page.locator(".note-marker")).toHaveCount(1);
+  await expect(page.locator("#tool-notes .note-count")).toHaveText("1");
+  await tools(page, "notes");
+  await expect(page.locator("#notes-content")).toContainText("First thought");
   const notes = await (await request.get("/api/notes?doc_id=" + d.id)).json();
   expect(notes).toHaveLength(1);
+  expect(notes[0].anchor.quote).toContain("On a mild");
+  await page.locator(`[data-note-edit="${notes[0].id}"]`).click();
+  await page.locator("#note-body").fill("Edited thought");
+  await expect(page.locator("#note-state")).toContainText("已保存");
+  await page.locator("#note-done").click();
+  await tools(page, "notes");
+  await page.locator(`[data-note-more="${notes[0].id}"]`).click();
+  await page.locator(`[data-note-delete="${notes[0].id}"]`).click();
+  await expect(page.locator(".note-marker")).toHaveCount(0);
+  await page.locator("#toast button").click();
+  await expect(page.locator(".note-marker")).toHaveCount(1);
+  await focus(page);
+  await page.locator(".note-marker").click();
+  await expect(page.locator("#tool-panel")).toContainText("Edited thought");
+  await info.attach("notes-crud.png", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+  await page.reload();
+  await tools(page, "notes");
+  await expect(page.locator("#notes-content")).toContainText("Edited thought");
+  expect(
+    (await (await request.get("/api/notes?doc_id=" + d.id)).json())[0].anchor,
+  ).toEqual(notes[0].anchor);
 });
-
-test("search never corrupts original text; shortcuts ignore input fields; typography and focus work", async ({
+test("slow saves, density, close/reopen and offline preserve a single note and its source", async ({
   page,
   request,
 }) => {
-  const d = await doc(request);
+  const d = await document(request);
   await read(page, d.id);
-  const original = await page.locator("#article").evaluate((el) => {
-    const c = el.cloneNode(true);
-    c.querySelectorAll(".gloss").forEach((n) => n.remove());
-    return c.textContent;
+  await selectParagraph(page);
+  await page.locator("[data-selection-action=notes]").click();
+  await page.route("**/api/notes", async (route) => {
+    if (route.request().method() === "POST")
+      await new Promise((r) => setTimeout(r, 500));
+    await route.continue();
   });
-  await page.locator("#tool-search").click();
+  await page.locator("#note-body").fill("Draft one");
+  await page.getByRole("button", { name: "关闭侧栏", exact: true }).click();
+  await tools(page, "notes");
+  if (await page.locator("[data-note-resume]").count())
+    await page.locator("[data-note-resume]").first().click();
+  else {
+    await expect(page.locator("[data-note-edit]").first()).toBeVisible();
+    await page.locator("[data-note-edit]").first().click();
+  }
+  await page.locator("#note-body").fill("Latest thought");
+  await expect(page.locator("#note-state")).toContainText("已保存");
+  await page.context().setOffline(true);
+  await page.locator("#note-body").fill("Offline thought");
+  await expect(page.locator("#note-state")).toContainText("草稿");
+  await page.context().setOffline(false);
+  await expect(page.locator("#note-state")).toContainText("已保存");
+  await page.locator("#note-done").click();
+  await density(page, 8);
+  await focus(page);
+  await tools(page, "notes");
+  await expect(page.locator("#notes-content")).toContainText("Offline thought");
+  expect(
+    await (await request.get("/api/notes?doc_id=" + d.id)).json(),
+  ).toHaveLength(1);
+});
+test("search, typography and tool toggle preserve original source and typed input", async ({
+  page,
+  request,
+}) => {
+  const d = await document(request);
+  await read(page, d.id);
+  await tools(page, "search");
   await page.locator("#find-text").fill("attention");
   await expect(page.locator(".search-hit").first()).toBeVisible();
   await page.locator("#find-text").press("f");
-  await expect(page.locator("body")).not.toHaveClass(/immersive/);
-  await page.getByRole("button", { name: "关闭侧栏" }).click();
-  expect(
-    await page.locator("#article").evaluate((el) => {
-      const c = el.cloneNode(true);
-      c.querySelectorAll(".gloss").forEach((n) => n.remove());
-      return c.textContent;
-    }),
-  ).toBe(original);
+  await expect(page.locator("#find-text")).toHaveValue("attentionf");
+  await tools(page, "typography");
+  await page.locator("#type-size").fill("26");
+  await expect(page.locator("#type-state")).toContainText("保存");
   await page.locator("#tool-typography").click();
-  await page.locator("#type-size").fill("28");
-  await expect(page.locator("#type-state")).toHaveText("已自动保存 ✓");
-  await page.getByRole("button", { name: "关闭侧栏" }).click();
-  await page.locator("#tool-immersive").click();
-  await expect(page.locator(".top")).toBeHidden();
-  await page.locator("#tool-immersive").click();
-  await expect(page.locator(".top")).toBeVisible();
+  await expect(page.locator("#tool-panel")).toBeHidden();
+  await expect(page.locator("#reader-chrome")).toBeVisible();
+  await focus(page);
+  expect(
+    (await (await request.get("/api/documents/" + d.id)).json()).text,
+  ).toBe(sample);
 });
-
-test("progress cleanup does not save settings scroll; bookmarks work when progress is disabled", async ({
+test("progress saves a stable location; release seeks and return restores it; route cleanup stays clean", async ({
   page,
   request,
 }) => {
-  const d = await doc(request);
+  const d = await document(
+    request,
+    Array(100)
+      .fill("A careful reader returns to the source without losing a thought.")
+      .join(" "),
+  );
   await read(page, d.id);
-  await page.locator("[data-block]").nth(8).scrollIntoViewIfNeeded();
+  await pageCount(page);
+  const before = await page
+    .locator(".reader")
+    .getAttribute("data-source-position");
+  await tools(page, "progress");
+  await page.locator("#reading-seek").fill("850");
+  await expect(page.locator(".reader")).not.toHaveAttribute(
+    "data-source-position",
+    before,
+  );
+  await page.locator("#seek-return").click();
+  await expect(page.locator(".reader")).toHaveAttribute(
+    "data-source-position",
+    before,
+  );
+  await page.locator("#reading-seek").fill("500");
+  await focus(page);
+  await tools(page, "bookmarks");
+  await focus(page);
+  await expect(page.locator(".bookmark-marker")).toBeVisible();
+  await home(page);
   await expect
     .poll(
       async () =>
         (await (await request.get(`/api/documents/${d.id}/progress`)).json())
-          .scroll_ratio,
+          .anchor?.ratio || 0,
     )
-    .toBeGreaterThan(0.05);
-  await page.locator("#tool-bookmarks").click();
-  await expect(page.locator("#toast")).toContainText("已为这段文字添加书签");
+    .toBeGreaterThan(0.3);
+  const saved = await (
+    await request.get(`/api/documents/${d.id}/progress`)
+  ).json();
+  expect(saved.anchor.ratio).toBeGreaterThan(0.3);
   await page.goto("/#/profile");
-  await expect(page.locator("#domains")).toBeVisible();
-  const before = await (
-    await request.get(`/api/documents/${d.id}/progress`)
-  ).json();
-  await page.locator("#profile-extensions").scrollIntoViewIfNeeded();
-  await page.waitForTimeout(1000);
-  const after = await (
-    await request.get(`/api/documents/${d.id}/progress`)
-  ).json();
-  expect(after).toEqual(before);
+  await page.waitForTimeout(800);
+  expect(
+    await (await request.get(`/api/documents/${d.id}/progress`)).json(),
+  ).toEqual(saved);
   await request.patch("/api/plugins/progress", { data: { enabled: false } });
   await page.goto("/#/bookmarks");
-  await page.locator("[data-bm]").first().click();
-  await expect(page.locator("#article")).toBeVisible();
-  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(200);
+  const marks = await (
+    await request.get("/api/bookmarks?doc_id=" + d.id)
+  ).json();
+  await page.locator(`[data-bm="${marks[0].id}"]`).click();
+  await expect(page.locator(".bookmark-marker")).toBeVisible();
 });
-
-test("translation auto-saves; missing AI is explicit; export downloads", async ({
+test("missing AI is explicit, legacy translations remain stored, exports download", async ({
   page,
   request,
 }) => {
-  const d = await doc(request);
+  const d = await document(request);
+  await request.put(`/api/documents/${d.id}/translation`, {
+    data: { body: "历史译文保留" },
+  });
   await read(page, d.id);
-  await page.locator("#tool-translate").click();
-  await expect(page.locator("#generate-translation")).toBeDisabled();
-  await page.locator("#translation-body").fill("一段真实保存的中文译文。");
-  await expect(page.locator("#translation-state")).toHaveText("已自动保存 ✓");
-  await page.locator('[data-density="4"]').click();
-  await expect(page.locator("#translation-body")).toHaveValue(
-    "一段真实保存的中文译文。",
+  await selectParagraph(page);
+  const result = page.waitForResponse((res) =>
+    res.url().endsWith("/translate-selection"),
   );
+  await page.locator("[data-selection-action=translation]").click();
+  expect((await result).status()).toBe(400);
+  await expect(page.locator("#toast")).toContainText("配置并启用");
+  await expect(page.locator("#translation-pane")).toBeHidden();
   await page.reload();
-  await page.locator("#tool-translate").click();
-  await expect(page.locator("#translation-body")).toHaveValue(
-    "一段真实保存的中文译文。",
-  );
+  expect(
+    (await (await request.get(`/api/documents/${d.id}/translation`)).json())
+      .body,
+  ).toBe("历史译文保留");
+  await expect(
+    page.locator("#translate-whole,#generate-translation,#translate-book"),
+  ).toHaveCount(0);
   await page.goto("/#/profile");
-  const download = page.waitForEvent("download");
+  const promise = page.waitForEvent("download");
   await page.getByRole("link", { name: "导出个人词表 ↗" }).click();
-  expect((await download).suggestedFilename()).toMatch(/csv$/);
+  expect((await promise).suggestedFilename()).toMatch(/csv$/);
 });
-
-test("all 15 switches save; disabling notes retains data and restores its route", async ({
+test("all feature switches remain reversible and preserve notes", async ({
   page,
   request,
 }) => {
-  const d = await doc(request);
+  const d = await document(request);
   await request.post("/api/notes", {
     data: { doc_id: d.id, body: "Persistent note" },
   });
   await page.goto("/#/labs");
-  await expect(page.locator("[data-plugin]")).toHaveCount(15);
-  for (const id of pluginIds) {
-    const box = page.locator(`[data-plugin=${id}]`);
+  const switches = page.locator("[data-plugin]");
+  await expect(switches).toHaveCount(16);
+  for (const box of await switches.all()) {
     await box.uncheck();
-    await expect(page.locator("#plugin-save")).toHaveText("已保存并生效 ✓");
-    await expect(box).toBeEnabled();
+    await expect(page.locator("#plugin-save")).toContainText("已保存并生效");
   }
-  await page.goto("/#/read/" + d.id);
-  await expect(page.locator("#article")).toBeVisible();
+  await read(page, d.id);
   await expect(page.locator("#tool-notes")).toHaveCount(0);
   await page.goto("/#/notes");
   await expect(
@@ -291,138 +277,47 @@ test("all 15 switches save; disabling notes retains data and restores its route"
   ).toBeVisible();
   await page.goto("/#/labs");
   await page.locator("[data-plugin=notes]").check();
-  await expect(page.locator("#plugin-save")).toHaveText("已保存并生效 ✓");
+  await expect(page.locator("#plugin-save")).toContainText("已保存并生效");
   await page.goto("/#/notes");
   await expect(page.locator("#notes-list")).toContainText("Persistent note");
 });
-
-test("slow response from old route cannot overwrite a new page", async ({
+test("slow old route cannot replace a new route; mobile note editor fits", async ({
   page,
   request,
-}) => {
-  const d = await doc(request);
+}, info) => {
+  const d = await document(request);
   await page.goto("/");
-  await expect(page.locator(".welcome")).toBeVisible();
-  await page.route(`**/api/documents/${d.id}`, async (route) => {
-    await new Promise((r) => setTimeout(r, 900));
+  await page.route(`**/api/documents/${d.id}*`, async (route) => {
+    await new Promise((r) => setTimeout(r, 700));
     try {
       await route.continue();
     } catch {}
   });
   await page.evaluate((id) => (location.hash = "#/read/" + id), d.id);
-  await page.waitForTimeout(150);
-  await page.locator("a[data-nav=profile]").click();
-  await expect(page.locator("#domains")).toBeVisible();
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(100);
+  await page.goto("/#/profile");
+  await page.waitForTimeout(850);
   await expect(page.locator("#domains")).toBeVisible();
   await expect(page.locator("#article")).toHaveCount(0);
-});
-
-test("mobile reading and note panel fit viewport", async ({
-  page,
-  request,
-}) => {
+  await page.unrouteAll();
   await page.setViewportSize({ width: 390, height: 844 });
-  const d = await doc(request);
   await read(page, d.id);
+  await selectParagraph(page);
+  await page.locator("[data-selection-action=notes]").click();
+  await page.locator("#note-body").fill("Mobile note");
+  await expect(page.locator("#note-state")).toContainText("已保存");
+  const rect = await page.locator("#tool-panel").boundingBox();
+  expect(rect.x).toBeGreaterThanOrEqual(0);
+  expect(rect.x + rect.width).toBeLessThanOrEqual(391);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
-  await page.locator("#tool-notes").click();
-  await page.locator("#note-body").fill("手机上的笔记");
-  await expect(page.locator("#note-state")).toHaveText("已自动保存 ✓");
-  expect(
-    await page
-      .locator("#tool-panel")
-      .evaluate((el) => el.getBoundingClientRect().right),
-  ).toBeLessThanOrEqual(390);
-  await page.screenshot({
-    path: "test-results/mobile-reader.png",
-    fullPage: false,
+  await info.attach("mobile-note.png", {
+    body: await page.screenshot(),
+    contentType: "image/png",
   });
 });
-
-test("EPUB file upload, ordered chapters and invalid file feedback", async ({
-  page,
-}) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "＋ 添加阅读" }).click();
-  await page.locator("#upload-file").setInputFiles({
-    name: "bad.epub",
-    mimeType: "application/epub+zip",
-    buffer: Buffer.from("invalid zip"),
-  });
-  await expect(page.locator("#upload-state")).toContainText("文件损坏");
-  await page.locator("#upload-file").setInputFiles("web/sample.epub");
-  await expect(page.locator("#upload-state")).toContainText("已完整导入 2 章");
-  await page.locator("#open-import").click();
-  await expect(
-    page.getByRole("heading", { name: "The Quiet Reader" }),
-  ).toBeVisible();
-  await page
-    .getByRole("link")
-    .filter({ hasText: "A conversation with a stranger" })
-    .click();
-  await expect(page.locator("#article h2").first()).toHaveText(
-    "A conversation with a stranger",
-  );
-  await page.locator("#tool-outline").click();
-  await expect(page.locator("#tool-panel .toc-link")).toHaveCount(2);
-  await page.locator("#tool-panel .toc-link").nth(1).click();
-  await expect(page.locator("#article .code")).toContainText(
-    "attention = curiosity + time",
-  );
-});
-
-test("note selection excludes glosses, rapid close/reopen creates one note, offline draft recovers", async ({
-  page,
-  request,
-}) => {
-  const d = await doc(request);
-  await read(page, d.id);
-  await page
-    .locator("[data-block]")
-    .nth(1)
-    .evaluate((el) => {
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      const selection = getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-    });
-  await expect(page.locator("#tool-notes")).toHaveText("笔记 · 已选文字");
-  await page.locator("#tool-notes").click();
-  await expect(page.locator("#note-quote")).toContainText("On a mild");
-  expect(await page.locator("#note-quote").textContent()).not.toMatch(
-    /[\u4e00-\u9fff]/,
-  );
-  await page.route("**/api/notes", async (route) => {
-    if (route.request().method() === "POST")
-      await new Promise((r) => setTimeout(r, 900));
-    await route.continue();
-  });
-  await page.locator("#note-body").fill("Draft one");
-  await page.getByRole("button", { name: "关闭侧栏" }).click();
-  await page.locator("#tool-notes").click();
-  await page.locator("#note-body").fill("Newest draft survives");
-  await expect(page.locator("#note-state")).toHaveText("已自动保存 ✓");
-  await expect
-    .poll(
-      async () =>
-        (await (await request.get("/api/notes?doc_id=" + d.id)).json()).length,
-    )
-    .toBe(1);
-  expect(
-    (await (await request.get("/api/notes?doc_id=" + d.id)).json())[0].body,
-  ).toBe("Newest draft survives");
-  await page.context().setOffline(true);
-  await page.locator("#note-body").fill("Written without a connection");
-  await expect(page.locator("#note-state")).toHaveText("未同步 · 草稿已保留");
-  await page.context().setOffline(false);
-  await expect(page.locator("#note-state")).toHaveText("已自动保存 ✓");
-});
-
-test("speech uses English source chunks and stops on leaving the reader", async ({
+test("speech consumes only English and is stopped on leaving; finish/archive remain reversible", async ({
   page,
   request,
 }) => {
@@ -437,51 +332,38 @@ test("speech uses English source chunks and stops on leaving the reader", async 
       },
     });
   });
-  const d = await doc(request);
+  const d = await document(request);
   await read(page, d.id);
-  await page.locator("#tool-tts").click();
-  await page.locator("#speech-play").click();
-  const spoken = await page.evaluate(() => window.__spoken);
-  expect(spoken).toHaveLength(1);
-  expect(spoken[0].lang).toBe("en-US");
-  expect(spoken[0].text).not.toMatch(/[\u4e00-\u9fff]/);
-  expect(spoken[0].text.length).toBeLessThanOrEqual(221);
-  const before = await page.evaluate(() => window.__cancelled);
-  await page.locator(".brand").click();
-  await expect(page.locator(".welcome")).toBeVisible();
-  expect(await page.evaluate(() => window.__cancelled)).toBeGreaterThan(before);
-});
-
-test("finish, stats page and reversible archive preserve source", async ({
-  page,
-  request,
-}) => {
-  const d = await doc(request);
+  await tools(page, "tts");
+  expect(await page.evaluate(() => window.__spoken.length)).toBe(1);
+  expect((await page.evaluate(() => window.__spoken))[0].text).not.toMatch(
+    /[一-鿿]/,
+  );
+  await home(page);
+  expect(await page.evaluate(() => window.__cancelled)).toBeGreaterThan(0);
   await read(page, d.id);
+  await tools(page, "more");
   await page.locator("#finish-reading").click();
   await expect(page.locator("#finish-reading")).toHaveText("已记录 ✓");
+  await expect(page.locator(".trace-entries")).toHaveCount(1);
+  await tools(page, "more");
   await page.locator("#archive-reading").click();
   await expect(page.locator("#archive-reading")).toHaveText("移回书架");
   await page.goto("/#/stats");
-  await expect(
-    page.getByRole("heading", { name: "每一页，都算数。" }),
-  ).toBeVisible();
-  await expect(page.locator(".stats-grid")).toContainText("标记读完的篇数");
-  await page.goto("/");
-  await page.locator("[data-filter=archived]").click();
-  await expect(page.locator("#article-grid")).toContainText(d.title);
-  await page.locator(`#article-grid a[href="#/read/${d.id}"]`).click();
+  await expect(page.locator(".stats-grid")).toContainText("标记读完");
+  await read(page, d.id);
+  await tools(page, "more");
   await page.locator("#archive-reading").click();
   await expect(page.locator("#archive-reading")).toHaveText("归档");
   expect(
     (await (await request.get("/api/documents/" + d.id)).json()).text,
   ).toBe(sample);
 });
-
-test("real local auth protects data and permits login; logout resets test lock", async ({
+test("local auth protects data, rejects wrong login and unlocks with saved credentials", async ({
   page,
   request,
 }) => {
+  await request.patch("/api/plugins/auth", { data: { enabled: true } });
   await page.goto("/#/login");
   await page.locator("#auth-user").fill("acceptance");
   await page.locator("#auth-password").fill("test-only-password");
@@ -498,7 +380,7 @@ test("real local auth protects data and permits login; logout resets test lock",
   await page.locator("#auth-password").fill("test-only-password");
   await page.getByRole("button", { name: "解锁阅读空间" }).click();
   await expect(page.locator(".welcome")).toBeVisible();
-  // Shared disposable test server: disable the lock via the authenticated browser before next test.
+  // The shared server is disposable. Keep later fixtures unlocked without touching production data.
   await page.evaluate(() =>
     fetch("/api/plugins/auth", {
       method: "PATCH",

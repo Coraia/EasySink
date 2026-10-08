@@ -11,9 +11,10 @@ import {
   openDialog,
   busy,
 } from "./core.js";
-import { PluginHost } from "./plugin-host.js";
-import { Reader } from "./reader.js";
+import { PluginHost } from "./plugin-host.js?v=20261006-grab1";
+import { Reader } from "./reader.js?v=20261008-paper";
 import { renderAI } from "./ai-settings.js";
+import { installReadingTrackpad } from "./reading-trackpad.js?v=20261007-native-hd";
 const hooks = new Map(),
   routes = new Map();
 const ctx = {
@@ -58,6 +59,8 @@ const ctx = {
 };
 const host = new PluginHost(ctx);
 ctx.host = host;
+// App-owned input stream survives chapter loading; it reads no stale Reader.
+installReadingTrackpad(ctx);
 const palette = [
   "#dce4d8",
   "#e9dfcc",
@@ -75,12 +78,15 @@ function cards(items) {
     .join("");
 }
 async function route() {
+  ctx.readStarted = performance.now();
   ctx.scope?.dispose();
   ctx.reader = null;
   const scope = (ctx.scope = new Scope());
   const hash = location.hash.replace(/^#\/?/, "");
   const [name, id] = hash.split("/");
-  document.body.classList.remove("reading", "immersive");
+  document.body.classList.remove("reading", "immersive", "paged-reading");
+  if (name === "read" && /^\d+$/.test(id))
+    document.body.classList.add("paged-reading");
   $("#header-context").textContent = "你的英文阅读空间";
   $$("[data-nav]").forEach((a) =>
     a.classList.toggle("active", a.dataset.nav === (name || "home")),
@@ -88,15 +94,21 @@ async function route() {
   ctx.root.innerHTML = '<div class="loading" role="status">正在打开…</div>';
   window.scrollTo(0, 0);
   try {
-    const { plugins } = await api("/plugins", { signal: scope.signal });
+    const reading = name === "read" && /^\d+$/.test(id);
+    // These reads are independent. Plugin installation still completes before
+    // the reader mounts; personal selection is computed by the document API.
+    const [{ plugins }, profile, doc] = await Promise.all([
+      api("/plugins", { signal: scope.signal }),
+      api("/profile", { signal: scope.signal }),
+      reading
+        ? api(`/documents/${id}?compact=true`, { signal: scope.signal })
+        : null,
+    ]);
     if (scope.signal.aborted) return;
     await host.sync(plugins);
     if (scope.signal.aborted) return;
-    ctx.profile = await api("/profile", { signal: scope.signal });
-    if (scope.signal.aborted) return;
-    if (name === "read" && /^\d+$/.test(id)) {
-      const doc = await api(`/documents/${id}`, { signal: scope.signal });
-      if (scope.signal.aborted) return;
+    ctx.profile = profile;
+    if (reading) {
       ctx.reader = new Reader(ctx, scope, doc);
       await ctx.reader.mount();
     } else if (name === "profile" || name === "settings")
@@ -111,18 +123,21 @@ async function route() {
         '<div class="empty"><h2>这个功能已关闭</h2><p>可在功能管理里重新开启，原来的数据仍在。</p><a class="button" href="#/labs">打开功能管理</a></div>';
   } catch (err) {
     if (err.name === "AbortError" || scope.signal.aborted) return;
+    document.body.classList.remove("reading", "immersive", "paged-reading");
     if (err.status === 401 && routes.has("login")) {
       await routes.get("login")(scope);
       return;
     }
+    scope.dispose();
+    ctx.reader = null;
     ctx.root.innerHTML = `<div class="page"><h1>暂时无法打开</h1>${errorBox(err)}<button id="retry-page">重新连接</button></div>`;
-    scope.on($("#retry-page"), "click", route);
+    $("#retry-page").onclick = route;
   }
 }
 async function renderHome(scope) {
   const documents = await api("/documents", { signal: scope.signal });
   if (scope.signal.aborted) return;
-  ctx.root.innerHTML = `<div class="page"><div class="page-head"><div><div class="eyebrow">YOUR READING SPACE</div><h1>留在故事里。</h1><p>从一篇文章开始，让语言不再打断思考。</p></div><div class="row" id="home-actions"><button class="primary" id="new-reading">＋ 添加阅读</button></div></div><section class="welcome ${documents.length ? "compact" : ""}"><div class="welcome-copy"><div class="eyebrow">READ WITH UNDERSTANDING</div><h2>好的阅读体验，<br>是忘记自己在读英文。</h2><p>只解释你需要的词、表达与背景。无需先做测试，开始阅读后，辅助会随你的反馈调整。</p><div class="row wrap"><button id="try-sample">体验一篇示例 <span>→</span></button><a class="text-button" href="#/profile">调整我的阅读辅助</a></div></div><div class="reading-sample"><p>Curiosity is a quiet form of <span>courage <small>勇气</small></span>.</p><div class="caption">英文在前，理解就在旁边。</div></div></section><div id="home-continue"></div><div id="book-collections"></div><div class="section-heading"><h2>我的阅读</h2><span>${documents.filter((d) => !d.archived).length} 篇内容</span></div><div class="shelf-tools"><div class="filters" role="group" aria-label="内容筛选"><button class="filter active" data-filter="all">全部</button><button class="filter" data-filter="recent">最近添加</button><button class="filter" data-filter="archived">已归档</button></div><input type="search" id="shelf-search" placeholder="搜索标题…" aria-label="搜索书架"></div><div class="book-grid" id="article-grid"></div></div>`;
+  ctx.root.innerHTML = `<div class="page"><div class="page-head"><div><div class="eyebrow">YOUR READING SPACE</div><h1>留在故事里。</h1><p>从一篇文章开始，让语言不再打断思考。</p></div><div class="row" id="home-actions"><button class="primary" id="new-reading">＋ 添加阅读</button></div></div><section class="welcome ${documents.length ? "compact" : ""}"><div class="welcome-copy"><div class="eyebrow">READ WITH UNDERSTANDING</div><h2>好的阅读体验，<br>是忘记自己在读英文。</h2><p>只解释你需要的词、表达与背景。无需先做测试，开始阅读后，辅助会随你的反馈调整。</p><div class="row wrap"><button id="try-sample">体验一篇示例 <span>→</span></button><button id="try-grammar-sample" class="text-button">体验长难句</button><a class="text-button" href="#/profile">调整我的阅读辅助</a></div></div><div class="reading-sample"><p>Curiosity is a quiet form of <span>courage <small>勇气</small></span>.</p><div class="caption">英文在前，理解就在旁边。</div></div></section><div id="home-continue"></div><div id="book-collections"></div><div class="section-heading"><h2>我的阅读</h2><span id="shelf-count" role="status">正在整理书架…</span></div><div class="shelf-tools"><div class="filters" role="group" aria-label="内容筛选"><button class="filter active" data-filter="all">全部</button><button class="filter" data-filter="recent">最近添加</button><button class="filter" data-filter="archived">已归档</button></div><input type="search" id="shelf-search" placeholder="搜索标题…" aria-label="搜索书架"></div><div class="book-grid" id="article-grid"></div></div>`;
   let filter = "all";
   const view = { scope, documents, collections: [], chapterIds: new Set() };
   const draw = () => {
@@ -132,6 +147,9 @@ async function renderHome(scope) {
         : !d.archived && !view.chapterIds.has(d.id),
     );
     if (filter !== "archived") items = [...view.collections, ...items];
+    const bookCount = filter === "archived" ? 0 : view.collections.length;
+    $("#shelf-count").textContent =
+      `${bookCount} 本书 · ${items.length - bookCount} 篇内容`;
     const search = $("#shelf-search").value.toLowerCase();
     items = items.filter((d) => d.title.toLowerCase().includes(search));
     if (filter === "recent") items = items.slice(0, 6);
@@ -139,8 +157,32 @@ async function renderHome(scope) {
       cards(items) ||
       '<div class="empty"><h3>这里还没有内容</h3><p>添加一篇文章，或导入一本 EPUB，开始自己的阅读旅程。</p></div>';
   };
-  draw();
+  $("#article-grid").innerHTML =
+    '<p class="muted" role="status">正在整理书架…</p>';
   scope.on($("#new-reading"), "click", () => importText());
+  scope.on($("#try-grammar-sample"), "click", (ev) =>
+    busy(
+      ev.target,
+      async () => {
+        const title = "在关系中理解知识 · 长难句体验";
+        const existing = documents.find((d) => d.title === title);
+        if (existing) {
+          ctx.navigate("#/read/" + existing.id);
+          return;
+        }
+        const text = await fetch("/static/grammar-sample.txt", {
+          signal: scope.signal,
+        }).then((r) => r.text());
+        const value = await api("/documents", {
+          method: "POST",
+          body: { title, text },
+          signal: scope.signal,
+        });
+        if (!scope.signal.aborted) ctx.navigate("#/read/" + value.id);
+      },
+      "正在打开…",
+    ).catch(() => {}),
+  );
   scope.on($("#try-sample"), "click", (ev) =>
     busy(
       ev.target,
@@ -164,7 +206,8 @@ async function renderHome(scope) {
       draw();
     }
   });
-  await ctx.run("home", { scope, documents });
+  await ctx.run("home", view);
+  if (!scope.signal.aborted) draw();
 }
 function importText() {
   const draft = local.get("import-draft", { title: "", text: "" });
@@ -232,7 +275,7 @@ async function renderProfile(scope) {
     )
     .join(
       "",
-    )}${![0, 2, 4, 8].includes(p.density) ? `<option selected value="${p.density}">${p.density} 处</option>` : ""}</select></div><div class="setting-row"><div><strong>重复解释</strong><p>同一个词在一篇文章中再次出现时，仍显示解释。</p></div><input class="switch" type="checkbox" id="repeat" aria-label="重复解释" ${p.repeat ? "checked" : ""}></div><div class="setting-row"><div><strong>表达与文化注释</strong><p>${p.l1_available ? "已连接 AI，可在阅读页请求增强注释。" : "常用表达可离线解释；更广的语法与文化注释需要配置 AI。"}</p></div><input class="switch" type="checkbox" id="l1-enabled" aria-label="表达与文化注释" ${p.l1_enabled ? "checked" : ""}></div></section><section class="card"><h2>我熟悉的领域</h2><p class="muted">选择你已有背景知识的领域，减少相关背景解释。</p><div class="chips" id="domains">${Object.entries(
+    )}${![0, 2, 4, 8].includes(p.density) ? `<option selected value="${p.density}">${p.density} 处</option>` : ""}</select></div><div class="setting-row"><div><strong>重复解释</strong><p>同一个词在一篇文章中再次出现时，仍显示解释。</p></div><input class="switch" type="checkbox" id="repeat" aria-label="重复解释" ${p.repeat ? "checked" : ""}></div><div class="setting-row"><div><strong>表达与文化注释</strong><p>${p.l1_available ? "已连接 AI，在阅读时主动请求上下文解释与语法分析。" : "常用表达可离线解释；上下文解释与语法分析需配置 AI 后主动请求。"}</p></div><input class="switch" type="checkbox" id="l1-enabled" aria-label="表达与文化注释" ${p.l1_enabled ? "checked" : ""}></div></section><section class="card"><h2>我熟悉的领域</h2><p class="muted">选择你已有背景知识的领域，减少相关背景解释。</p><div class="chips" id="domains">${Object.entries(
     p.domain_catalog,
   )
     .map(
@@ -241,7 +284,7 @@ async function renderProfile(scope) {
     )
     .join(
       "",
-    )}</div><p class="save-state" id="domain-state">已选择 ${domains.size} 个领域 · 自动保存</p></section><section class="card"><div class="row between"><div><h2>了解我的阅读起点</h2><p class="muted" style="margin:0;font-size:14px">可选的短测试，给出词频熟悉度范围。</p></div><button id="vocab-test">试一试 →</button></div><div id="vocab-test-area"></div></section><section class="card row between"><div><h3>AI 与自然语音</h3><p class="muted">连接服务后，生成注释、翻译与更自然的朗读。</p></div><a class="button" href="#/ai">配置服务 →</a></section><div id="profile-extensions" class="stack"></div><section class="card row between"><div><h3>让功能保持轻盈</h3><span class="muted">按需开关 15 个功能，已有数据会保留。</span></div><a class="button" href="#/labs">功能管理 →</a></section></div>`;
+    )}</div><p class="save-state" id="domain-state">已选择 ${domains.size} 个领域 · 自动保存</p></section><section class="card"><div class="row between"><div><h2>了解我的阅读起点</h2><p class="muted" style="margin:0;font-size:14px">可选的短测试，给出词频熟悉度范围。</p></div><button id="vocab-test">试一试 →</button></div><div id="vocab-test-area"></div></section><section class="card row between"><div><h3>AI 与语音</h3><p class="muted">配置按需解释、选区翻译、语法分析和朗读。</p></div><a class="button" href="#/ai">配置服务 →</a></section><div id="profile-extensions" class="stack"></div><section class="card row between"><div><h3>让功能保持轻盈</h3><span class="muted">按需开关各项功能，已有数据会保留。</span></div><a class="button" href="#/labs">功能管理 →</a></section></div>`;
   const save = (fields) => {
     const version = ++latest;
     $("#profile-save").textContent = "保存中…";
@@ -336,7 +379,7 @@ async function vocabTest(scope) {
 }
 async function renderLabs(scope) {
   const catalog = host.catalog;
-  ctx.root.innerHTML = `<div class="settings-layout"><div class="page-head"><div><div class="eyebrow">A LIGHTER READER</div><h1>留下你需要的。</h1><p>关闭立即生效，书籍、笔记与设置仍会保留。</p></div><span class="save-state" id="plugin-save" role="status">${catalog.filter((p) => p.enabled).length} / 15 已开启</span></div><div class="card">${catalog.map((p, i) => `<div class="plugin-row"><span class="number">${String(i + 1).padStart(2, "0")}</span><div class="description"><h3>${e(p.name)}</h3><p>${e(p.summary)}</p></div><input type="checkbox" class="switch" data-plugin="${p.id}" aria-label="${e(p.name)}" ${p.enabled ? "checked" : ""}></div>`).join("")}</div><p class="muted" style="font-size:13px">账号功能仅用于锁住这台机器上的阅读空间。关闭访问锁后，同机访问不再需要密码。</p><a class="text-button" href="#/profile">← 返回阅读偏好</a></div>`;
+  ctx.root.innerHTML = `<div class="settings-layout"><div class="page-head"><div><div class="eyebrow">A LIGHTER READER</div><h1>留下你需要的。</h1><p>关闭立即生效，书籍、笔记与设置仍会保留。</p></div><span class="save-state" id="plugin-save" role="status">${catalog.filter((p) => p.enabled).length} / ${catalog.length} 已开启</span></div><div class="card">${catalog.map((p, i) => `<div class="plugin-row"><span class="number">${String(i + 1).padStart(2, "0")}</span><div class="description"><h3>${e(p.name)}</h3><p>${e(p.summary)}</p></div><input type="checkbox" class="switch" data-plugin="${p.id}" aria-label="${e(p.name)}" ${p.enabled ? "checked" : ""}></div>`).join("")}</div><p class="muted" style="font-size:13px">账号功能仅用于锁住这台机器上的阅读空间。关闭访问锁后，同机访问不再需要密码。</p><a class="text-button" href="#/profile">← 返回阅读偏好</a></div>`;
   scope.on(ctx.root, "change", async (ev) => {
     const box = ev.target.closest("[data-plugin]");
     if (!box) return;

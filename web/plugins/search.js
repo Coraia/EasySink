@@ -1,4 +1,4 @@
-import { $, $$ } from "../core.js";
+import { $ } from "../core.js";
 export function install(ctx) {
   return ctx.hook("read", (r) =>
     r.tool("search", "搜索", () =>
@@ -13,16 +13,25 @@ export function install(ctx) {
           const jump = (step) => {
             if (!hits.length) return;
             current = (current + step + hits.length) % hits.length;
-            const hit = hits[current];
-            hit.scrollIntoView({ block: "center", behavior: "instant" });
+            r.restore(hits[current]);
             $("#find-count", el).textContent =
               `${current + 1} / ${hits.length} 处`;
           };
           const search = () => {
             r.search = $("#find-text", el).value.trim().slice(0, 120);
-            r.draw();
-            hits = $$(".search-hit", $("#article"));
+            hits = [];
             current = -1;
+            if (r.search) {
+              const regex = new RegExp(
+                r.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+                "ig",
+              );
+              for (const b of r.doc.blocks) {
+                for (const m of b.text.matchAll(regex))
+                  hits.push(r.anchorFor(b.id, m.index, m.index + m[0].length));
+              }
+            }
+            r.pages.render();
             $("#find-count", el).textContent = hits.length
               ? `${hits.length} 处`
               : "没有找到匹配";
@@ -45,7 +54,7 @@ export function install(ctx) {
             if (!r.scope.signal.aborted) {
               const a = r.position();
               r.search = "";
-              r.draw();
+              r.pages.render();
               r.restore(a);
             }
           });

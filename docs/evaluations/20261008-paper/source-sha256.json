@@ -1,0 +1,13 @@
+{
+  "web/paper-model.js": "0914320087e0b2fb84f155ab9809ec072bca46a3d4c89c293d3d71e32d53ac5e",
+  "web/page-fold.js": "b3666bc189ca2b8cb794d3bd33a78f07c06b2257ab32acd61bac06b934df2482",
+  "web/page-curl-renderer.js": "c3f6ef38e793c73863e8c9efa1d2c19c35a0b14a60013dbab319525de0426372",
+  "web/pagination.js": "bb1d202f115700990c8371a74aa8e69325b0fa1f1de58a34ea9ffa7f94bb66c9",
+  "web/reader.js": "e8b5ebb9776491bdef0d1c69deddc1728883a74b641af6de00b21b7b6286b2c6",
+  "web/app.js": "dc45fdce52fa06d3e7e197f6313aa52c3cebf84ffd0cd5117e111eb18611c9ce",
+  "web/index.html": "a2eb7ba580820aee0e0173189a796cec81fb68a3aa75b679be594cad1d195b7e",
+  "web/style.css": "db0a1036f4b74c5a62a07237638a5d6049b64916183e77617db5f712da45c5d4",
+  "src/wise_reader/app.py": "dad9c580db4811a6037bc51f2608af92dfbd3a6e8f88751fb1bd467ccd791755",
+  "tests/browser/reader-paper.spec.js": "16806d349b8949db1b454be45f5e0ec772fe0b3275008737727af43f30c9128c",
+  "tests/browser/reader-twist.spec.js": "a8a8146cc66110442ce30a928c6b3f5e881e54557993c09a7cad1e69e2518cb9"
+}

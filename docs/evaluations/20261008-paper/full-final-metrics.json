@@ -1,0 +1,146 @@
+{
+  "stats": {
+    "startTime": "2026-10-08T00:00:43.681Z",
+    "duration": 331982.44800000003,
+    "expected": 110,
+    "skipped": 1,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "frames": [
+    {
+      "test": "12 continuous paper turns keep a bounded GPU cache and record frame timing separately from screenshots",
+      "name": "paper-frame-metrics.json",
+      "turns": 12,
+      "p95FrameMax": 32,
+      "p95InputMax": 23.2,
+      "p95SolveMax": 0.2,
+      "releaseMax": 388.2,
+      "gpu": {
+        "width": 698,
+        "height": 459,
+        "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+      }
+    },
+    {
+      "test": "Retina 120Hz phase-fixture turns retain bounded rendering latency and GPU cache over repeated reversals",
+      "name": "retina-frame-metrics.json",
+      "turns": 12,
+      "p95FrameMax": 29.7,
+      "p95InputMax": 24.5,
+      "p95SolveMax": 0.2,
+      "releaseMax": 158.3
+    },
+    {
+      "test": "deep diagonal native turns preserve root rendering cadence and release timing",
+      "name": "deep-root-frame-metrics.json",
+      "turns": 12,
+      "p95FrameMax": 19.3,
+      "p95InputMax": 10.4,
+      "p95SolveMax": 0.2,
+      "releaseMax": 115.8
+    }
+  ],
+  "nativeSequence": [
+    {
+      "test": "single: contact holds, reverses, ends, and rapid/alternating turns preserve order",
+      "turns": 8,
+      "releaseMax": 152.2
+    },
+    {
+      "test": "double: contact holds, reverses, ends, and rapid/alternating turns preserve order",
+      "turns": 8,
+      "releaseMax": 140.8
+    }
+  ],
+  "resolution": [
+    {
+      "test": "DPR 1: canvas and page textures retain native resolution with bounded cache",
+      "resolution": {
+        "dpr": 1,
+        "canvas": {
+          "width": 760,
+          "height": 710,
+          "cssWidth": 760,
+          "cssHeight": 709.859375,
+          "ratio": 1
+        },
+        "front": {
+          "width": 760,
+          "height": 710,
+          "ratio": 1
+        },
+        "back": {
+          "width": 760,
+          "height": 710,
+          "ratio": 1
+        },
+        "software": false,
+        "pixels": 8000000
+      }
+    },
+    {
+      "test": "DPR 2: canvas and page textures retain native resolution with bounded cache",
+      "resolution": {
+        "dpr": 2,
+        "canvas": {
+          "width": 1520,
+          "height": 1420,
+          "cssWidth": 760,
+          "cssHeight": 709.859375,
+          "ratio": 2
+        },
+        "front": {
+          "width": 1520,
+          "height": 1420,
+          "ratio": 2
+        },
+        "back": {
+          "width": 1520,
+          "height": 1420,
+          "ratio": 2
+        },
+        "software": false,
+        "pixels": 8000000
+      }
+    },
+    {
+      "test": "DPR 3: canvas and page textures retain native resolution with bounded cache",
+      "resolution": {
+        "dpr": 3,
+        "canvas": {
+          "width": 2280,
+          "height": 2130,
+          "cssWidth": 760,
+          "cssHeight": 709.859375,
+          "ratio": 3
+        },
+        "front": {
+          "width": 2280,
+          "height": 2130,
+          "ratio": 3
+        },
+        "back": {
+          "width": 2280,
+          "height": 2130,
+          "ratio": 3
+        },
+        "software": false,
+        "pixels": 8000000
+      }
+    }
+  ],
+  "material": {
+    "approvedPoses": 240,
+    "twistPoses": 36,
+    "stretchMax": 1.001521444519415,
+    "rootErrorMax": 0.00044373413876028743,
+    "approvedDifferenceMax": 0,
+    "gripErrorMax": 0.02414126484177386
+  },
+  "spine": {
+    "poses": 24,
+    "coverageMin": 1,
+    "pixelErrorMax": 0.25
+  }
+}

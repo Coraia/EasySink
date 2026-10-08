@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Literal
 from threading import RLock
 from urllib.parse import urlsplit
 
@@ -24,6 +25,8 @@ class ProviderPatch(BaseModel):
     voice: str | None = Field(default=None, max_length=100)
     api_key: str | None = Field(default=None, max_length=2000)
     clear_key: bool = False
+    mode: Literal["local", "browser", "natural"] | None = None
+    local_voice: str | None = Field(default=None, max_length=100)
 
 
 class ConfigPatch(BaseModel):
@@ -66,6 +69,8 @@ class AIConfig:
                 model="gpt-4o-mini-tts",
                 voice="marin",
                 api_key="",
+                mode="local",
+                local_voice="Samantha",
             ),
         }
         if self.path.exists():
@@ -121,7 +126,7 @@ class AIConfig:
                         continue
                     if k == "api_key" and not v.strip():
                         continue
-                    if k == "voice" and kind != "speech":
+                    if k in ("voice", "mode", "local_voice") and kind != "speech":
                         continue
                     p[k] = v.strip() if isinstance(v, str) else v
                 if item.clear_key:

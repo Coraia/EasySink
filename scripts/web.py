@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -14,6 +15,19 @@ ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / ".runtime"
 PID = RUNTIME / "web.json"
 URL = "http://127.0.0.1:8766/"
+
+
+def native_bridge(action):
+    if sys.platform != 'darwin' or os.environ.get('WR_NATIVE_TRACKPAD') == '0':
+        return
+    try:
+        result = subprocess.run([str(ROOT / '.venv/bin/python'), str(ROOT / 'scripts/trackpad_lab/manage.py'), action],
+                                cwd=ROOT, capture_output=True, text=True, timeout=40)
+    except (OSError, subprocess.TimeoutExpired):
+        print('本机触控板接入未就绪；正文与鼠标翻页仍可使用。')
+        return
+    if result.returncode:
+        print('本机触控板接入未就绪；正文与鼠标翻页仍可使用。')
 
 
 def healthy():
@@ -45,11 +59,13 @@ def stop():
         else:
             raise SystemExit("服务仍在退出，可能正在结束 AI 请求；请稍后执行 status。")
     PID.unlink(missing_ok=True)
+    native_bridge('stop')
     print("Web 已停止")
 
 
 def start():
     if healthy():
+        native_bridge('start')
         print("Web 已就绪：" + URL)
         return
     if owned_pid():
@@ -81,6 +97,7 @@ def start():
     PID.write_text(json.dumps({"pid": process.pid, "url": URL}))
     for _ in range(80):
         if healthy():
+            native_bridge('start')
             print("Web 已启动：" + URL + "\n日志：" + str(RUNTIME / "web.log"))
             return
         if process.poll() is not None:

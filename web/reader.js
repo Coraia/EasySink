@@ -1,4 +1,13 @@
 import { $, $$, e, api, Scope, local, toast, errorBox } from "./core.js";
+import { ReadingPages } from "./pagination.js?v=20261008-paper";
+import { setupReadingInteractions } from "./reading-interactions.js?v=20261006-grab1";
+import { installReadingTraces } from "./reading-traces.js";
+import {
+  readerShell,
+  installReaderChrome,
+  installCoreReaderTools,
+  readerIcon,
+} from "./reader-chrome.js?v=20261006-grab1";
 export class Reader {
   constructor(ctx, scope, doc) {
     this.ctx = ctx;
@@ -16,20 +25,12 @@ export class Reader {
     const d = this.doc;
     document.body.classList.add("reading");
     $("#header-context").textContent = d.title;
-    this.ctx.root.innerHTML = `<div class="reader"><div class="reader-bar"><a class="crumb" href="#/">← 书架 / ${e(d.title)}</a><div class="density-control"><span>辅助</span>${[
-      [0, "原文"],
-      [2, "轻"],
-      [4, "适中"],
-      [8, "多"],
-    ]
-      .map(
-        ([v, label]) =>
-          `<button data-density="${v}" aria-label="辅助密度：${label}" class="${d.density === v ? "active" : ""}">${label}</button>`,
-      )
-      .join(
-        "",
-      )}</div><div class="reader-actions" id="reader-actions"></div></div><div class="reader-layout"><section class="reading-sheet"><header class="reading-heading"><div class="eyebrow">${d.chapter ? `CHAPTER ${d.chapter.idx + 1} / ${d.chapters.length}` : "A MOMENT TO READ"}</div><h1>${e(d.title)}</h1><div class="reading-meta"><span>${d.word_count.toLocaleString()} 词</span><span>约 ${Math.max(1, Math.ceil(d.word_count / 180))} 分钟</span><span id="annotation-meta"></span></div></header><article id="article" lang="en" aria-label="英文正文"></article><footer class="reader-foot"><p id="density-hint"></p><div class="row between"><span id="reader-save" role="status">${this.ctx.enabled("progress") ? "阅读位置会自动保存" : "续读已关闭"}</span><div class="row"><button id="archive-reading" class="text-button">${d.archived ? "移回书架" : "归档"}</button><button id="finish-reading" class="text-button">读完了 ✓</button></div></div></footer><div class="reader-end" id="chapter-nav"></div></section><aside class="tool-panel" id="tool-panel" hidden></aside></div><div class="read-progress"><div></div></div></div>`;
-    this.draw();
+    document.body.classList.add("paged-reading");
+    this.ctx.root.innerHTML = readerShell(d, this.ctx.enabled("progress"));
+    installReaderChrome(this);
+    setupReadingInteractions(this);
+    this.pages = new ReadingPages(this);
+    await this.draw();
     const s = this.scope;
     s.on($(".density-control"), "click", (ev) => {
       const b = ev.target.closest("[data-density]");
@@ -39,21 +40,42 @@ export class Reader {
       if (window.getSelection()?.toString()) return;
       const el = ev.target.closest("[data-annotation]");
       if (el) this.pop(el);
+      else {
+        const unit = ev.target.closest("[data-word]");
+        if (unit) {
+          const anchor = this.anchorFor(
+            unit.dataset.sourceBlock,
+            +unit.dataset.sourceStart,
+            +unit.dataset.sourceEnd,
+          );
+          this.lookup(unit.dataset.word, unit, anchor);
+        }
+      }
     });
     s.on($("#article"), "keydown", (ev) => {
       if (
         (ev.key === "Enter" || ev.key === " ") &&
-        ev.target.matches("[data-annotation]")
+        ev.target.matches("[data-annotation],[data-word]")
       ) {
         ev.preventDefault();
-        this.pop(ev.target);
+        if (ev.target.matches("[data-annotation]")) this.pop(ev.target);
+        else
+          this.lookup(
+            ev.target.dataset.word,
+            ev.target,
+            this.anchorFor(
+              ev.target.dataset.sourceBlock,
+              +ev.target.dataset.sourceStart,
+              +ev.target.dataset.sourceEnd,
+            ),
+          );
       }
     });
     s.on(document, "selectionchange", () => this.captureSelection());
     s.on($("#article"), "dblclick", (ev) => {
       const word = window.getSelection()?.toString().trim();
       if (word && /^[A-Za-z'-]+$/.test(word) && word.length < 60)
-        this.lookup(word, ev.target);
+        this.lookup(word, ev.target, this.selection);
     });
     s.on(
       window,
@@ -75,7 +97,8 @@ export class Reader {
           },
         });
         ev.target.textContent = "已记录 ✓";
-        toast("阅读已记录，下一篇见。");
+        toast("阅读已记录，原始痕迹已保留。");
+        this.showTraces?.();
       } catch (err) {
         toast(err.message);
       }
@@ -103,74 +126,77 @@ export class Reader {
         .join(" ");
     }
     this.tool("outline", "目录", () => this.outline());
-    if (this.ctx.profile.l1_available)
-      this.tool("analyze", "增强注释", async () => {
-        try {
-          await api(`/documents/${d.id}/analyze`, { method: "POST" });
-          toast("增强注释已加入任务");
-          this.ctx.navigate("#/jobs");
-        } catch (err) {
-          toast(err.message);
-        }
-      });
     s.cleanup(() => {
       this.panelScope?.dispose();
       this.closePop();
-      document.body.classList.remove("reading", "immersive");
+      document.body.classList.remove("reading", "immersive", "paged-reading");
     });
-    if (this.ctx.profile.l1_available) {
-      let lastCompleted = 0;
-      this.scope.interval(async () => {
-        try {
-          const jobs = await api("/jobs", { signal: this.scope.signal });
-          const related = jobs.filter(
-            (j) => j.kind === "annotations" && j.doc_ids.includes(d.id),
-          );
-          const complete = related.find((j) => j.status === "complete");
-          if (complete && complete.id !== lastCompleted) {
-            lastCompleted = complete.id;
-            await this.refresh();
-          }
-          const pending = related.find((j) =>
-            ["queued", "running"].includes(j.status),
-          );
-          if (pending && !this.scope.signal.aborted)
-            $("#reader-save").textContent = "正在后台补充表达与背景注释…";
-        } catch (err) {
-          if (err.name !== "AbortError")
-            console.warn("Annotation status unavailable");
-        }
-      }, 3000);
+    try {
+      this.assists = await api(`/documents/${d.id}/assists`, {
+        signal: s.signal,
+      });
+    } catch (err) {
+      if (err.name !== "AbortError")
+        this.status("阅读痕迹暂时无法加载，正文仍可阅读");
     }
+    if (s.signal.aborted) return;
     await this.ctx.run("read", this);
     if (s.signal.aborted) return;
+    installReadingTraces(this);
+    installCoreReaderTools(this);
     const selector = local.get(`jump:${d.id}`);
     if (selector) {
       local.remove(`jump:${d.id}`);
-      this.restore(selector);
+      await this.restore(selector);
+    }
+    const translationJump = local.get(`translation-jump:${d.id}`);
+    if (translationJump) {
+      local.remove(`translation-jump:${d.id}`);
+      const saved = this.assists.find((a) => a.id === translationJump);
+      if (saved) this.showTranslation?.(saved);
     }
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
         if (s.signal.aborted) return;
         this.restoring = false;
         $(".reader")?.setAttribute("data-ready", "true");
+        $(".reader").dataset.readyMs = (
+          performance.now() - this.ctx.readStarted
+        ).toFixed(1);
       }),
     );
     local.set("last-document", d.id);
+    if (d.chapter) local.set(`book-chapter:${d.chapter.book_id}`, d.id);
   }
   tool(id, label, fn) {
     const button = document.createElement("button");
     button.id = `tool-${id}`;
-    button.textContent = label;
+    const primary = [
+      "outline",
+      "notes",
+      "progress",
+      "appearance",
+      "typography",
+      "more",
+    ].includes(id);
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    button.className = primary ? "reader-icon" : "reader-secondary-tool";
+    button.innerHTML = primary ? readerIcon(id) : e(label);
     button.dataset.tool = id;
     button.setAttribute("aria-pressed", "false");
-    $("#reader-actions").append(button);
+    if (primary) {
+      button.setAttribute("aria-expanded", "false");
+      button.setAttribute("aria-haspopup", "dialog");
+      button.setAttribute("aria-controls", "tool-panel");
+    }
+    $(primary ? "#reader-actions" : "#reader-extra-tools").append(button);
     this.scope.on(button, "click", () =>
       Promise.resolve(fn()).catch((err) => toast(err.message)),
     );
     return button;
   }
-  async panel(id, title, html, mount) {
+  async panel(id, title, html, mount, options = {}) {
     if (this.panelId === id) {
       this.closePanel();
       return null;
@@ -179,14 +205,19 @@ export class Reader {
     this.panelScope = new Scope();
     const scope = this.panelScope;
     this.panelId = id;
+    this.panelClose = options.onClose;
+    this.positionSelection?.();
     const el = $("#tool-panel");
     el.innerHTML = `<div class="panel-header"><h2>${e(title)}</h2><button class="icon-button" aria-label="关闭侧栏">×</button></div><div class="panel-content">${html}</div>`;
     el.hidden = false;
-    $(".reader-layout").classList.add("has-panel");
-    $$("[data-tool]:not([data-toggle])").forEach((b) =>
-      b.setAttribute("aria-pressed", String(b.dataset.tool === id)),
-    );
-    scope.on($(".panel-header button", el), "click", () => this.closePanel());
+    $("#panel-dismiss").hidden = false;
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-label", title);
+    $$("#reader-actions [data-tool]").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b.dataset.tool === id));
+      b.setAttribute("aria-expanded", String(b.dataset.tool === id));
+    });
+    scope.on($(".panel-header button", el), "click", () => this.dismissPanel());
     try {
       await mount?.($(".panel-content", el), scope);
     } catch (err) {
@@ -196,15 +227,24 @@ export class Reader {
     }
     return scope;
   }
+  dismissPanel() {
+    const onClose = this.panelClose;
+    this.closePanel();
+    onClose?.();
+  }
   closePanel() {
     this.panelScope?.dispose();
     this.panelScope = null;
     this.panelId = null;
+    this.panelClose = null;
+    this.positionSelection?.();
     $("#tool-panel").hidden = true;
-    $(".reader-layout").classList.remove("has-panel");
-    $$("[data-tool]:not([data-toggle])").forEach((b) =>
-      b.setAttribute("aria-pressed", "false"),
-    );
+    $("#panel-dismiss").hidden = true;
+
+    $$("#reader-actions [data-tool]").forEach((b) => {
+      b.setAttribute("aria-pressed", "false");
+      b.setAttribute("aria-expanded", "false");
+    });
   }
   outline() {
     this.panel(
@@ -228,7 +268,10 @@ export class Reader {
       (el, s) =>
         s.on(el, "click", (ev) => {
           const b = ev.target.closest("[data-jump]");
-          if (b) this.restore({ block_id: b.dataset.jump });
+          if (b) {
+            this.restore({ block_id: b.dataset.jump });
+            this.closePanel();
+          }
         }),
     );
   }
@@ -241,27 +284,8 @@ export class Reader {
       .join("");
   }
   draw() {
-    this.annotations = [];
-    $("#article").innerHTML = this.doc.blocks
-      .map((b) => {
-        const tag =
-          {
-            heading: "h2",
-            quote: "blockquote",
-            code: "pre",
-            caption: "p",
-            "list-item": "p",
-          }[b.type] || "p";
-        const text = b.fragments
-          .map((f) => {
-            if (f.type === "plain") return this.highlight(f.text);
-            const idx = this.annotations.push({ ...f, block: b }) - 1;
-            return `<span class="annotation" role="button" tabindex="0" data-target="${e(f.target)}" data-kind="${f.kind}" data-annotation="${idx}" aria-label="${e(f.text)}：${e(f.note)}"><span class="source-text">${this.highlight(f.text)}</span><span class="gloss" aria-hidden="true">${e(f.note)}</span></span>`;
-          })
-          .join("");
-        return `<${tag} data-block="${b.id}" class="${b.type === "list-item" ? "list-block" : b.type}">${text}</${tag}>`;
-      })
-      .join("");
+    this.pages.indexSource();
+    const ready = this.pages.reflow(this.pages.position());
     $("#annotation-meta").textContent =
       `${this.doc.annotation_count} 处辅助理解`;
     $("#density-hint").textContent = this.doc.forced_count
@@ -269,12 +293,13 @@ export class Reader {
       : this.doc.automatic_count < this.doc.automatic_budget
         ? "当前档位的可用注释已全部显示；‘多’会扩大词汇解释范围。"
         : "点击中文备注可调整熟悉度；双击任意英文词可就地查阅。";
-    this.ctx.run("draw", this).catch(console.error);
+
     $$("[data-density]").forEach((b) => {
       const active = +b.dataset.density === this.doc.density;
       b.classList.toggle("active", active);
       b.setAttribute("aria-pressed", String(active));
     });
+    return ready;
   }
   async refresh(density) {
     if (this.scope.signal.aborted) return;
@@ -283,13 +308,13 @@ export class Reader {
     this.restoring = true;
     try {
       const doc = await api(
-        `/documents/${this.doc.id}${density !== undefined ? "?density=" + density : ""}`,
+        `/documents/${this.doc.id}?compact=true${density !== undefined ? "&density=" + density : ""}`,
         { signal: this.scope.signal },
       );
       if (this.scope.signal.aborted || generation !== this.generation) return;
       this.doc = doc;
-      this.draw();
-      this.restore(anchor);
+      await this.draw();
+      await this.restore(anchor);
     } finally {
       if (generation === this.generation)
         requestAnimationFrame(() => (this.restoring = false));
@@ -313,75 +338,10 @@ export class Reader {
     }
   }
   position() {
-    const article = $("#article");
-    if (!article) return { ratio: 0 };
-    const threshold = document.body.classList.contains("immersive") ? 90 : 175;
-    const rect = article.getBoundingClientRect();
-    let visible =
-      $$("[data-block]", article).find(
-        (el) => el.getBoundingClientRect().bottom > threshold,
-      ) || article.lastElementChild;
-    if (!visible) return { ratio: 0 };
-    const block = this.doc.blocks.find((b) => b.id === visible.dataset.block);
-    const r = visible.getBoundingClientRect();
-    const fraction = Math.max(
-      0,
-      Math.min(1, (threshold - r.top) / Math.max(r.height, 1)),
-    );
-    const start = Math.floor(fraction * block.text.length);
-    const ratio = Math.max(
-      0,
-      Math.min(
-        1,
-        (threshold - rect.top) /
-          Math.max(1, rect.height - window.innerHeight + threshold + 70),
-      ),
-    );
-    return {
-      version: this.doc.version,
-      block_id: block.id,
-      start,
-      end: start,
-      quote: block.text.slice(start, start + 60),
-      prefix: block.text.slice(Math.max(0, start - 40), start),
-      suffix: "",
-      ratio,
-    };
+    return this.pages?.position() || { ratio: 0 };
   }
   restore(anchor) {
-    let block = this.doc.blocks.find((b) => b.id === anchor.block_id);
-    let start = anchor.start || 0;
-    if (!block && anchor.quote) {
-      block = this.doc.blocks.find((b) => b.text.includes(anchor.quote));
-      if (block) start = block.text.indexOf(anchor.quote);
-    }
-    const element = block && $(`[data-block="${block.id}"]`);
-    const threshold = document.body.classList.contains("immersive") ? 90 : 175;
-    if (element) {
-      const r = element.getBoundingClientRect();
-      window.scrollTo({
-        top: Math.max(
-          0,
-          window.scrollY +
-            r.top -
-            threshold +
-            Math.min(1, start / Math.max(1, block.text.length)) * r.height,
-        ),
-        behavior: "instant",
-      });
-      element.classList.remove("anchor-flash");
-      void element.offsetWidth;
-      element.classList.add("anchor-flash");
-    } else if (anchor.ratio) {
-      const a = $("#article");
-      window.scrollTo({
-        top:
-          window.scrollY +
-          a.getBoundingClientRect().top +
-          (a.offsetHeight - window.innerHeight) * anchor.ratio,
-        behavior: "instant",
-      });
-    }
+    return this.pages.restore(anchor || { ratio: 0 });
   }
   captureSelection() {
     const selection = window.getSelection();
@@ -397,7 +357,16 @@ export class Reader {
         ? range.endContainer
         : range.endContainer.parentElement
     )?.closest("[data-block]");
-    if (!startEl || startEl !== endEl) return;
+    if (!startEl || !endEl) return;
+    if (startEl !== endEl) {
+      this.emit("before-selection");
+      for (const controller of this.pending.values()) controller.cancel();
+      this.pending.clear();
+      this.selection = null;
+      this.renderSelection();
+      this.status("请在同一段内选择原文；跨段选择未用于翻译或分析。");
+      return;
+    }
     const strip = (fragment) => {
       fragment
         .querySelectorAll?.(".gloss,.bookmark-marker")
@@ -407,12 +376,13 @@ export class Reader {
     const before = document.createRange();
     before.selectNodeContents(startEl);
     before.setEnd(range.startContainer, range.startOffset);
-    const start = strip(before.cloneContents()).length;
+    const start = +startEl.dataset.start + strip(before.cloneContents()).length;
     const quote = strip(range.cloneContents()).trim();
     if (!quote) return;
     const block = this.doc.blocks.find((b) => b.id === startEl.dataset.block);
     const exact = block.text.indexOf(quote, Math.max(0, start - 2));
     const offset = exact >= 0 ? exact : start;
+    this.emit("before-selection");
     this.selection = {
       version: this.doc.version,
       block_id: block.id,
@@ -426,6 +396,12 @@ export class Reader {
       ),
       ratio: this.position().ratio,
     };
+    this.selectionPlacement = {
+      block_id: block.id,
+      offset: offset + quote.length,
+      trigger: "range",
+    };
+    this.renderSelection();
     this.ctx.run("selection", this).catch(console.error);
   }
   closePop() {
@@ -451,10 +427,73 @@ export class Reader {
       "phrase-rule": "常用表达",
     };
     pop.innerHTML = `<button class="close" aria-label="关闭注释">×</button><div class="meta">${e(labels[item.source] || "词典释义")}</div><h3>${e(item.text)}</h3><div class="meaning">${e(item.note || "词典中暂无释义")}</div><p class="muted">${e(item.detail || "选择“已掌握”后，会减少这项注释。")}</p>${item.target ? '<footer><button data-verdict="known">已掌握 ✓</button><button data-verdict="unknown">保留注释</button></footer>' : ""}`;
+    const anchor =
+      item.anchor ||
+      (item.block
+        ? this.anchorFor(item.block.id, item.start, item.end)
+        : this.selection);
+    this.popAnchor = anchor;
     document.body.append(pop);
-    const rect = el.getBoundingClientRect();
-    pop.style.left = `${Math.max(14, Math.min(window.innerWidth - pop.offsetWidth - 14, rect.left))}px`;
-    pop.style.top = `${Math.max(14, Math.min(window.innerHeight - pop.offsetHeight - 20, rect.bottom + 12))}px`;
+    let frame = 0;
+    const place = () => {
+      frame = 0;
+      if (scope.signal.aborted) return;
+      const viewport = window.visualViewport;
+      const left = (viewport?.offsetLeft || 0) + 14;
+      const top = (viewport?.offsetTop || 0) + 14;
+      const right = left + (viewport?.width || window.innerWidth) - 28;
+      const bottom = top + (viewport?.height || window.innerHeight) - 28;
+      pop.style.maxHeight = `${Math.max(1, bottom - top)}px`;
+      // Pagination may replace the source node when the viewport changes.
+      const trigger = el.isConnected
+        ? el
+        : $$("#article .source-unit").find(
+            (unit) =>
+              unit.dataset.sourceBlock === anchor?.block_id &&
+              +unit.dataset.sourceStart <= anchor.start &&
+              +unit.dataset.sourceEnd > anchor.start,
+          );
+      if (!trigger) return this.closePop();
+      const rect = trigger.getBoundingClientRect();
+      if (rect.bottom < top || rect.top > bottom) return this.closePop();
+      const height = pop.offsetHeight;
+      const below = rect.bottom + 12;
+      const above = rect.top - height - 12;
+      pop.style.left = `${Math.max(left, Math.min(right - pop.offsetWidth, rect.left))}px`;
+      pop.style.top = `${Math.max(top, Math.min(bottom - height, below + height <= bottom || above < top ? below : above))}px`;
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(place);
+    };
+    const resize = new ResizeObserver(schedule);
+    resize.observe(pop);
+    scope.on(window, "resize", schedule, { passive: true });
+    scope.on(window, "scroll", schedule, { passive: true });
+    scope.on(document, "scroll", schedule, { passive: true, capture: true });
+    scope.on(window.visualViewport, "resize", schedule, { passive: true });
+    scope.on(window.visualViewport, "scroll", schedule, { passive: true });
+    scope.on(
+      pop,
+      "wheel",
+      (ev) => {
+        if (ev.ctrlKey) return;
+        const edge =
+          ev.deltaY < 0
+            ? pop.scrollTop <= 0
+            : pop.scrollTop + pop.clientHeight >= pop.scrollHeight - 1;
+        if (
+          (ev.deltaY && edge) ||
+          (ev.deltaX && pop.scrollWidth <= pop.clientWidth + 1)
+        )
+          ev.preventDefault();
+      },
+      { passive: false },
+    );
+    scope.cleanup(() => {
+      resize.disconnect();
+      cancelAnimationFrame(frame);
+    });
+    place();
     scope.on($(".close", pop), "click", () => this.closePop());
     scope.on(document, "keydown", (ev) => {
       if (ev.key === "Escape") {
@@ -499,9 +538,12 @@ export class Reader {
         $$("footer button", pop).forEach((b) => (b.disabled = false));
       }
     });
+    this.enhancePop(pop, item, anchor, scope).catch((err) => {
+      if (err.name !== "AbortError") this.status(err.message);
+    });
     $(".close", pop).focus({ preventScroll: true });
   }
-  async lookup(word, el) {
+  async lookup(word, el, anchor) {
     try {
       const result = await api("/lookup", {
         method: "POST",
@@ -516,6 +558,7 @@ export class Reader {
         detail: result.detail,
         target: result.found ? result.lemma : "",
         source: "dictionary",
+        anchor,
       });
     } catch (err) {
       if (err.name !== "AbortError") toast(err.message);
