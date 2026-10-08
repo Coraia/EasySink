@@ -17,6 +17,7 @@ export class PageCurlRenderer {
     this.pages = pages;
     this.cache = new Map();
     this.jobs = new Map();
+    this.captures = new Set();
     this.epoch = 0;
     this.canvas = document.createElement("canvas");
     this.canvas.className = "curl-canvas";
@@ -25,6 +26,8 @@ export class PageCurlRenderer {
     this.failed = false;
     this.root.dataset.curlContexts = "0";
     this.rules = null;
+    this.assets = new Map();
+    this.assetBytes = 0;
     this.raf = 0;
     this.warmTimer = 0;
     pages.r.scope.cleanup(() => this.dispose());
@@ -162,6 +165,8 @@ export class PageCurlRenderer {
   invalidate() {
     this.epoch++;
     clearTimeout(this.warmTimer);
+    for (const capture of this.captures) capture.abort();
+    this.captures.clear();
     this.jobs.clear();
     if (this.gl && !this.gl.isContextLost())
       for (const value of this.cache.values())
@@ -170,6 +175,71 @@ export class PageCurlRenderer {
   }
   key(index) {
     return `${this.pages.generation}:${this.epoch}:${devicePixelRatio || 1}:${index}`;
+  }
+  async inlineImages(page, ratio, signal) {
+    const images = [...page.querySelectorAll("img")];
+    for (const image of images) {
+      signal.throwIfAborted();
+      const url = new URL(image.getAttribute("src"), location.origin);
+      if (url.origin !== location.origin || !/^\/api\/pdf\/books\/\d+\/assets\//.test(url.pathname))
+        throw new Error("Unregistered page image");
+      const targetWidth = Math.max(1, Math.ceil(Number(image.getAttribute("width")) * ratio));
+      const targetHeight = Math.max(1, Math.ceil(Number(image.getAttribute("height")) * ratio));
+      const key = `${url.href}:${targetWidth}x${targetHeight}`;
+      let cached = this.assets.get(key);
+      if (!cached) {
+        const response = await fetch(url, {credentials: "same-origin", cache: "force-cache", signal});
+        const mime = (response.headers.get("Content-Type") || "").split(";")[0];
+        if (!response.ok || !/^image\/(png|jpeg|webp|gif)$/.test(mime)) throw new Error("Page image unavailable");
+        if (+(response.headers.get("Content-Length") || 0) > 64 * 1024 * 1024) throw new Error("Page image exceeds capture budget");
+        const stream = response.body.getReader(), chunks = [];
+        let size = 0;
+        while (true) {
+          const {done, value} = await stream.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > 64 * 1024 * 1024) { await stream.cancel(); throw new Error("Page image exceeds capture budget"); }
+          chunks.push(value);
+        }
+        let blob = new Blob(chunks, {type: mime});
+        // Large retained scans are sampled at the actual paper texture density,
+        // rather than embedding their full-resolution bytes in the SVG.
+        if (size > 16 * 1024 * 1024) {
+          if (!Number.isFinite(targetWidth * targetHeight) || targetWidth * targetHeight > 6e6)
+            throw new Error("Page image exceeds texture budget");
+          const bitmap = await createImageBitmap(blob, {resizeWidth: targetWidth, resizeHeight: targetHeight, resizeQuality: "high"});
+          try {
+            const canvas = document.createElement("canvas");
+            canvas.width = targetWidth; canvas.height = targetHeight;
+            canvas.getContext("2d").drawImage(bitmap, 0, 0);
+            blob = await new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error("Page image sampling failed")), "image/png"));
+          } finally { bitmap.close(); }
+        }
+        const data = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error("Page image capture failed"));
+          reader.readAsDataURL(blob);
+        });
+        signal.throwIfAborted();
+        cached = {data, size: data.length * 2};
+        if (cached.size <= 24 * 1024 * 1024) {
+          while (this.assets.size && (this.assetBytes + cached.size > 24 * 1024 * 1024 || this.assets.size >= 8)) {
+            const oldest = this.assets.keys().next().value;
+            this.assetBytes -= this.assets.get(oldest).size;
+            this.assets.delete(oldest);
+          }
+          this.assets.set(key, cached);
+          this.assetBytes += cached.size;
+        }
+      } else {
+        this.assets.delete(key);
+        this.assets.set(key, cached);
+      }
+      image.setAttribute("src", cached.data);
+      image.removeAttribute("loading");
+    }
+    return images.length;
   }
   async prepare(index) {
     const key = this.key(index),
@@ -183,6 +253,8 @@ export class PageCurlRenderer {
     if (!this.pages.pages[index]) return null;
     const epoch = this.epoch,
       generation = this.pages.generation;
+    const capture = new AbortController();
+    this.captures.add(capture);
     const job = (async () => {
       this.init();
       if (this.failed) return null;
@@ -191,6 +263,13 @@ export class PageCurlRenderer {
       if (!rect?.width) return null;
       const css = getComputedStyle(leaf),
         root = getComputedStyle(document.documentElement);
+      const ratio = Math.min(
+        devicePixelRatio || 1,
+        this.software ? Math.sqrt(SOFTWARE_PIXELS / (document.getElementById("article").getBoundingClientRect().width * rect.height)) : 3,
+        this.maxTexture / rect.height,
+        this.maxTexture / rect.width,
+        Math.sqrt(6e6 / (rect.width * rect.height)),
+      );
       const vars = [
         "--bg",
         "--paper",
@@ -222,8 +301,10 @@ export class PageCurlRenderer {
       copy.innerHTML = this.pages.leafMarkup(index);
       const page = copy.firstElementChild;
       page
-        .querySelectorAll(".inline-grammar,.bookmark-marker,.paragraph-actions")
+        .querySelectorAll(".inline-grammar,.bookmark-marker,.paragraph-actions,.pdf-object-actions,[data-pdf-source],[data-pdf-note]")
         .forEach((el) => el.remove());
+      const embeddedImages = await this.inlineImages(page, ratio, capture.signal);
+      if (epoch !== this.epoch || generation !== this.pages.generation || this.pages.r.scope.signal.aborted) return null;
       page.querySelectorAll("[id]").forEach((el) => el.removeAttribute("id"));
       Object.assign(page.style, {
         width: rect.width + "px",
@@ -234,22 +315,6 @@ export class PageCurlRenderer {
       });
       const xml = (s) =>
         s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-      const ratio = Math.min(
-        devicePixelRatio || 1,
-        // Software decoding/upload matches its bounded animated canvas.
-        // Oversized textures cannot recover resolution lost in that canvas.
-        this.software
-          ? Math.sqrt(
-              SOFTWARE_PIXELS /
-                (document.getElementById("article").getBoundingClientRect()
-                  .width *
-                  rect.height),
-            )
-          : 3,
-        this.maxTexture / rect.height,
-        this.maxTexture / rect.width,
-        Math.sqrt(6e6 / (rect.width * rect.height)),
-      );
       const w = Math.ceil(rect.width * ratio),
         h = Math.ceil(rect.height * ratio);
       const markup = `<div xmlns="http://www.w3.org/1999/xhtml" class="paged-reader" style="${xml(vars)}width:${rect.width}px;height:${rect.height}px;color:${root.getPropertyValue("--ink")};background:${root.getPropertyValue("--paper")}"><style>${xml(this.rules)}</style><div id="article" style="width:100%;height:100%;display:block">${new XMLSerializer().serializeToString(page)}</div></div>`;
@@ -301,6 +366,7 @@ export class PageCurlRenderer {
       gl.activeTexture(active);
       const value = {
         texture,
+        embeddedImages,
         width: rect.width,
         height: rect.height,
         pixels: w * h,
@@ -329,10 +395,13 @@ export class PageCurlRenderer {
       return value;
     })()
       .catch((error) => {
-        this.root.dataset.curlFallback = error.message;
+        if (error.name !== "AbortError") this.root.dataset.curlFallback = error.message;
         return null;
       })
-      .finally(() => this.jobs.delete(key));
+      .finally(() => {
+        this.captures.delete(capture);
+        this.jobs.delete(key);
+      });
     this.jobs.set(key, job);
     return job;
   }
@@ -413,6 +482,8 @@ export class PageCurlRenderer {
       front.ratio,
       back.ratio,
     ).toFixed(3);
+    this.root.dataset.curlEmbeddedImages = String((front.embeddedImages || 0) + (back.embeddedImages || 0));
+    this.root.dataset.curlImageFaces = JSON.stringify({front: front.embeddedImages || 0, back: back.embeddedImages || 0});
     this.root.dataset.curlResolution = JSON.stringify({
       dpr: devicePixelRatio || 1,
       canvas: {
@@ -635,6 +706,8 @@ export class PageCurlRenderer {
   dispose() {
     this.finish();
     this.invalidate();
+    this.assets.clear();
+    this.assetBytes = 0;
     if (this.gl && !this.gl.isContextLost()) {
       for (const mesh of [this.mesh, this.plane])
         if (mesh) {

@@ -41,7 +41,7 @@ export function installReadingTraces(r) {
               context: "查阅的词义",
               grammar: "语法分析",
               translation: "译文片段",
-            }[a.kind],
+            }[a.kind] + (a.historical ? " · 旧引用保留" : ""),
             text:
               a.kind === "context"
                 ? a.payload.meaning
@@ -67,6 +67,11 @@ export function installReadingTraces(r) {
               (v) => v.key === +jump.dataset.traceJump,
             );
             r.closePanel();
+            if (entry.assist?.historical && entry.anchor.pdf_source) {
+              if (entry.doc_id === r.doc.id) r.pdfTools?.openOriginal(entry.anchor.pdf_source);
+              else r.ctx.jump(entry.doc_id, {...entry.anchor, pdf_historical: true});
+              return;
+            }
             if (entry.doc_id !== r.doc.id) {
               if (entry.assist?.kind === "translation")
                 local.set(`translation-jump:${entry.doc_id}`, entry.assist.id);

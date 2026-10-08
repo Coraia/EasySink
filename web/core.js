@@ -26,7 +26,9 @@ export async function api(
     const err = new Error(
       typeof payload.detail === "string"
         ? payload.detail
-        : "输入格式不正确，请检查后重试",
+        : typeof payload.detail?.message === "string"
+          ? payload.detail.message
+          : "输入格式不正确，请检查后重试",
     );
     err.status = r.status;
     throw err;

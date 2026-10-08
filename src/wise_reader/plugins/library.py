@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from wise_reader.content import add_book, add_chapter
 from wise_reader.content import migrate as migrate
@@ -26,13 +27,17 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
         books = ctx.store.query("SELECT * FROM wr_book ORDER BY id DESC")
         out = []
         for b in books:
+            pdf = getattr(app.state, "pdf", None)
+            if b["source"] == "pdf" and pdf is not None and not pdf.visible(b["id"]):
+                continue
             ch = ctx.store.query(
                 "SELECT c.*, d.word_count FROM wr_chapter c"
                 " JOIN document d ON d.id = c.doc_id"
                 " WHERE c.book_id = ? ORDER BY c.idx",
                 (b["id"],),
             )
-            out.append({**b, "chapters": ch, "chapter_count": len(ch)})
+            payload = {**b, "chapters": ch, "chapter_count": len(ch)}
+            out.append(pdf.decorate_book(payload) if pdf is not None else payload)
         return out
 
     @router.get("/api/library/books/{book_id}")
@@ -46,7 +51,9 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
             " WHERE c.book_id = ? ORDER BY c.idx",
             (book_id,),
         )
-        return {**b, "chapters": ch}
+        payload = {**b, "chapters": ch}
+        pdf = getattr(app.state, "pdf", None)
+        return pdf.decorate_book(payload) if pdf is not None else payload
 
     @router.post("/api/library/books")
     def create_book(body: BookIn):
@@ -59,6 +66,11 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
     def adopt(book_id: int, doc_id: int):
         if not ctx.store.query_one("SELECT id FROM wr_book WHERE id = ?", (book_id,)):
             raise HTTPException(404, "book")
+        pdf = getattr(app.state, "pdf", None)
+        if pdf is not None and pdf.mapping(book_id) is not None:
+            raise HTTPException(409, {"code": "pdf_range_owned", "message": "PDF chapters follow their original-page ranges."})
+        if pdf is not None and pdf.document_metadata(doc_id) is not None:
+            raise HTTPException(409, {"code": "pdf_range_owned", "message": "A PDF reading range remains owned by its original book."})
         doc = ctx.store.get_document(doc_id)
         if doc is None:
             raise HTTPException(404, "document")
@@ -71,14 +83,23 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
         return {"ok": True}
 
     @router.delete("/api/library/books/{book_id}")
-    def delete_book(book_id: int):
-        ch = ctx.store.query(
-            "SELECT doc_id FROM wr_chapter WHERE book_id = ?", (book_id,)
-        )
-        ctx.store.execute("DELETE FROM wr_chapter WHERE book_id = ?", (book_id,))
-        ctx.store.execute("DELETE FROM wr_book WHERE id = ?", (book_id,))
-        for row in ch:
-            ctx.store.delete_document(row["doc_id"])
-        return {"ok": True}
+    async def delete_book(book_id: int):
+        pdf = getattr(app.state, "pdf", None)
+        if pdf is not None and pdf.mapping(book_id) is not None:
+            payload = await pdf.recycle_book(book_id)
+            return {"ok": True, "recycled": True, **payload}
+
+        def remove_old_book():
+            ch = ctx.store.query("SELECT doc_id FROM wr_chapter WHERE book_id = ?", (book_id,))
+            ctx.store.execute("DELETE FROM wr_chapter WHERE book_id = ?", (book_id,))
+            ctx.store.execute("DELETE FROM wr_book WHERE id = ?", (book_id,))
+            for row in ch:
+                if pdf is not None and pdf.document_metadata(row["doc_id"]) is not None:
+                    continue
+                if not ctx.store.query_one("SELECT id FROM wr_chapter WHERE doc_id=?", (row["doc_id"],)):
+                    ctx.store.delete_document(row["doc_id"])
+            return {"ok": True}
+
+        return await run_in_threadpool(remove_old_book)
 
     app.include_router(router)

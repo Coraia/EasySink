@@ -6,6 +6,7 @@ data/*.zip
 
 .env
 .venv/
+.venv-pdf-lab/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -26,3 +27,5 @@ outputs/
 
 data/ai-settings.*
 data/speech-cache/
+data/pdf/
+data/*-pdf/

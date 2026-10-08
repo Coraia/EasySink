@@ -15,11 +15,13 @@ export const readerIcon = (id) =>
   `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icons[id] || icons.more}</svg>`;
 
 export function readerShell(d, progressEnabled) {
+  const sourceRange = d.pdf ? `来源 PDF 第 ${d.pdf.start_page}–${d.pdf.end_page} 页` : "";
+  const caption = d.pdf ? `阅读版 · ${sourceRange}` : d.title;
   return `<div class="reader paged-reader" data-document-id="${d.id}" data-chrome="closed">
     <button id="show-tools" class="reader-top-zone" aria-label="显示阅读工具" aria-expanded="false"></button>
     <div id="reader-chrome" hidden>
       <button id="chrome-dismiss" class="chrome-backdrop" aria-label="收起阅读工具"></button>
-      <header class="reading-banner"><a href="#/" aria-label="返回书架">←</a><span class="banner-title">${e(d.title)}</span><span id="reader-save" role="status">${progressEnabled ? "阅读位置会自动保存" : "续读已关闭"}</span><button id="reader-fullscreen" class="reader-icon" aria-label="进入全屏" title="进入全屏">${readerIcon("fullscreen")}</button></header>
+      <header class="reading-banner"><a href="#/" aria-label="返回书架">←</a><span class="banner-title">${d.pdf ? "阅读版 · " : ""}${e(d.title)}</span><span id="reader-save" role="status">${progressEnabled ? "阅读位置会自动保存" : "续读已关闭"}</span><button id="reader-fullscreen" class="reader-icon" aria-label="进入全屏" title="进入全屏">${readerIcon("fullscreen")}</button></header>
       <nav id="reader-actions" class="reader-icon-strip" aria-label="阅读工具"></nav>
     </div>
     <section class="reading-viewport" id="reading-stage">
@@ -28,7 +30,7 @@ export function readerShell(d, progressEnabled) {
       <button id="reading-edge-prev" class="reading-edge-grip" aria-label="抓住左侧纸页" title="按住向右拖动 · 上一页"></button><button id="reading-edge-next" class="reading-edge-grip" aria-label="抓住右侧纸页" title="按住向左拖动 · 下一页"></button>
       <div id="page-curl-layer" aria-hidden="true" hidden></div>
       <div id="reading-selection" class="reading-selection" hidden></div>
-      <div class="reader-page-caption" aria-live="off"><span class="caption-title">${e(d.title)}</span><span id="reading-page-total"></span></div>
+      <div class="reader-page-caption" aria-live="off"><span class="caption-title" ${d.pdf ? 'data-pdf-reading-edition title="当前为可重排阅读版；来源页码用于核对 PDF 原件"' : ""}>${e(caption)}</span><span id="reading-page-total"></span></div>
     </section>
     <button id="panel-dismiss" class="panel-backdrop" aria-label="关闭阅读面板" hidden></button>
     <aside class="tool-panel" id="tool-panel" hidden></aside>
@@ -88,7 +90,7 @@ export function installReaderChrome(r) {
   const onInk = (target, x, y) => {
     if (
       target.closest(
-        ".source-unit,.annotation,.gloss,.inline-grammar,#translation-pane,.reader-page-caption",
+        ".source-unit,.annotation,.gloss,.inline-grammar,#translation-pane,.reader-page-caption,.pdf-object",
       )
     )
       return true;

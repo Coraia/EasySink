@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from wise_reader.engine import Engine
 from wise_reader.l1 import LLMClient
@@ -51,7 +52,8 @@ def plugin_payload(store: Store) -> list[dict]:
                 "default_on": spec.default_on,
                 "backend": spec.backend is not None,
                 "requires": ["content-v2", "route-scope"],
-                "data_policy": "关闭仅隐藏入口，保留数据",
+                "data_policy": "关闭停止 PDF 后续处理，保留原件、阅读版与记录" if spec.id == "pdf" else "关闭仅隐藏入口，保留数据",
+                "always_readable": spec.id == "pdf",
             }
         )
     return out
@@ -73,8 +75,10 @@ def mount_plugins(app: FastAPI, ctx: PluginContext) -> None:
         return {"plugins": plugin_payload(ctx.store)}
 
     @app.patch("/api/plugins/{plugin_id}")
-    def patch_plugin(plugin_id: str, body: PluginPatch):
+    async def patch_plugin(plugin_id: str, body: PluginPatch):
         if plugin_id not in BY_ID:
             raise HTTPException(404, "unknown plugin")
-        ctx.store.set_plugin_enabled(plugin_id, body.enabled)
-        return {"plugins": plugin_payload(ctx.store)}
+        await run_in_threadpool(ctx.store.set_plugin_enabled, plugin_id, body.enabled)
+        if plugin_id == "pdf" and hasattr(app.state, "pdf"):
+            await app.state.pdf.set_processing_enabled(body.enabled)
+        return {"plugins": await run_in_threadpool(plugin_payload, ctx.store)}

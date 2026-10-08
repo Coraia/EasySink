@@ -7,8 +7,9 @@ import json
 import re
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, FiniteFloat, model_validator
 
 
 def migrate(store):
@@ -27,6 +28,33 @@ def migrate(store):
     """)
 
 
+class PDFSource(BaseModel):
+    page_number: int = Field(ge=1)
+    bbox: list[FiniteFloat] = Field(min_length=4, max_length=4)
+    width: FiniteFloat | None = Field(default=None, gt=0)
+    height: FiniteFloat | None = Field(default=None, gt=0)
+    coordinate_space: Literal["rotated_crop_top_left"] = "rotated_crop_top_left"
+    book_id: int | None = Field(default=None, ge=1)
+    source_sha256: str = Field(default="", max_length=64)
+    rotation: int = 0
+    crop_box: list[FiniteFloat] | None = Field(default=None, min_length=4, max_length=4)
+    asset_url: str | None = Field(default=None, max_length=2048)
+    object_id: str = Field(default="", max_length=80)
+    revision: str = Field(default="", max_length=128)
+    conversion_task_id: str = Field(default="", max_length=100)
+
+    @model_validator(mode="after")
+    def valid_region(self):
+        x0, y0, x1, y1 = self.bbox
+        if x0 < 0 or y0 < 0 or x1 < x0 or y1 < y0:
+            raise ValueError("Invalid PDF source region")
+        if self.width is not None and x1 > self.width + 0.1:
+            raise ValueError("PDF region exceeds visible width")
+        if self.height is not None and y1 > self.height + 0.1:
+            raise ValueError("PDF region exceeds visible height")
+        return self
+
+
 class Anchor(BaseModel):
     version: str = Field(default="", max_length=64)
     block_id: str = Field(default="", max_length=80)
@@ -36,6 +64,8 @@ class Anchor(BaseModel):
     prefix: str = Field(default="", max_length=80)
     suffix: str = Field(default="", max_length=80)
     ratio: float = Field(default=0, ge=0, le=1)
+    kind: Literal["text", "image"] = "text"
+    pdf_source: PDFSource | None = None
 
 
 def save_anchor(store, owner, owner_id, doc_id, anchor):

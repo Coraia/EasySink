@@ -71,10 +71,10 @@ const palette = [
 ];
 function cards(items) {
   return items
-    .map(
-      (d, i) =>
-        `<a class="book-card" href="${d.href || "#/read/" + d.id}"><div class="book-cover" style="--cover:${palette[i % palette.length]}"><small>${e(d.coverLabel || "WISE READER / ARTICLE")}</small><div class="cover-title">${e(d.title)}</div></div><div class="book-info"><h3>${e(d.title)}</h3><div class="row"><span>${e(d.subtitle || `${d.word_count?.toLocaleString() || 0} 词`)}</span><span>·</span><span>${date(d.created_at)}</span></div><footer><span>${e(d.action || "打开阅读")}</span><span>↗</span></footer></div></a>`,
-    )
+    .map((d, i) => {
+      if (d.cardKey) return `<article class="book-card" data-card-key="${e(d.cardKey)}"><div class="book-cover" style="--cover:${palette[i % palette.length]}"><small>${e(d.coverLabel)}</small><div class="cover-title">${e(d.title)}</div></div><div class="book-info"><h3>${e(d.title)}</h3><div class="row"><span data-card-subtitle>${e(d.subtitle)}</span><span>·</span><span>${date(d.created_at)}</span></div><div data-card-status>${d.statusHTML || ""}</div><footer><a class="book-card-open" data-card-open href="${e(d.href)}" aria-label="${e(d.title)} · 打开"><span data-card-action>${e(d.action)}</span><span aria-hidden="true"> ↗</span></a><a class="book-card-status-link" href="${e(d.statusHref)}">处理详情</a></footer></div></article>`;
+      return `<a class="book-card" href="${d.href || "#/read/" + d.id}"><div class="book-cover" style="--cover:${palette[i % palette.length]}"><small>${e(d.coverLabel || "WISE READER / ARTICLE")}</small><div class="cover-title">${e(d.title)}</div></div><div class="book-info"><h3>${e(d.title)}</h3><div class="row"><span>${e(d.subtitle || `${d.word_count?.toLocaleString() || 0} 词`)}</span><span>·</span><span>${date(d.created_at)}</span></div><footer><span>${e(d.action || "打开阅读")}</span><span>↗</span></footer></div></a>`;
+    })
     .join("");
 }
 async function route() {

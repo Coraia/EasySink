@@ -15,6 +15,7 @@ from wise_reader.profile import ReaderProfile
 from wise_reader.store import Store
 from wise_reader.store import _now
 from wise_reader.source_cache import SourceCache
+from wise_reader.source_urls import overlaps_url, url_ranges
 from wise_reader.tokenize import Document, parse
 
 
@@ -173,6 +174,12 @@ class Engine:
         if row is None:
             raise KeyError(doc_id)
         doc, l0_cands, l1_cands = self._source_analysis(row)
+        # Apply to every presentation, including old persisted and warm caches.
+        # Keep canonical text/token IDs intact and free the budget for prose.
+        urls = url_ranges(doc.text)
+        if urls:
+            l0_cands = [a for a in l0_cands if not overlaps_url(urls, *doc.slice(a.first_token, a.last_token))]
+            l1_cands = [a for a in l1_cands if not overlaps_url(urls, *doc.slice(a.first_token, a.last_token))]
         verdicts = {
             r["target"]: r["verdict"]
             for r in self.store.query("SELECT * FROM wr_target")

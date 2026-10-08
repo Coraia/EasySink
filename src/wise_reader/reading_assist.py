@@ -57,10 +57,19 @@ def selected(ctx, doc_id, anchor, sentence=False):
         raise HTTPException(404, "原文不存在")
     version, blocks = get_content(ctx.store, doc)
     if anchor.version and version != anchor.version:
-        raise HTTPException(409, "原文版本已变化，请重新选择")
+        # A reader may still hold a selection while a completed PDF page is
+        # published. Use the retained exact version, never a guessed new quote.
+        table = ctx.store.query_one("SELECT name FROM sqlite_master WHERE type='table' AND name='wr_pdf_revision'")
+        retained = ctx.store.query_one("SELECT blocks FROM wr_pdf_revision WHERE doc_id=? AND revision=?",
+            (doc_id, anchor.version)) if table else None
+        if not retained:
+            raise HTTPException(409, "原文版本已变化，请重新选择")
+        version, blocks = anchor.version, json.loads(retained["blocks"])
     block = next((b for b in blocks if b["id"] == anchor.block_id), None)
     if not block:
         raise HTTPException(400, "请在同一个段落中选择原文")
+    if anchor.kind == "image" or (block.get("asset_url") and block.get("type") in {"image", "image_fallback", "formula", "table"}):
+        raise HTTPException(422, "这是原图引用，可记笔记或核对原页；请选定已识别文字再翻译或分析。")
     text = block["text"]
     start, end = offset_index(text, anchor.start), offset_index(text, anchor.end)
     if end <= start or not text[start:end].strip():
@@ -385,7 +394,12 @@ def register(app, ctx):
         marks = ",".join("?" for _ in ids)
         notes = ctx.store.query(f"SELECT n.*,d.title FROM wr_note n JOIN document d ON d.id=n.doc_id WHERE n.doc_id IN ({marks}) ORDER BY n.id DESC LIMIT 500", tuple(ids))
         bookmarks = ctx.store.query(f"SELECT n.*,d.title FROM wr_bookmark n JOIN document d ON d.id=n.doc_id WHERE n.doc_id IN ({marks}) ORDER BY n.id DESC LIMIT 500", tuple(ids))
-        assists = ctx.store.query(f"SELECT a.* FROM wr_assist a JOIN wr_content c ON c.doc_id=a.doc_id AND c.version=a.version WHERE a.doc_id IN ({marks}) ORDER BY a.id DESC LIMIT 500", tuple(ids))
+        pdf = getattr(app.state, "pdf", None)
+        retained_pdf = pdf is not None and pdf.document_metadata(doc_id) is not None
+        history = " OR EXISTS (SELECT 1 FROM wr_pdf_revision r WHERE r.doc_id=a.doc_id AND r.revision=a.version)" if retained_pdf else ""
+        assists = ctx.store.query(f"SELECT a.*,c.version AS current_version FROM wr_assist a JOIN wr_content c ON c.doc_id=a.doc_id WHERE a.doc_id IN ({marks}) AND (c.version=a.version{history}) ORDER BY a.id DESC LIMIT 500", tuple(ids))
+        for assist in assists:
+            assist["historical"] = assist["version"] != assist.pop("current_version")
         return {"notes": [with_anchor(ctx.store, "note", n) for n in notes], "bookmarks": [with_anchor(ctx.store, "bookmark", n) for n in bookmarks], "assists": [record(a) for a in assists], "review_doc_id": ids[0]}
 
     @router.post("/api/documents/{doc_id}/review")

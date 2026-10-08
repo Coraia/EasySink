@@ -63,14 +63,14 @@ class FinishIn(BaseModel):
     felt_density: str | None = None
 
 
-def create_app() -> FastAPI:
+def create_app(settings: Settings | None = None) -> FastAPI:
     assets = hashlib.sha256()
     for path in sorted(WEB.rglob("*")):
         if path.is_file() and path.suffix in (".js", ".css", ".html"):
             assets.update(str(path.relative_to(WEB)).encode())
             assets.update(path.read_bytes())
     asset_prefix = "/assets/" + assets.hexdigest()[:16]
-    settings = Settings()
+    settings = settings or Settings()
     lexicon = Lexicon()
     store = Store(Path(settings.wr_user_db) if settings.wr_user_db else None)
     llm = NullLLM()
@@ -90,7 +90,12 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         jobs.start()
+        pdf = getattr(_app.state, "pdf", None)
+        if pdf is not None:
+            await pdf.start()
         yield
+        if pdf is not None:
+            await pdf.close()
         await close_assistance(_app)
         jobs.close()
         lexicon.close()
@@ -107,7 +112,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"ok": True, "version": "0.2.0", "web_revision": "20261008-paper"}
+        return {"ok": True, "version": "0.2.0", "web_revision": "20261008-pdf-reader"}
 
     @app.get("/api/jobs")
     def job_list():
@@ -122,6 +127,9 @@ def create_app() -> FastAPI:
 
     @app.post("/api/documents/{doc_id}/analyze")
     def analyze_document(doc_id: int):
+        pdf = getattr(app.state, "pdf", None)
+        if pdf is not None and pdf.document_metadata(doc_id) is not None:
+            raise HTTPException(422, "PDF 请选定句段使用语境解释、翻译或语法分析。")
         return jobs.enqueue([doc_id], "annotations")
 
     @app.post("/api/documents/{doc_id}/archive")
@@ -194,12 +202,21 @@ def create_app() -> FastAPI:
     ):
         profile = store.get_profile()
         try:
-            return engine.present(doc_id, profile, density=density, compact=compact)
+            result = engine.present(doc_id, profile, density=density, compact=compact)
+            pdf = getattr(app.state, "pdf", None)
+            if pdf is not None:
+                metadata = pdf.document_metadata(doc_id)
+                if metadata is not None:
+                    result["pdf"] = metadata
+            return result
         except KeyError:
             raise HTTPException(404, "not found")
 
     @app.delete("/api/documents/{doc_id}")
     def delete_document(doc_id: int):
+        pdf = getattr(app.state, "pdf", None)
+        if pdf is not None and pdf.document_metadata(doc_id) is not None:
+            raise HTTPException(409, "PDF 阅读范围属于原书，请从书架回收整本书；原件与记录会保留。")
         store.delete_document(doc_id)
         return {"ok": True}
 

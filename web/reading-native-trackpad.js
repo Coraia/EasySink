@@ -3,7 +3,8 @@ import { movement, completes } from "./reading-gesture-policy.js";
 // App-owned phases; ordinary source DOM retains word selection and notes.
 export function installNativeReadingTrackpad(ctx, config) {
   const controller = new AbortController(), options = { signal: controller.signal };
-  let socket, connected = false, monitorReady = false, stopped = false, attempts = 0, retry;
+  let socket, connected = false, monitorReady = false, stopped = false, attempts = 0, retry, handshake;
+  let discovering = false, lastDiscovery = -Infinity;
   let over = false, clientY = innerHeight * .55, active = null, flight = null, serial = 0;
   let provisional = { x: 0, y: 0, axis: null }, lastGate;
   const pending = [], records = [], bound = new WeakSet();
@@ -198,28 +199,61 @@ export function installNativeReadingTrackpad(ctx, config) {
   // A tool can open without moving the pointer: immediately gate native input.
   const observer = new MutationObserver(gate);
   observer.observe(ctx.root, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden','data-chrome'] });
-  async function connect(url) {
+  function scheduleReconnect() {
+    if (stopped || retry || discovering || (connected && monitorReady)) return;
+    // A bridge restart may outlast the first discovery attempt. Keep one bounded
+    // backoff loop for this installation, including unavailable/failed discovery.
+    const delay = Math.min(15000, 1000 * 2 ** Math.min(attempts++, 4));
+    retry = setTimeout(() => { retry = null; discover(); }, delay);
+  }
+  async function discover() {
+    if (stopped || discovering || (socket && socket.readyState !== WebSocket.CLOSED)) return;
+    discovering = true; lastDiscovery = performance.now();
+    try {
+      const response = await fetch('/api/reading/native-trackpad', { cache: 'no-store', signal: controller.signal });
+      const value = response.ok ? await response.json() : null;
+      if (!stopped && value?.available && typeof value.url === 'string') connect(value.url);
+    } catch { /* A temporary outage must not terminate recovery. */ }
+    finally {
+      discovering = false;
+      if (!socket || socket.readyState === WebSocket.CLOSED) scheduleReconnect();
+    }
+  }
+  function recoverOnReturn() {
+    if (stopped || document.hidden || (connected && monitorReady) ||
+        (socket && socket.readyState !== WebSocket.CLOSED) || performance.now() - lastDiscovery < 1000) return;
+    clearTimeout(retry); retry = null; discover();
+  }
+  window.addEventListener('focus', recoverOnReturn, options);
+  window.addEventListener('online', recoverOnReturn, options);
+  document.addEventListener('visibilitychange', recoverOnReturn, options);
+  function connect(url) {
     if (stopped) return;
-    socket = new WebSocket(url);
-    socket.onopen = () => { connected = true; lastGate = undefined; gate(); };
-    socket.onmessage = message => {
+    const current = socket = new WebSocket(url);
+    // Do not leave an open but unacknowledged connection looking usable.
+    handshake = setTimeout(() => { if (socket === current && !monitorReady) current.close(); }, 4000);
+    current.onopen = () => { if (socket !== current || stopped) return; connected = true; lastGate = undefined; gate(); };
+    current.onmessage = message => {
+      if (socket !== current || stopped) return;
       let e; try { e = JSON.parse(message.data); } catch { return; }
-      if (e.source === 'bridge-ready') { monitorReady = e.monitorReady === true; attempts = 0; gate(); }
-      else if (e.source === 'bridge-overflow' || e.source === 'monitor-exited') { monitorReady = false; cancel(e.source); publish(); }
+      if (e.source === 'bridge-ready') {
+        monitorReady = e.monitorReady === true;
+        if (monitorReady) { attempts = 0; clearTimeout(handshake); }
+        gate();
+      }
+      else if (e.source === 'bridge-overflow' || e.source === 'monitor-exited') {
+        monitorReady = false; cancel(e.source); publish(); current.close();
+      }
       else if (e.source === 'macOS-NSEvent' || e.source === 'e2e-phase-fixture') receive(e);
     };
-    socket.onclose = () => {
+    current.onclose = () => {
+      if (socket !== current) return;
+      clearTimeout(handshake);
       connected = monitorReady = false; cancel('bridge-disconnected'); publish();
-      if (!stopped && attempts++ < 3) retry = setTimeout(async () => {
-        try {
-          const response = await fetch('/api/reading/native-trackpad', { cache: 'no-store', signal: controller.signal });
-          const value = await response.json();
-          if (value.available) connect(value.url);
-        } catch { /* bounded reconnect; mouse and keyboard remain available */ }
-      }, 1000 * attempts);
+      scheduleReconnect();
     };
-    socket.onerror = () => { connected = false; publish(); };
+    current.onerror = () => { if (socket === current) { connected = false; publish(); } };
   }
   connect(config.url);
-  return () => { stopped = true; clearTimeout(retry); cancel('uninstall'); controller.abort(); removeHook(); observer.disconnect(); socket?.close(); };
+  return () => { stopped = true; clearTimeout(retry); clearTimeout(handshake); cancel('uninstall'); controller.abort(); removeHook(); observer.disconnect(); socket?.close(); };
 }

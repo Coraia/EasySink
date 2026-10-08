@@ -28,9 +28,15 @@ PLUGINS: tuple[PluginSpec, ...] = (
     ),
     PluginSpec(
         "importer",
-        "导入 EPUB/TXT",
-        "上传 EPUB、TXT、Markdown，拆章入库。",
+        "导入阅读材料",
+        "导入 EPUB、PDF、TXT 和 Markdown，按书籍保留。",
         backend="importer",
+    ),
+    PluginSpec(
+        "pdf",
+        "PDF 阅读",
+        "本机转换 PDF，沿用沉浸阅读；关闭处理仍保留原件、正文和记录。",
+        backend="pdf",
     ),
     PluginSpec("immersive", "沉浸阅读", "隐藏顶栏，只留正文。"),
     PluginSpec("notes", "笔记", "划词记下想法，集中在笔记页查看。", backend="notes"),

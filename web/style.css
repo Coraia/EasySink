@@ -7,6 +7,9 @@
   --border: #dedfd5;
   --accent: #315c49;
   --accent-soft: #e7ede2;
+  --linked-bg: #f5dfaa;
+  --linked-ink: #593b11;
+  --linked-edge: #a36c18;
   --gloss: #536b54;
   --danger: #a33e35;
   --shadow: 0 16px 55px #293b2912;
@@ -32,6 +35,9 @@
   --border: #435247;
   --accent: #bbd8ad;
   --accent-soft: #354735;
+  --linked-bg: #62471f;
+  --linked-ink: #fff0ce;
+  --linked-edge: #e4b45b;
   --gloss: #bed1b0;
   --danger: #ffb6aa;
   --shadow: 0 16px 55px #0003;
@@ -501,6 +507,7 @@ small,
   gap: 20px;
 }
 .book-card {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
@@ -576,6 +583,49 @@ small,
   justify-content: space-between;
   font-size: 13px;
   color: var(--accent);
+}
+.book-card-open::after { content: ""; position: absolute; inset: 0; z-index: 1; }
+.book-card-open:focus-visible::after { outline: 3px solid var(--accent); outline-offset: -4px; border-radius: 12px; }
+.book-card-status-link { position: relative; z-index: 2; padding: 6px 8px; margin: -6px -8px; }
+.pdf-import-progress {
+  margin-top: 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--accent);
+}
+.pdf-import-progress-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 3px 10px;
+}
+.pdf-import-progress-count {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.pdf-import-progress progress {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 5px;
+  margin: 7px 0;
+  border: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--border);
+  accent-color: var(--accent);
+}
+.pdf-import-progress progress::-webkit-progress-bar { background: var(--border); }
+.pdf-import-progress progress::-webkit-progress-value { background: var(--accent); transition: width 180ms ease; }
+.pdf-import-progress progress::-moz-progress-bar { background: var(--accent); }
+.pdf-import-progress-detail { color: var(--muted); }
+.pdf-import-progress[data-state="attention"] .pdf-import-progress-heading,
+.pdf-import-progress[data-state="stale"] .pdf-import-progress-detail { color: #976127; }
+.pdf-import-notice .pdf-import-saved { margin: 0; font-weight: 600; }
+.pdf-import-notice .pdf-import-progress { margin: 12px 0 16px; font-size: 13px; }
+@media (prefers-reduced-motion: reduce) {
+  .pdf-import-progress progress::-webkit-progress-value { transition: none; }
 }
 .empty {
   padding: 42px;
@@ -1709,7 +1759,7 @@ dialog::backdrop {
   user-select: text;
   border-radius: 3px;
 }
-.source-unit:hover {
+.source-unit:not(.source-url):hover {
   background: var(--accent-soft);
 }
 .source-unit.linked-translation,
@@ -1901,13 +1951,15 @@ dialog::backdrop {
     serif;
   background: transparent;
   border-color: transparent;
+  border-left-width: 3px;
   border-radius: 4px;
   padding: 2px 5px;
 }
 .translation-segment:hover,
 .translation-segment.active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--linked-bg);
+  color: var(--linked-ink);
+  border-left: 3px solid var(--linked-edge);
 }
 .translation-actions {
   display: flex;
@@ -1917,6 +1969,39 @@ dialog::backdrop {
 .translation-actions button {
   font-size: 12px;
   padding: 5px 8px;
+}
+.pdf-outline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pdf-outline-list .pdf-outline-list {
+  margin-left: 12px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+.pdf-outline-entry,
+.pdf-outline-page {
+  display: block;
+  width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+.pdf-outline-entry:hover:not(:disabled),
+.pdf-outline-page:hover {
+  background: var(--accent-soft);
+}
+.pdf-outline-hint {
+  color: var(--muted);
+  font-weight: 400;
+}
+.pdf-outline-page-form {
+  flex-wrap: wrap;
+  align-items: end;
+}
+.pdf-outline-page-form input {
+  width: 110px;
 }
 .tool-panel {
   position: fixed;
@@ -2127,9 +2212,18 @@ body.paged-reading #app {
   background: var(--accent-soft);
   box-shadow: inset 0 -2px var(--accent);
 }
+.source-unit.linked-translation {
+  background: var(--linked-bg);
+  color: var(--linked-ink);
+  box-shadow: inset 0 -3px var(--linked-edge);
+}
 ::highlight(reader-selection) {
   background-color: var(--accent-soft);
   color: var(--ink);
+}
+::highlight(reader-translation) {
+  background-color: var(--linked-bg);
+  color: var(--linked-ink);
 }
 #page-curl-layer .paragraph-actions {
   display: none !important;
@@ -2355,6 +2449,21 @@ body.paged-reading #app {
   background: var(--paper);
   border: 1px solid var(--border);
 }
+.paged-reader .has-translation .reading-spread {
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+@media (max-width: 1100px) {
+  .paged-reader .reading-columns.has-translation {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1.65fr) minmax(0, 1fr);
+    gap: 12px;
+  }
+  .paged-reader #translation-pane {
+    padding: 16px 22px;
+  }
+}
 .paged-reader .annotation-pop {
   z-index: 90;
 }
@@ -2408,11 +2517,6 @@ body.paged-reading #app {
   }
   .reading-banner #reader-save {
     display: none;
-  }
-  .paged-reader .reading-columns.has-translation {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 12px;
   }
   .page-leaf .paragraph-actions {
     opacity: 1;
@@ -2694,3 +2798,226 @@ body.paged-reading #app {
 
 /* Native phases share the mouse-grip cursor without covering selectable prose. */
 .reader[data-page-turning="true"] #reading-stage { cursor: grabbing; }
+
+/* PDF objects use the existing prose, tools and notes; the source is a modal. */
+.pdf-object {
+  position: relative;
+  max-width: 100%;
+  margin: 1.1em 0;
+  break-inside: avoid;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.pdf-object img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
+  object-fit: contain;
+}
+.pdf-object figcaption {
+  margin-top: 8px;
+  font: 11px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  color: var(--muted);
+}
+.pdf-object.is-selected,
+.pdf-object.has-note {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
+}
+.pdf-object .note-marker {
+  right: -24px;
+  top: 0;
+}
+.tool-panel.pdf-object-menu {
+  width: min(310px, calc(100vw - 24px));
+  right: auto;
+  bottom: auto;
+  transform: none;
+  max-height: calc(100dvh - 24px);
+}
+.pdf-object-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.pdf-note-excerpt {
+  display: block;
+  -webkit-line-clamp: unset;
+  max-height: none;
+  width: 100%;
+  padding: 10px;
+  text-align: left;
+}
+.pdf-note-excerpt img {
+  display: block;
+  max-width: 100%;
+  max-height: 120px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  margin: 0 auto 8px;
+}
+.pdf-note-excerpt.expanded img {
+  max-height: 260px;
+}
+.pdf-note-excerpt > span {
+  display: block;
+  font: 11px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  color: var(--muted);
+}
+.pdf-note-missing {
+  padding: 16px 8px;
+  text-align: center;
+}
+.pdf-original-dialog {
+  width: min(1200px, calc(100vw - 36px));
+  height: min(900px, calc(100dvh - 36px));
+  max-width: none;
+  max-height: none;
+  padding: 18px 20px 20px;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--paper);
+}
+.pdf-original-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pdf-original-head {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex-shrink: 0;
+}
+.pdf-original-head > span {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 12px;
+}
+.pdf-original-controls {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.pdf-original-controls form,
+.pdf-original-controls label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+}
+.pdf-original-controls input {
+  width: 66px;
+  padding: 6px 8px;
+  margin: 0;
+}
+.pdf-original-controls select,
+.pdf-original-controls button {
+  width: auto;
+  min-height: 32px;
+  padding: 6px 10px;
+  margin: 0;
+}
+.pdf-original-dialog [data-pdf-location] {
+  margin: 0;
+  min-height: 18px;
+  font-size: 11px;
+}
+.pdf-original-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+  overscroll-behavior: contain;
+  background: #e6e8df;
+  border-radius: 5px;
+  scrollbar-width: thin;
+  scrollbar-color: #bbc7b4 transparent;
+}
+.pdf-original-scroll [data-pdf-render-state] {
+  text-align: center;
+  padding: 40px 20px;
+}
+.pdf-original-sheet {
+  position: relative;
+  display: block;
+  margin-inline: auto;
+  background: #fff;
+  box-shadow: 0 2px 14px #243d2517;
+}
+.pdf-original-sheet canvas {
+  display: block;
+}
+.pdf-source-highlight {
+  position: absolute;
+  border: 2px solid #6a9460;
+  background: #b0d38a30;
+  pointer-events: none;
+}
+.pdf-task-grid {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 10px 12px;
+  font-size: 12px;
+  margin: 0 0 20px;
+}
+.pdf-task-grid dt {
+  color: var(--muted);
+}
+.pdf-task-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.pdf-recognize {
+  padding-top: 18px;
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.pdf-recognize h3 {
+  font-size: 13px;
+  font-weight: 500;
+}
+.pdf-recognize .row label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  min-width: 0;
+}
+.pdf-recognize input {
+  width: 72px;
+  margin: 0;
+  padding: 6px;
+}
+.pdf-processing-controls .row {
+  margin-bottom: 14px;
+}
+.pdf-processing-controls button {
+  font-size: 12px;
+}
+.pdf-preparation .card {
+  max-width: 760px;
+}
+@media (max-width: 600px) {
+  .pdf-original-dialog {
+    width: calc(100vw - 16px);
+    height: calc(100dvh - 16px);
+    padding: 12px;
+  }
+  .pdf-original-head { gap: 5px; }
+  .pdf-original-head > span { font-size: 10px; }
+  .pdf-original-controls { gap: 8px; }
+  .pdf-original-scroll { padding: 20px; }
+  .pdf-object .note-marker { right: 0; }
+}

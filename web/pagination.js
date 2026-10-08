@@ -1,4 +1,5 @@
 import { $, e, local } from "./core.js";
+import { sourceUrlRanges, overlapsSourceUrl, sourceUrlParts } from "./source-urls.js";
 
 import { PageCurlRenderer } from "./page-curl-renderer.js?v=20261008-paper";
 
@@ -49,15 +50,19 @@ export class ReadingPages {
       timer = setTimeout(() => this.reflow(this.position()), 100);
     });
     resize.observe($(".reading-columns"));
+    resize.observe($("#article"));
     scope.cleanup(() => {
       resize.disconnect();
       clearTimeout(timer);
     });
   }
   layoutChanged(rect) {
+    const article = $("#article").getBoundingClientRect();
     return (
       Math.abs(rect.width - (this.containerWidth || 0)) > 1 ||
-      Math.abs(rect.height - (this.containerHeight || 0)) > 1
+      Math.abs(rect.height - (this.containerHeight || 0)) > 1 ||
+      Math.abs(article.width - (this.articleWidth || 0)) > 1 ||
+      Math.abs(article.height - (this.articleHeight || 0)) > 1
     );
   }
   layout() {
@@ -82,10 +87,13 @@ export class ReadingPages {
       css = getComputedStyle(leaf);
     this.containerWidth = box.width;
     this.containerHeight = box.height;
+    const articleBox = article.getBoundingClientRect();
+    this.articleWidth = articleBox.width;
+    this.articleHeight = articleBox.height;
     this.width = rect.width;
     this.height = Math.max(
       72,
-      box.height -
+      articleBox.height -
         parseFloat(css.paddingTop) -
         parseFloat(css.paddingBottom) -
         48 -
@@ -134,7 +142,16 @@ export class ReadingPages {
     if (target < 0 || (this.complete && target >= this.pages.length)) {
       const chapter = this.r.doc.chapter,
         chapters = this.r.doc.chapters;
-      const next = chapter && chapters[chapter.idx + direction];
+      const current = chapters.findIndex(ch => ch.doc_id === this.r.doc.id);
+      const next = chapter && chapters[current + direction];
+      if (next && this.r.doc.pdf?.ranges) {
+        const range = this.r.doc.pdf.ranges.find(v => v.doc_id === next.doc_id);
+        if (range && ((direction > 0 && range.start_page > this.r.doc.pdf.end_page + 1) ||
+          (direction < 0 && range.end_page < this.r.doc.pdf.start_page - 1))) {
+          this.r.status("相邻原页范围尚未准备，可从目录选择已准备内容或核对原版。");
+          return;
+        }
+      }
       if (next) this.r.ctx.navigate("#/read/" + next.doc_id);
       else this.r.status(direction > 0 ? "已到本篇末尾" : "已到本篇开头");
       return;
@@ -161,6 +178,7 @@ export class ReadingPages {
   indexSource() {
     this.r.annotations = [];
     this.fragments = new Map();
+    this.urlRanges = new Map();
     this.blocks = new Map();
     this.offsets = new Map();
     this.length = 0;
@@ -168,13 +186,16 @@ export class ReadingPages {
       this.blocks.set(block.id, block);
       this.offsets.set(block.id, this.length);
       this.length += block.text.length;
+      const urls = sourceUrlRanges(block.text || "");
+      this.urlRanges.set(block.id, urls);
       let cursor = 0;
       this.fragments.set(
         block.id,
-        block.fragments.map((f) => {
+        (block.fragments || [{type: "plain", text: block.text || ""}]).map((f) => {
           const item = { ...f, start: cursor, end: cursor + f.text.length };
           cursor = item.end;
-          if (f.type !== "plain")
+          if (overlapsSourceUrl(urls, item.start, item.end)) item.type = "plain";
+          if (item.type !== "plain")
             item.annotation =
               this.r.annotations.push({
                 ...f,
@@ -188,26 +209,47 @@ export class ReadingPages {
     }
   }
   words(text, offset, block) {
-    return [...text.matchAll(/\S+\s*|\s+/g)]
-      .map((m) => {
-        const value = m[0],
-          word = value.match(
-            /[A-Za-z\uFB00-\uFB06]+(?:['’-][A-Za-z\uFB00-\uFB06]+)*/,
-          );
-        if (!word) return this.r.highlight(value);
-        const start = offset + m.index + word.index,
-          end = start + word[0].length;
-        return (
-          this.r.highlight(value.slice(0, word.index)) +
-          `<span class="source-unit" role="button" tabindex="0" data-word="${e(word[0])}" data-source-start="${start}" data-source-end="${end}" data-source-block="${e(block)}" aria-label="查阅 ${e(word[0])}">${this.r.highlight(word[0])}</span>` +
-          this.r.highlight(value.slice(word.index + word[0].length))
-        );
+    return sourceUrlParts(text, offset, this.urlRanges.get(block) || [])
+      .map((part) => {
+        if (part.url)
+          return `<span class="source-unit source-url" data-source-url data-source-start="${part.start}" data-source-end="${part.end}" data-source-block="${e(block)}">${this.r.highlight(part.text)}</span>`;
+        return [...part.text.matchAll(/\S+\s*|\s+/g)]
+          .map((m) => {
+            const value = m[0],
+              word = value.match(
+                /[A-Za-z\uFB00-\uFB06]+(?:['’-][A-Za-z\uFB00-\uFB06]+)*/,
+              );
+            if (!word) return this.r.highlight(value);
+            const start = part.start + m.index + word.index,
+              end = start + word[0].length;
+            return (
+              this.r.highlight(value.slice(0, word.index)) +
+              `<span class="source-unit" role="button" tabindex="0" data-word="${e(word[0])}" data-source-start="${start}" data-source-end="${end}" data-source-block="${e(block)}" aria-label="查阅 ${e(word[0])}">${this.r.highlight(word[0])}</span>` +
+              this.r.highlight(value.slice(word.index + word[0].length))
+            );
+          })
+          .join("");
       })
       .join("");
   }
   markup(fragment, measure = false) {
     const b = this.blocks.get(fragment.id);
     const { start, end } = fragment;
+    if (this.visualBlock(b)) {
+      const box = b.source?.bbox;
+      const width = Math.max(1, b.width || (box && box[2] - box[0]) || 600);
+      const height = Math.max(1, b.height || (box && box[3] - box[1]) || 400);
+      const available = Math.max(80, parseFloat(this.measure.style.width) || this.width - 64);
+      const fitWidth = Math.min(available, width * 2);
+      const scale = Math.min(1, Math.max(32, this.height - 100) / (fitWidth * height / width));
+      const shownWidth = Math.round(fitWidth * scale), shownHeight = Math.round(shownWidth * height / width);
+      const caption = b.type === "image_fallback"
+        ? `原图保留${b.source?.page_number ? ` · 来源第 ${b.source.page_number} 页` : ""}`
+        : b.caption || "";
+      const figure = `<figure data-block="${e(b.id)}" data-start="0" data-end="${b.text.length}" data-pdf-object="${e(b.id)}" class="pdf-object ${e(b.type)}"><img src="${e(b.asset_url)}" alt="${e(caption || "PDF 原图")}" width="${shownWidth}" height="${shownHeight}" style="width:${shownWidth}px;height:${shownHeight}px;max-width:100%;object-fit:contain" draggable="false" decoding="async">${caption ? `<figcaption>${e(caption)}</figcaption>` : ""}</figure>`;
+      if (measure) return figure;
+      return `<section class="source-fragment pdf-object-fragment" data-fragment="${e(b.id)}" data-fragment-start="0" data-fragment-end="${b.text.length}"><div class="source-row"><span class="grammar-slot" aria-hidden="true"></span>${figure}</div></section>`;
+    }
     const tag =
       { heading: "h2", quote: "blockquote", code: "pre" }[b.type] || "p";
     const text = (this.fragments.get(b.id) || [])
@@ -232,6 +274,13 @@ export class ReadingPages {
         ? ""
         : `<div class="paragraph-actions"><button data-read-block="${b.id}" type="button" ${this.r.ctx.enabled("tts") ? "" : "hidden"}>听这一段</button><button data-select-block="${b.id}" type="button">选择这一段</button></div>`;
     return `<section class="source-fragment" data-fragment="${b.id}" data-fragment-start="${start}" data-fragment-end="${end}"><div class="source-row"><span class="grammar-slot" data-grammar-slot="${b.id}"></span>${source}</div>${actions}<section class="inline-grammar" data-grammar-block="${b.id}" hidden></section></section>`;
+  }
+  visualBlock(block) {
+    if (!block || !["image", "image_fallback", "formula", "table"].includes(block.type) || !block.asset_url) return false;
+    try {
+      const url = new URL(block.asset_url, location.origin);
+      return url.origin === location.origin && /^\/api\/pdf\/books\/\d+\/assets\//.test(url.pathname);
+    } catch { return false; }
   }
   wake() {
     this.waiters.splice(0).forEach((resolve) => resolve());
@@ -288,7 +337,7 @@ export class ReadingPages {
       if (!this.complete) this.timer = setTimeout(advance, 0);
     };
     advance();
-    return this.restore(anchor, false);
+    return this.restore(anchor, false, {reflow: true});
   }
   *buildPages() {
     const height = this.height;
@@ -306,6 +355,18 @@ export class ReadingPages {
       );
     };
     for (const b of this.r.doc.blocks) {
+      if (this.visualBlock(b)) {
+        const part = {id: b.id, start: 0, end: b.text.length, object: true};
+        const objectHeight = measure(part);
+        if (page.length && used + objectHeight > height) {
+          yield page;
+          page = [];
+          used = 0;
+        }
+        page.push(part);
+        used += Math.min(height, objectHeight);
+        continue;
+      }
       const ends = [...b.text.matchAll(/\S+\s*/g)].map(
         (m) => m.index + m[0].length,
       );
@@ -379,6 +440,10 @@ export class ReadingPages {
     if (page.length) yield page;
   }
   validAnchor(anchor) {
+    if (this.r.doc.pdf && anchor?.pdf_source) {
+      const block = this.r.pdfAnchorBlock(anchor);
+      return block ? {...anchor, block_id: block.id} : null;
+    }
     return anchor?.block_id &&
       this.r.doc.blocks.some((b) => b.id === anchor.block_id)
       ? anchor
@@ -387,8 +452,9 @@ export class ReadingPages {
   pageFor(anchor) {
     let block = this.r.doc.blocks.find((b) => b.id === anchor?.block_id),
       start = anchor?.start || 0;
+    if (this.r.doc.pdf && anchor?.pdf_source) block = this.r.pdfAnchorBlock(anchor);
     if (!block && anchor?.quote) {
-      block = this.r.doc.blocks.find((b) => b.text.includes(anchor.quote));
+      block = this.r.doc.pdf ? null : this.r.doc.blocks.find((b) => b.text.includes(anchor.quote));
       start = block?.text.indexOf(anchor.quote) || 0;
     }
     const i =
@@ -774,7 +840,7 @@ export class ReadingPages {
       this.commitPage(index);
     }
   }
-  async restore(anchor, mark = true) {
+  async restore(anchor, mark = true, {reflow = false} = {}) {
     if (mark && anchor?.block_id) {
       const visible = [
         ...document.querySelectorAll("#article [data-block]"),
@@ -811,17 +877,17 @@ export class ReadingPages {
         generation !== this.generation ||
         this.r.scope.signal.aborted
       )
-        return;
+        return false;
     }
     if (
       navigation !== this.navigation ||
       generation !== this.generation ||
       this.r.scope.signal.aborted
     )
-      return;
+      return false;
     const index = this.pageFor(anchor);
     this.displayPending = false;
-    if (index !== this.index) this.r.emit("before-page");
+    if (index !== this.index) this.r.emit("before-page", {reflow});
     this.index = index;
     this.anchor = this.validAnchor(anchor) || this.firstAnchor();
     this.render();
@@ -830,5 +896,6 @@ export class ReadingPages {
     );
     if (mark) el?.classList.add("anchor-flash");
     this.r.emit("position");
+    return true;
   }
 }

@@ -1,0 +1,7 @@
+# Isolated lab only: uv pip install --python .venv-pdf-lab/bin/python -r requirements-pdf-lab.txt
+# Lightweight actual digital text/provenance/rendering (MIT, BSD/Apache respectively).
+pdfplumber==0.11.10
+pypdfium2==5.14.0
+# Optional OCR candidate, installed explicitly in the same isolated environment:
+# uv pip install --python .venv-pdf-lab/bin/python 'docling==2.135.0' 'ocrmac==1.0.0'
+# Model assets must be separately prepared; conversions disable model downloads.

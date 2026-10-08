@@ -1,7 +1,38 @@
 import { $, $$, e, api, local, date, toast } from "../core.js";
-import { noteStore } from "./notes-store.js?v=20261005-open3";
+import { noteStore, imageReference } from "./notes-store.js?v=20261008-pdf";
 const pencil =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h11l3 3v15H5zM8 8h8M8 12h8M8 16h5"/></svg>';
+function imageExcerpt(note, attrs = "") {
+  const image = imageReference(note);
+  if (!image) return "";
+  return `<button class="note-excerpt pdf-note-excerpt" ${attrs}>${image.asset_url ? `<img src="${e(image.asset_url)}" alt="保留的原图引用" loading="lazy">` : '<span class="pdf-note-missing">原图预览暂不可用</span>'}<span>${e(image.label)}</span></button>`;
+}
+export function imageAnchor(reader, block) {
+  if (
+    !reader.doc.pdf ||
+    !Number.isInteger(block?.source?.page_number) ||
+    !Array.isArray(block.source.bbox) ||
+    block.source.bbox.length !== 4
+  )
+    return null;
+  const anchor = reader.anchorFor(block.id, 0, block.text?.length || 1);
+  if (!anchor) return null;
+  const source = structuredClone(block.source);
+  if (source.conversion_task_id == null) delete source.conversion_task_id;
+  return {
+    ...anchor,
+    kind: "image",
+    quote: "",
+    pdf_source: {
+      ...source,
+      object_id: block.id,
+      book_id: reader.doc.pdf.book_id,
+      source_sha256: reader.doc.pdf.source_sha256 || "",
+      asset_url: block.asset_url || block.source.asset_url || "",
+      revision: reader.doc.pdf.revision || "",
+    },
+  };
+}
 export function install(ctx) {
   const read = ctx.hook("read", async (reader) => {
     await new ReaderNotes(reader).mount();
@@ -14,10 +45,14 @@ export function install(ctx) {
       const q = $("#notes-search").value.toLowerCase();
       $("#notes-list").innerHTML =
         notes
-          .filter((n) => (n.body + n.quote + n.title).toLowerCase().includes(q))
+          .filter((n) =>
+            (n.body + n.quote + n.title + (imageReference(n)?.label || ""))
+              .toLowerCase()
+              .includes(q),
+          )
           .map(
             (n) =>
-              `<div class="list-item"><div class="row between"><span class="meta">${e(n.title)} · ${date(n.created_at)}</span><button class="text-button" data-delete-note="${n.id}" aria-label="删除笔记">删除</button></div>${n.quote ? `<blockquote>${e(n.quote)}</blockquote>` : ""}<p class="body">${e(n.body)}</p><button class="text-button" data-jump-note="${n.id}">回到这段原文 →</button></div>`,
+              `<div class="list-item"><div class="row between"><span class="meta">${e(n.title)} · ${date(n.created_at)}</span><button class="text-button" data-delete-note="${n.id}" aria-label="删除笔记">删除</button></div>${imageReference(n) ? imageExcerpt(n, `data-jump-note="${n.id}"`) : n.quote ? `<blockquote>${e(n.quote)}</blockquote>` : ""}<p class="body">${e(n.body)}</p><button class="text-button" data-jump-note="${n.id}">回到${imageReference(n) ? "原图" : "这段原文"} →</button></div>`,
           )
           .join("") ||
         '<div class="empty">阅读时打开“笔记”，选中原文写下想法。</div>';
@@ -36,6 +71,7 @@ export function install(ctx) {
         del.disabled = true;
         try {
           const removed = await noteStore.remove(n);
+          if (scope.signal.aborted) return;
           notes.splice(notes.indexOf(n), 1);
           if (local.get(`note-draft:${n.doc_id}`)?.id === n.id)
             local.remove(`note-draft:${n.doc_id}`);
@@ -60,7 +96,7 @@ export function install(ctx) {
   };
 }
 
-class ReaderNotes {
+export class ReaderNotes {
   constructor(reader) {
     this.r = reader;
     this.notes = [];
@@ -76,6 +112,7 @@ class ReaderNotes {
   }
   async mount() {
     const r = this.r;
+    r.notesController = this;
     r.tool("notes", "笔记", () => this.list());
     r.selectionAction("notes", "记一笔", () => {
       if (r.selection) this.fresh({ ...r.selection });
@@ -101,6 +138,7 @@ class ReaderNotes {
     r.scope.cleanup(() => {
       CSS.highlights?.delete("reader-notes");
       this.back.remove();
+      if (r.notesController === this) delete r.notesController;
     });
     await this.reload();
     if (r.scope.signal.aborted) return;
@@ -164,8 +202,66 @@ class ReaderNotes {
     if (this.r.panelId === "notes" && !this.editor) this.drawList();
   }
   resolved(n) {
-    if (n.doc_id !== this.r.doc.id || !n.quote) return null;
-    let block = this.blocks.get(n.anchor?.block_id);
+    if (n.doc_id !== this.r.doc.id) return null;
+    const image = imageReference(n);
+    if (image) {
+      const block = this.r.doc.blocks.find((b) => b.id === n.anchor.block_id);
+      if (!block?.source) return null;
+      if (
+        image.source_sha256 &&
+        image.source_sha256 !== this.r.doc.pdf?.source_sha256
+      )
+        return null;
+      if (image.asset_url) {
+        const currentURL = imageReference({
+          anchor: {
+            kind: "image",
+            pdf_source: {
+              ...block.source,
+              book_id: this.r.doc.pdf?.book_id,
+              asset_url: block.asset_url,
+            },
+          },
+        })?.asset_url;
+        if (currentURL !== image.asset_url) return null;
+      } else if (n.anchor.version !== this.r.doc.version) return null;
+      if (
+        block.source.page_number !== image.page_number ||
+        JSON.stringify(block.source.bbox) !== JSON.stringify(image.bbox)
+      )
+        return null;
+      return { ...n.anchor, start: 0, end: block.text?.length || 1 };
+    }
+    if (!n.quote) return null;
+    if (this.r.doc.pdf) {
+      const source = n.anchor?.pdf_source;
+      if (
+        !source ||
+        (source.source_sha256 &&
+          source.source_sha256 !== this.r.doc.pdf.source_sha256)
+      )
+        return null;
+      const matches = this.r.doc.blocks.filter(
+        (block) =>
+          block.source?.page_number === source.page_number &&
+          Array.isArray(source.bbox) &&
+          source.bbox.length === 4 &&
+          Array.isArray(block.source.bbox) &&
+          source.bbox.every(
+            (number, i) =>
+              Number.isFinite(number) &&
+              Math.abs(number - block.source.bbox[i]) <= 0.1,
+          ),
+      );
+      if (matches.length !== 1) return null;
+      const block = this.r.pdfAnchorBlock?.(n.anchor) || matches[0];
+      if (block.id !== matches[0].id) return null;
+      const start = n.anchor?.start || 0,
+        end = n.anchor?.end || start + n.quote.length;
+      if (block.text.slice(start, end) !== n.quote) return null;
+      return { ...n.anchor, block_id: block.id, start, end, quote: n.quote };
+    }
+    let block = this.r.doc.blocks.find((b) => b.id === n.anchor?.block_id);
     let start = n.anchor?.start || 0,
       end = n.anchor?.end || start + n.quote.length;
     if (!block || block.text.slice(start, end) !== n.quote) {
@@ -182,6 +278,14 @@ class ReaderNotes {
     $$("#article .source-unit.has-note").forEach((el) =>
       el.classList.remove("has-note"),
     );
+    $$("#article .pdf-object.has-note").forEach((el) =>
+      el.classList.remove("has-note"),
+    );
+    if (this.indexVersion !== this.r.doc.version) {
+      this.indexVersion = this.r.doc.version;
+      this.noteIndex = null;
+      this.blocks = new Map(this.r.doc.blocks.map((b) => [b.id, b]));
+    }
     if (!this.noteIndex) {
       this.noteIndex = new Map();
       for (const note of this.notes) {
@@ -206,7 +310,11 @@ class ReaderNotes {
       marker.setAttribute("aria-label", `查看这段的${count}条笔记`);
       marker.title = marker.getAttribute("aria-label");
       marker.innerHTML = pencil + (count > 1 ? `<span>${count}</span>` : "");
-      el.closest(".source-row").append(marker);
+      (el.closest(".source-row") || el).append(marker);
+      if (anchors.some((a) => a.kind === "image")) {
+        el.classList.add("has-note");
+        return;
+      }
       const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
       let node,
         offset = +el.dataset.start;
@@ -233,6 +341,7 @@ class ReaderNotes {
       CSS.highlights.set("reader-notes", new Highlight(...ranges));
   }
   location(n) {
+    if (imageReference(n)) return imageReference(n).label;
     if (!n.quote) return this.book ? "全书随记" : "篇章随记";
     const block = this.r.doc.blocks.find((b) => b.id === n.anchor?.block_id);
     const heading =
@@ -244,10 +353,11 @@ class ReaderNotes {
     return n.chapter_title || heading?.text || n.title || this.r.doc.title;
   }
   card(n) {
-    return `<article class="reader-note-item" data-note-id="${n.id}">${n.quote ? `<button class="note-excerpt" data-note-jump="${n.id}" title="回到这段原文">${e(n.quote)}</button>` : ""}<p class="note-thought">${e(n.body)}</p><div class="note-item-actions"><span class="meta">${e(this.location(n))}</span><button class="text-button" data-note-edit="${n.id}">编辑</button><button class="icon-button" data-note-more="${n.id}" aria-label="笔记更多操作" aria-expanded="false">⋯</button></div><div data-note-delete-zone="${n.id}" hidden><button class="text-button note-danger" data-note-delete="${n.id}">删除笔记</button></div></article>`;
+    return `<article class="reader-note-item" data-note-id="${n.id}">${imageReference(n) ? imageExcerpt(n, `data-note-jump="${n.id}" title="回到原图"`) : n.quote ? `<button class="note-excerpt" data-note-jump="${n.id}" title="回到这段原文">${e(n.quote)}</button>` : ""}<p class="note-thought">${e(n.body)}</p><div class="note-item-actions"><span class="meta">${e(this.location(n))}${this.r.doc.pdf && n.doc_id === this.r.doc.id && n.anchor && !this.resolved(n) ? " · 旧引用保留" : ""}</span><button class="text-button" data-note-edit="${n.id}">编辑</button><button class="icon-button" data-note-more="${n.id}" aria-label="笔记更多操作" aria-expanded="false">⋯</button></div><div data-note-delete-zone="${n.id}" hidden><button class="text-button note-danger" data-note-delete="${n.id}">删除笔记</button></div></article>`;
   }
   currentChapter(n) {
-    if (!n.quote || n.doc_id !== this.r.doc.id) return false;
+    if ((!n.quote && !imageReference(n)) || n.doc_id !== this.r.doc.id)
+      return false;
     if (this.book) return true;
     const chapterAt = (anchor) => {
       const i = this.r.doc.blocks.findIndex((b) => b.id === anchor?.block_id);
@@ -259,6 +369,7 @@ class ReaderNotes {
     return chapterAt(this.resolved(n)) === chapterAt(this.r.position());
   }
   drawList(force = false) {
+    if (this.r.scope.signal.aborted) return;
     const el = $("#notes-content");
     if (!el || this.r.panelId !== "notes") return;
     const expanded = $$("[data-note-delete-zone]", el)
@@ -395,6 +506,24 @@ class ReaderNotes {
           this.cardAction(ev, "source");
           if (ev.target.closest("[data-note-add]")) {
             const b = this.r.doc.blocks.find((b) => b.id === block_id);
+            if (!b) return;
+            if (
+              imageReference({
+                anchor: {
+                  kind:
+                    b.source &&
+                    ["image", "image_fallback", "formula", "table"].includes(
+                      b.type,
+                    )
+                      ? "image"
+                      : "text",
+                  pdf_source: b.source,
+                },
+              })
+            ) {
+              this.addImage(b);
+              return;
+            }
             this.fresh(
               this.r.anchorFor(block_id, 0, Math.min(b.text.length, 10000)),
             );
@@ -416,8 +545,16 @@ class ReaderNotes {
       origin,
     );
   }
+  addImage(block) {
+    const anchor = imageAnchor(this.r, block);
+    if (!anchor) {
+      toast("这张图的来源暂不可用，原图引用未创建。");
+      return;
+    }
+    this.fresh(anchor);
+  }
   edit(note, origin) {
-    if (origin === "source" && note.anchor)
+    if (origin === "source" && note.anchor && note.anchor.kind !== "image")
       this.r.choose(this.resolved(note) || note.anchor);
     const rect = this.sourceRect(note.anchor),
       entry = noteStore.entry(note);
@@ -429,8 +566,12 @@ class ReaderNotes {
     if (this.r.panelId === "notes") this.r.closePanel();
     this.r.panel(
       "notes",
-      note.id ? "编辑笔记" : note.quote ? "记一笔" : "写随记",
-      `${origin === "list" ? '<button class="text-button" id="note-back">← 返回笔记列表</button>' : ""}<span class="meta">${e(this.location(note))}</span>${entry.quote ? `<button class="note-excerpt note-editor-quote" id="note-quote" aria-expanded="false" title="展开引用">${e(entry.quote)}</button>` : ""}<label for="note-body">我的想法</label><textarea id="note-body" rows="3" placeholder="写下此刻的想法…">${e(entry.body)}</textarea><div class="note-editor-footer"><span id="note-state" class="save-state" role="status"></span><button id="note-retry" class="text-button" hidden>重试</button><button id="note-done">完成</button></div>`,
+      note.id
+        ? "编辑笔记"
+        : note.quote || imageReference(note)
+          ? "记一笔"
+          : "写随记",
+      `${origin === "list" ? '<button class="text-button" id="note-back">← 返回笔记列表</button>' : ""}<span class="meta">${e(this.location(note))}</span>${imageReference(entry) ? imageExcerpt(entry, 'id="note-quote" aria-expanded="false" title="展开原图引用"') : entry.quote ? `<button class="note-excerpt note-editor-quote" id="note-quote" aria-expanded="false" title="展开引用">${e(entry.quote)}</button>` : ""}<label for="note-body">我的想法</label><textarea id="note-body" rows="3" placeholder="写下此刻的想法…">${e(entry.body)}</textarea><div class="note-editor-footer"><span id="note-state" class="save-state" role="status"></span><button id="note-retry" class="text-button" hidden>重试</button><button id="note-done">完成</button></div>`,
       (el, scope) => {
         this.editor = entry;
         const panel = $("#tool-panel");
@@ -524,6 +665,7 @@ class ReaderNotes {
     button.disabled = true;
     try {
       const removed = await noteStore.remove(note);
+      if (this.r.scope.signal.aborted) return;
       this.notes = this.notes.filter((n) => n.id !== note.id);
       this.noteIndex = null;
       this.paint();
@@ -551,6 +693,17 @@ class ReaderNotes {
     }
   }
   async jump(note) {
+    if (
+      note.doc_id === this.r.doc.id &&
+      this.r.doc.pdf &&
+      note.anchor?.pdf_source &&
+      !this.resolved(note)
+    ) {
+      if (this.r.pdfTools?.openOriginal)
+        this.r.pdfTools.openOriginal(note.anchor.pdf_source);
+      else toast("旧引用已保留，当前结果无法可靠对应；请核对原版。");
+      return;
+    }
     const anchor = this.resolved(note) || note.anchor || { quote: note.quote };
     this.origin ||= { doc_id: this.r.doc.id, anchor: this.r.position() };
     this.r.returnAnchor =

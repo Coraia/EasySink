@@ -80,6 +80,8 @@ def register(app, ctx):
         if voice not in {v["name"] for v in voices}:
             raise HTTPException(400, "请选择已安装的本地英文音色")
         text = body.text.strip()
+        if "\ufffc" in text:
+            raise HTTPException(422, "原图不能朗读，请选择已识别的原文文字。")
         if not text:
             raise HTTPException(400, "没有可朗读的原文")
         key = hashlib.sha256(("macos-local\0" + voice + "\0" + text).encode()).hexdigest()
@@ -112,6 +114,8 @@ def register(app, ctx):
         if not p["enabled"] or not p["api_key"]:
             raise HTTPException(400, "请先在 AI 与语音设置中启用自然语音")
         text = body.text.strip()
+        if "\ufffc" in text:
+            raise HTTPException(422, "原图不能朗读，请选择已识别的原文文字。")
         if not text:
             raise HTTPException(400, "没有可朗读的原文")
         voice = body.voice or p["voice"]

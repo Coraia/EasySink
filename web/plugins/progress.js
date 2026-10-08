@@ -7,7 +7,7 @@ export function install(ctx) {
     $("#home-continue").innerHTML =
       `<div class="card row between"><div><div class="eyebrow" style="margin-bottom:5px">接着上次的好奇心</div><h3 style="margin:0">${e(p.title)}</h3><span class="meta">${Math.round(p.scroll_ratio * 100)}% · ${date(p.updated_at)}</span></div><button id="continue-reading" class="primary">继续阅读 →</button></div>`;
     scope.on($("#continue-reading"), "click", () =>
-      ctx.jump(p.doc_id, p.anchor || { ratio: p.scroll_ratio }),
+      ctx.jump(p.doc_id, { ...(p.anchor || { ratio: p.scroll_ratio }), resume_position: true }),
     );
   });
   const read = ctx.hook("read", async (reader) => {
@@ -49,6 +49,7 @@ export function install(ctx) {
     if (!local.get(`jump:${id}`))
       await reader.restore(
         pending || saved.anchor || { ratio: saved.scroll_ratio },
+        { automatic: true, mark: false },
       );
     const changed = () => {
       if (reader.restoring || document.hidden) return;

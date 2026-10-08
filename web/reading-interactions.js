@@ -5,7 +5,7 @@ export function setupReadingInteractions(r) {
   r.selectionActions = new Map();
   r.assists = [];
   r.pending = new Map();
-  r.emit = (name) => r.events.dispatchEvent(new Event(name));
+  r.emit = (name, detail) => r.events.dispatchEvent(new CustomEvent(name, {detail}));
   r.on = (name, fn) => r.scope.on(r.events, name, fn);
   r.status = (text, { notice = false } = {}) => {
     if (r.scope.signal.aborted) return;
@@ -20,15 +20,21 @@ export function setupReadingInteractions(r) {
   };
   r.anchorFor = (id, start, end) => {
     const b = r.doc.blocks.find((b) => b.id === id);
+    if (!b) return null;
+    const image = Boolean(b.asset_url && ["image", "image_fallback", "formula", "table"].includes(b.type));
     return {
       version: r.doc.version,
       block_id: id,
       start,
       end,
-      quote: b.text.slice(start, end),
+      quote: image && end > start ? (b.caption || `原图 · 原页 ${b.source?.page_number || ""}`) : b.text.slice(start, end),
       prefix: b.text.slice(Math.max(0, start - 40), start),
       suffix: b.text.slice(end, end + 40),
       ratio: r.pages?.anchor?.ratio || 0,
+      ...(b.source && r.doc.pdf ? {
+        kind: image ? "image" : "text",
+        pdf_source: { ...b.source, book_id: r.doc.pdf.book_id, source_sha256: r.doc.pdf.source_sha256, ...(image ? {asset_url: b.asset_url} : {}) },
+      } : {}),
     };
   };
   r.selectionAction = (id, label, fn) => {
@@ -50,7 +56,11 @@ export function setupReadingInteractions(r) {
       ),
     );
     globalThis.CSS?.highlights?.delete("reader-selection");
+    $$("#article [data-pdf-object]").forEach((el) =>
+      el.classList.toggle("is-selected", Boolean(anchor?.kind === "image" && el.dataset.pdfObject === anchor.block_id)),
+    );
     if (!anchor) return;
+    if (anchor.kind === "image") return;
     const ranges = [];
     $$("#article [data-block]").forEach((block) => {
       if (block.dataset.block !== anchor.block_id) return;
@@ -93,6 +103,12 @@ export function setupReadingInteractions(r) {
       rect.height &&
       rect.bottom > Math.max(leaf.top, 0) &&
       rect.top < Math.min(leaf.bottom, innerHeight);
+    if (r.selection.kind === "image") {
+      const object = $$("#article [data-pdf-object]").find(el => el.dataset.pdfObject === r.selection.block_id);
+      const leaf = object?.closest(".page-leaf");
+      if (object && leaf && visible(object.getBoundingClientRect(), leaf.getBoundingClientRect()))
+        target = {rect: object.getBoundingClientRect(), leaf: leaf.getBoundingClientRect()};
+    }
     if (point.trigger === "paragraph") {
       const fragment = $$("#article .source-fragment").find(
         (el) =>
@@ -167,8 +183,11 @@ export function setupReadingInteractions(r) {
     const el = $("#reading-selection");
     if (!el) return;
     el.hidden = !r.selection;
-    if (r.selection)
-      el.innerHTML = `<div class="selection-quote">已选原文 · ${e(r.selection.quote.length > 110 ? r.selection.quote.slice(0, 110) + "…" : r.selection.quote)}</div><div class="selection-actions" role="toolbar" aria-label="所选原文操作">${[...r.selectionActions].map(([id, { label }]) => `<button type="button" data-selection-action="${id}">${e(r.pending.has(id) ? "取消" + label : label)}</button>`).join("")}<button type="button" data-selection-clear aria-label="取消选择" title="取消选择">×</button></div>${r.ctx.enabled("grammar") ? '<div class="selection-scope">语法分析按完整句子处理；翻译、朗读和笔记仍按当前选区。</div>' : ""}`;
+    if (r.selection) {
+      const image = r.selection.kind === "image";
+      const actions = [...r.selectionActions].filter(([id]) => !image || ["notes", "bookmarks", "pdf-source"].includes(id));
+      el.innerHTML = `<div class="selection-quote">${image ? "已选原图" : "已选原文"} · ${e(r.selection.quote.length > 110 ? r.selection.quote.slice(0, 110) + "…" : r.selection.quote)}</div><div class="selection-actions" role="toolbar" aria-label="所选原文操作">${actions.map(([id, { label }]) => `<button type="button" data-selection-action="${id}">${e(r.pending.has(id) ? "取消" + label : label)}</button>`).join("")}<button type="button" data-selection-clear aria-label="取消选择" title="取消选择">×</button></div>${!image && r.ctx.enabled("grammar") ? '<div class="selection-scope">语法分析按完整句子处理；翻译、朗读和笔记仍按当前选区。</div>' : ""}`;
+    }
     r.emit("selection-render");
     r.positionSelection();
   };
@@ -248,8 +267,37 @@ export function setupReadingInteractions(r) {
           ),
       ),
     );
+    // A text selection paints above element backgrounds. Give the linked
+    // sentence its own higher-priority range, including spaces/punctuation.
+    if (kind === "translation" && globalThis.CSS?.highlights && globalThis.Highlight) {
+      const linked = [];
+      $$("#article [data-block]").forEach((block) => {
+        if (block.dataset.block !== anchor.block_id) return;
+        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+        let offset = +block.dataset.start, node;
+        while ((node = walker.nextNode())) {
+          if (node.parentElement.closest(".gloss,.bookmark-marker")) continue;
+          const end = offset + node.textContent.length;
+          for (const part of ranges) {
+            if (offset >= part.end || end <= part.start) continue;
+            const range = document.createRange();
+            range.setStart(node, Math.max(0, part.start - offset));
+            range.setEnd(node, Math.min(node.textContent.length, part.end - offset));
+            linked.push(range);
+          }
+          offset = end;
+        }
+      });
+      CSS.highlights.delete("reader-translation");
+      if (linked.length) {
+        const highlight = new Highlight(...linked);
+        highlight.priority = 2;
+        CSS.highlights.set("reader-translation", highlight);
+      }
+    }
   };
   r.cancelHighlight = () => {
+    globalThis.CSS?.highlights?.delete("reader-translation");
     $$("#article .source-unit").forEach((el) =>
       el.classList.remove(
         "linked-translation",
@@ -258,6 +306,10 @@ export function setupReadingInteractions(r) {
       ),
     );
   };
+  r.scope.cleanup(() => {
+    globalThis.CSS?.highlights?.delete("reader-selection");
+    globalThis.CSS?.highlights?.delete("reader-translation");
+  });
   r.on("before-navigation", () => {
     for (const controller of r.pending.values()) controller.cancel();
     r.pending.clear();
