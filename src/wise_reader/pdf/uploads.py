@@ -81,8 +81,11 @@ async def receive_original(file: UploadFile, root: Path):
         try:
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=25)
         except asyncio.TimeoutError:
-            await LocalWorkers.terminate(process)
             raise error(422, "validator_timeout", "Local PDF validation timed out.")
+        finally:
+            # Request/service cancellation must also stop and reap the owned
+            # validator (including native parser children) before cleanup.
+            await LocalWorkers.terminate(process)
         try:
             validation = json.loads(stdout) if not process.returncode and len(stdout) < 65536 else None
         except ValueError:

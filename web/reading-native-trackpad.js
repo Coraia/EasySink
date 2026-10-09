@@ -1,30 +1,34 @@
 import { movement, completes } from "./reading-gesture-policy.js";
 
 // App-owned phases; ordinary source DOM retains word selection and notes.
-export function installNativeReadingTrackpad(ctx, config) {
+export function installNativeReadingTrackpad(ctx, config = {}) {
   const controller = new AbortController(), options = { signal: controller.signal };
-  let socket, connected = false, monitorReady = false, stopped = false, attempts = 0, retry, handshake;
+  const desktop = config.desktop === true && window.wiseReaderDesktop?.nativeTrackpad === true;
+  let socket, connected = desktop, monitorReady = desktop, stopped = false, attempts = 0, retry, handshake;
+  let needsBegan = desktop;
   let discovering = false, lastDiscovery = -Infinity;
   let over = false, clientY = innerHeight * .55, active = null, flight = null, serial = 0;
   let provisional = { x: 0, y: 0, axis: null }, lastGate;
   const pending = [], records = [], bound = new WeakSet();
-  const counts = { events: 0, physicalEvents: 0, fixtureEvents: 0, momentum: 0, releases: 0, landings: 0 };
+  const counts = { events: 0, physicalEvents: 0, fixtureEvents: 0, domEvents: 0, momentum: 0, releases: 0, landings: 0 };
   function publish() {
     const root = ctx.root.querySelector('.reader');
     if (!root) return;
     root.dataset.trackpadMode = connected && monitorReady ? 'native' : 'native-unavailable';
+    root.dataset.trackpadTransport = desktop ? 'desktop-dom' : 'browser-websocket';
     root.dataset.nativeTrackpad = JSON.stringify(counts);
     root.dataset.nativeGestures = JSON.stringify(records);
   }
-  function log(kind, extra = {}) {
+  function log(kind, extra = {}, update = true) {
     records.push({ at: performance.now(), kind, doc: ctx.reader?.doc.id,
       page: ctx.reader?.pages.index, ...extra });
     if (records.length > 256) records.shift();
-    publish();
+    if (update) publish();
   }
   function allowed(pages = ctx.reader?.pages) {
     return Boolean(pages && ctx.reader === pages.r && pages.canGrab(true) &&
-      !pages.r.scope.signal.aborted && document.hasFocus() && !document.hidden);
+      !pages.r.scope.signal.aborted && document.hasFocus() && !document.hidden &&
+      !document.activeElement?.closest('input,textarea,select,[contenteditable]'));
   }
   function inPaper(target) {
     return target instanceof Element && Boolean(target.closest('#reading-stage')) &&
@@ -32,6 +36,7 @@ export function installNativeReadingTrackpad(ctx, config) {
       (!target.closest('button') || Boolean(target.closest('.reading-edge-grip')));
   }
   function gate() {
+    if ((active || flight || pending.length) && !allowed()) { cancel('interaction-blocked'); return; }
     const on = allowed() && (over || Boolean(active));
     if (on !== lastGate) { log('gate', { enabled: on, over }); lastGate = on; }
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ active: on }));
@@ -48,6 +53,7 @@ export function installNativeReadingTrackpad(ctx, config) {
   function cancel(reason, cancelPaper = true) {
     const g = active || flight || pending[0], session = active?.session || flight?.session;
     active = flight = null; pending.length = 0;
+    if (desktop) needsBegan = true;
     provisional = { x: 0, y: 0, axis: null };
     idle(g?.pages);
     if (g) log('cancel', { id: g.id, reason });
@@ -123,11 +129,17 @@ export function installNativeReadingTrackpad(ctx, config) {
     }
     provisional = { x: 0, y: 0, axis: null }; gate();
   }
-  function receive(e) {
+  function receive(e, transport = 'browser-websocket') {
     if (!allowed() || (!over && !active)) return;
     const at = performance.now(), phase = +e.phase || 0, momentum = +e.momentum || 0;
     counts.events++;
-    if (e.source === 'macOS-NSEvent') counts.physicalEvents++; else counts.fixtureEvents++;
+    // A source string in a CustomEvent is forgeable, including events dispatched
+    // by WKWebView.evaluateJavaScript. DOM delivery is never physical evidence.
+    if (transport === 'desktop-dom') counts.domEvents++;
+    else if (e.source === 'macOS-NSEvent') counts.physicalEvents++;
+    else counts.fixtureEvents++;
+    if (transport === 'desktop-dom') log('phase', { transport, source: e.source, phase, momentum, dx: e.dx, dy: e.dy,
+      nativeTime: e.nativeTime, sequence: e.sequence, clientX: e.clientX, clientY: e.clientY }, false);
     if (momentum) {
       counts.momentum++;
       if (active) release(active, false, 'native-momentum-transition');
@@ -139,6 +151,9 @@ export function installNativeReadingTrackpad(ctx, config) {
       if (active) release(active, false, 'native-new-began');
       provisional = { x: 0, y: 0, axis: null };
     }
+    // Stationary contact can last indefinitely. Only native terminal phases
+    // below may release; no timer guesses when a finger has lifted.
+    if (phase & 2) return;
     const dx = +e.dx || 0, dy = +e.dy || 0;
     if (active && (dx || dy)) {
       const g = active;
@@ -152,7 +167,10 @@ export function installNativeReadingTrackpad(ctx, config) {
       }
       if (provisional.axis === 'x') start(provisional.x, provisional.y, at);
     }
-    if (phase & 16) { if (active) release(active, true, 'native-cancelled'); }
+    if (phase & 16) {
+      if (active) release(active, true, 'native-cancelled');
+      provisional = { x: 0, y: 0, axis: null };
+    }
     else if (phase & 8) {
       if (active) release(active);
       else provisional = { x: 0, y: 0, axis: null };
@@ -172,12 +190,39 @@ export function installNativeReadingTrackpad(ctx, config) {
       else { idle(g.pages); if (g.complete) g.pages.adjacent(g.direction); }
     }
   }
+  function receiveDesktop(event) {
+    const e = event.detail;
+    if (stopped || !e || typeof e !== 'object') return;
+    if (e.source === 'desktop-detached') {
+      connected = monitorReady = false; over = false; cancel('desktop-detached'); return;
+    }
+    if (e.source === 'desktop-ready') {
+      connected = monitorReady = window.wiseReaderDesktop?.nativeTrackpad === true;
+      cancel('desktop-reattached'); return;
+    }
+    if (e.source === 'desktop-interrupted') { over = false; cancel(e.reason || 'desktop-interrupted'); return; }
+    if (e.source !== 'macOS-NSEvent' || !connected || !monitorReady) return;
+    if (![e.phase, e.momentum, e.dx, e.dy, e.clientX, e.clientY].every(Number.isFinite) ||
+        !Number.isInteger(e.phase) || e.phase < 0 || e.phase > 63 ||
+        !Number.isInteger(e.momentum) || e.momentum < 0 || e.momentum > 63 ||
+        !(e.phase || e.momentum)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.buttons || !allowed() ||
+        !inPaper(document.elementFromPoint(e.clientX, e.clientY))) {
+      over = false; cancel('desktop-interaction-blocked'); return;
+    }
+    clientY = e.clientY; over = true;
+    if (e.phase & 1) needsBegan = false;
+    if (needsBegan && !e.momentum) return;
+    receive(e, 'desktop-dom');
+    if ((e.phase & (8 | 16)) || e.momentum) needsBegan = true;
+  }
+  if (desktop) window.addEventListener('wise-reader-native-trackpad', receiveDesktop, options);
   document.addEventListener('pointermove', e => {
     clientY = e.clientY; const next = inPaper(e.target);
     if (next !== over) { over = next; gate(); }
   }, options);
   document.addEventListener('wheel', e => {
-    if (e.ctrlKey || e.metaKey || e.altKey || e.buttons) { cancel('other-input'); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.buttons) { cancel('other-input'); return; }
     if (!inPaper(e.target) || !allowed()) { over = false; cancel('interaction-blocked'); return; }
     clientY = e.clientY; over = true; gate();
     // Only horizontal page input is owned. Vertical scrolling and word cards survive.
@@ -188,6 +233,9 @@ export function installNativeReadingTrackpad(ctx, config) {
   }, { ...options, capture: true, passive: false });
   document.addEventListener('pointerdown', () => cancel('pointer-interrupt'), { ...options, capture: true });
   document.addEventListener('pointerup', gate, options);
+  document.addEventListener('selectionchange', gate, options);
+  document.addEventListener('focusin', gate, options);
+  window.visualViewport?.addEventListener('resize', () => cancel('viewport-zoom'), options);
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && (active || flight || pending.length)) {
       e.preventDefault(); e.stopImmediatePropagation(); cancel('escape');
@@ -200,14 +248,14 @@ export function installNativeReadingTrackpad(ctx, config) {
   const observer = new MutationObserver(gate);
   observer.observe(ctx.root, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden','data-chrome'] });
   function scheduleReconnect() {
-    if (stopped || retry || discovering || (connected && monitorReady)) return;
+    if (desktop || stopped || retry || discovering || (connected && monitorReady)) return;
     // A bridge restart may outlast the first discovery attempt. Keep one bounded
     // backoff loop for this installation, including unavailable/failed discovery.
     const delay = Math.min(15000, 1000 * 2 ** Math.min(attempts++, 4));
     retry = setTimeout(() => { retry = null; discover(); }, delay);
   }
   async function discover() {
-    if (stopped || discovering || (socket && socket.readyState !== WebSocket.CLOSED)) return;
+    if (desktop || stopped || discovering || (socket && socket.readyState !== WebSocket.CLOSED)) return;
     discovering = true; lastDiscovery = performance.now();
     try {
       const response = await fetch('/api/reading/native-trackpad', { cache: 'no-store', signal: controller.signal });
@@ -220,7 +268,7 @@ export function installNativeReadingTrackpad(ctx, config) {
     }
   }
   function recoverOnReturn() {
-    if (stopped || document.hidden || (connected && monitorReady) ||
+    if (desktop || stopped || document.hidden || (connected && monitorReady) ||
         (socket && socket.readyState !== WebSocket.CLOSED) || performance.now() - lastDiscovery < 1000) return;
     clearTimeout(retry); retry = null; discover();
   }
@@ -254,6 +302,6 @@ export function installNativeReadingTrackpad(ctx, config) {
     };
     current.onerror = () => { if (socket === current) { connected = false; publish(); } };
   }
-  connect(config.url);
+  if (!desktop) connect(config.url);
   return () => { stopped = true; clearTimeout(retry); clearTimeout(handshake); cancel('uninstall'); controller.abort(); removeHook(); observer.disconnect(); socket?.close(); };
 }

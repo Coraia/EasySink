@@ -16,3 +16,9 @@ class Settings(BaseSettings):
     wr_llm_base_url: str = "https://api.deepseek.com"
     wr_llm_model: str = "deepseek-chat"
     wr_user_db: str = ""
+
+    @classmethod
+    def desktop(cls, data_dir: Path) -> "Settings":
+        """Desktop bootstrap clears inherited environment before calling this."""
+        return cls(_env_file=None, wr_user_db=str(data_dir / "user.db"),
+                   wr_llm_enabled=False, wr_llm_api_key="")

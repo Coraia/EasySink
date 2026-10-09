@@ -73,6 +73,12 @@ export function install(ctx) {
       if (last) local.set(`position-pending:${id}`, last);
       save();
     });
+    scope.on(window, "reader-before-close", event => {
+      if (!reader.restoring) last = reader.position();
+      clearTimeout(timer);
+      if (last) local.set(`position-pending:${id}`, last);
+      event.detail.waitUntil(save().then(() => !local.get(`position-pending:${id}`)));
+    });
     scope.on(window, "online", () => {
       last = local.get(`position-pending:${id}`);
       save();

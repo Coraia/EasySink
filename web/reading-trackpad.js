@@ -3,6 +3,11 @@ import { installNativeReadingTrackpad } from "./reading-native-trackpad.js";
 
 // Native stages on supported local Macs; legacy wheel is explicitly compatibility.
 export function installReadingTrackpad(ctx) {
+  // The host injects this at documentStart, before application modules load.
+  // Desktop phases do not depend on the optional browser WebSocket service.
+  if (window.wiseReaderDesktop?.nativeTrackpad === true) {
+    return installNativeReadingTrackpad(ctx, { desktop: true });
+  }
   let disposed = false, remove, config = null;
   const mode = r => { if (r?.scope.signal.aborted) return;
     const root = ctx.root.querySelector('.reader');

@@ -4,6 +4,18 @@ import { api, local } from "../core.js";
 const KEY = "note-drafts-v3";
 const entries = new Map();
 const listeners = new Set();
+const mutations = new Set();
+let mutationFailures = 0;
+const trackMutation = (promise) => {
+  mutations.add(promise);
+  // Observe rejection for shutdown without changing the promise returned to UI
+  // callers or leaving a rejected cleanup promise unhandled.
+  promise.then(
+    () => mutations.delete(promise),
+    () => { mutationFailures++; mutations.delete(promise); },
+  );
+  return promise;
+};
 const notify = (entry) => listeners.forEach((fn) => fn(entry));
 const disk = () => local.get(KEY, []);
 const copyAnchor = (value) => {
@@ -51,6 +63,16 @@ export function imageReference(note) {
   };
 }
 export const noteStore = {
+  async flush() {
+    const failuresBefore = mutationFailures;
+    const active = [...entries.values()].filter(entry => !entry.deleted);
+    active.forEach(entry => this.save(entry));
+    // Removal waits on saves after marking entries deleted; undo may have no
+    // entry at all. Await the complete operations and anything queued meanwhile.
+    while (mutations.size) await Promise.allSettled([...mutations]);
+    return mutationFailures === failuresBefore &&
+      [...entries.values()].every(entry => entry.deleted || entry.state !== "failed");
+  },
   subscribe(fn) {
     listeners.add(fn);
     return () => listeners.delete(fn);
@@ -150,7 +172,7 @@ export const noteStore = {
         }
         notify(entry);
       });
-    return entry.chain;
+    return trackMutation(entry.chain);
   },
   finish(entry) {
     if (!entry.body.trim() && entry.id && entry.savedBody) {
@@ -160,51 +182,60 @@ export const noteStore = {
     }
     return this.save(entry);
   },
-  async discard(draft) {
-    const entry = entries.get(draft.client_id);
-    if (entry) {
-      entry.deleted = true;
-      clearTimeout(entry.timer);
-      await entry.chain;
-      entries.delete(entry.client_id);
-    }
-    persist(draft, true);
-    notify();
-  },
-  async remove(note) {
-    const related = [...entries.values()].filter(
-      (entry) => entry.id === note.id,
-    );
-    for (const entry of related) {
-      clearTimeout(entry.timer);
-      entry.deleted = true;
-    }
-    await Promise.all(related.map((entry) => entry.chain));
-    try {
-      await api(`/notes/${note.id}`, { method: "DELETE" });
-    } catch (err) {
-      related.forEach((entry) => {
-        entry.deleted = false;
-      });
-      throw err;
-    }
-    const latest =
-      related
-        .map((entry) => entry.saved)
-        .filter(Boolean)
-        .at(-1) || note;
-    for (const draft of disk().filter((d) => d.id === note.id))
+  discard(draft) {
+    return trackMutation((async () => {
+      const entry = entries.get(draft.client_id);
+      if (entry) {
+        entry.deleted = true;
+        clearTimeout(entry.timer);
+        await entry.chain;
+        entries.delete(entry.client_id);
+      }
       persist(draft, true);
-    for (const entry of related) entries.delete(entry.client_id);
-    notify();
-    return latest;
+      notify();
+    })());
   },
-  async undo(note) {
-    const saved = await api("/notes", {
-      method: "POST",
-      body: { ...note, client_id: crypto.randomUUID() },
-    });
-    notify();
-    return saved;
+  remove(note) {
+    return trackMutation((async () => {
+      const related = [...entries.values()].filter(
+        (entry) => entry.id === note.id,
+      );
+      for (const entry of related) {
+        clearTimeout(entry.timer);
+        entry.deleted = true;
+      }
+      await Promise.all(related.map((entry) => entry.chain));
+      try {
+        await api(`/notes/${note.id}`, { method: "DELETE" });
+      } catch (err) {
+        related.forEach((entry) => {
+          entry.deleted = false;
+        });
+        throw err;
+      }
+      const latest =
+        related
+          .map((entry) => entry.saved)
+          .filter(Boolean)
+          .at(-1) || note;
+      for (const draft of disk().filter((d) => d.id === note.id))
+        persist(draft, true);
+      for (const entry of related) entries.delete(entry.client_id);
+      notify();
+      return latest;
+    })());
+  },
+  undo(note) {
+    return trackMutation((async () => {
+      const saved = await api("/notes", {
+        method: "POST",
+        body: { ...note, client_id: crypto.randomUUID() },
+      });
+      notify();
+      return saved;
+    })());
   },
 };
+window.addEventListener("reader-before-close", event => {
+  event.detail.waitUntil(noteStore.flush());
+});

@@ -77,6 +77,7 @@ export const local = {
   set(key, value) {
     try {
       localStorage.setItem("wr2:" + key, JSON.stringify(value));
+      window.wiseReaderDesktop?.persistLocal?.(key, JSON.stringify(value));
       return true;
     } catch {
       toast("浏览器空间不足，草稿未能保存。请复制内容。");
@@ -85,6 +86,7 @@ export const local = {
   },
   remove(key) {
     localStorage.removeItem("wr2:" + key);
+    window.wiseReaderDesktop?.persistLocal?.(key, null);
   },
 };
 let toastTimer;

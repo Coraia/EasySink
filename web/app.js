@@ -15,6 +15,8 @@ import { PluginHost } from "./plugin-host.js?v=20261006-grab1";
 import { Reader } from "./reader.js?v=20261008-paper";
 import { renderAI } from "./ai-settings.js";
 import { installReadingTrackpad } from "./reading-trackpad.js?v=20261007-native-hd";
+import { installDesktopLifecycle } from "./desktop-lifecycle.js";
+installDesktopLifecycle();
 const hooks = new Map(),
   routes = new Map();
 const ctx = {

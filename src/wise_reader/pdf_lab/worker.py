@@ -31,13 +31,49 @@ MAX_ASSET_BYTES = 64 * 1024 * 1024
 PUBLICATION_DATABASE = "published.sqlite3"
 
 
+async def stop_process_group(pid: int):
+    """Stop an already verified, private process group, even without its leader."""
+    try:
+        os.killpg(pid, signal.SIGCONT)
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(pid, 0)
+        except ProcessLookupError:
+            return
+        await asyncio.sleep(.05)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    # Grandchildren are reparented/reaped by the OS, not waitpid-able here.
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(pid, 0)
+        except ProcessLookupError:
+            return
+        await asyncio.sleep(.05)
+    raise RuntimeError("Owned PDF process group did not exit after SIGKILL.")
+
+
 def worker_python() -> Path:
     isolated = ROOT / ".venv-pdf-lab/bin/python"
     return isolated if isolated.is_file() else Path(sys.executable)
 
 
 def local_environment() -> dict:
-    environment = {name: os.environ[name] for name in ("PATH", "HOME", "USER", "TMPDIR", "LANG")
+    # The native host supplies writable cache/model locations outside its
+    # read-only Resources tree. Forward only explicit runtime controls, never
+    # personal provider credentials or arbitrary Python search-path overrides.
+    environment = {name: os.environ[name] for name in (
+        "PATH", "HOME", "USER", "TMPDIR", "LANG", "PYTHONDONTWRITEBYTECODE", "PYTHONNOUSERSITE",
+        "XDG_CACHE_HOME", "PDF_LAB_MODELS_DIR", "HF_HOME", "HF_HUB_CACHE",
+        "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE", "TORCH_HOME",
+    )
                    if name in os.environ}
     environment.update(PYTHONPATH=str(ROOT / "src"), PYTHONUNBUFFERED="1",
                        HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1",
@@ -304,6 +340,7 @@ class LocalWorkers:
         self.lock = asyncio.Lock()
         self.capacity = asyncio.Semaphore(1)
         self.processes = {}
+        self.probes = set()
         self.jobs = {}
         self.notifications = set()
         self.headers = {}
@@ -319,13 +356,19 @@ class LocalWorkers:
                 return copy.deepcopy(cached)
             reason = "Conversion entry point is not ready."
             result = None
-            if CONVERTER.is_file():
+            if CONVERTER.is_file() and not self.closing:
+                process = None
                 try:
-                    process = await asyncio.create_subprocess_exec(
-                        str(worker_python()), str(CONVERTER),
-                        "--capabilities" if include_remote else "--local-capabilities", cwd=ROOT,
-                        env=local_environment(), stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE, start_new_session=True)
+                    async with self.lock:
+                        if self.closing:
+                            raise ValueError("PDF service is stopping.")
+                        process = await asyncio.create_subprocess_exec(
+                            str(worker_python()), str(CONVERTER),
+                            "--capabilities" if include_remote else "--local-capabilities", cwd=ROOT,
+                            env=local_environment(), stdin=asyncio.subprocess.DEVNULL,
+                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                            start_new_session=True)
+                        self.probes.add(process)
                     try:
                         stdout, _ = await asyncio.wait_for(process.communicate(), timeout=20)
                     except asyncio.TimeoutError:
@@ -345,6 +388,10 @@ class LocalWorkers:
                 except (OSError, ValueError) as exc:
                     reason = str(exc)
                     result = None
+                finally:
+                    if process is not None:
+                        await self.terminate(process)
+                        self.probes.discard(process)
             if result is None:
                 result = {"adapters": [{"id": "digital", "label": "Local digital text",
                     "available": False, "missing_reason": reason, "supports_ocr": False,
@@ -373,25 +420,16 @@ class LocalWorkers:
         for task in self.store.tasks():
             book = self.store.book(task["book_id"])
             interrupted = task["state"] in ACTIVE_STATES
-            if task["pid"] and task["state"] in ACTIVE_STATES | {"paused"}:
+            # Cancellation is persisted before termination. A service crash in
+            # between must still stop its verified worker, never resume it.
+            if task["pid"]:
                 try:
                     command = await asyncio.to_thread(subprocess.run,
-                        ["ps", "-p", str(task["pid"]), "-o", "command="],
+                        ["/bin/ps", "-p", str(task["pid"]), "-o", "command="],
                         capture_output=True, text=True, timeout=3)
                     expected = (str(CONVERTER), str(self.store.source(book)), str(self.store.output(task)))
                     if all(p in command.stdout for p in expected) and os.getpgid(task["pid"]) == task["pid"]:
-                        os.killpg(task["pid"], signal.SIGCONT)
-                        os.killpg(task["pid"], signal.SIGTERM)
-                        # Recovered workers are not our subprocess children.
-                        deadline = time.monotonic() + 5
-                        while time.monotonic() < deadline:
-                            try:
-                                os.kill(task["pid"], 0)
-                            except ProcessLookupError:
-                                break
-                            await asyncio.sleep(.05)
-                        else:
-                            os.killpg(task["pid"], signal.SIGKILL)
+                        await stop_process_group(task["pid"])
                 except (ProcessLookupError, PermissionError, subprocess.TimeoutExpired):
                     pass
             if interrupted:
@@ -607,7 +645,7 @@ class LocalWorkers:
                 command.append("--resume")
             if os.name == "posix" and Path("/usr/bin/nice").is_file():
                 command = ["/usr/bin/nice", "-n", "10", *command]
-            process, failure, stderr_tail = None, None, []
+            process, exit_job, failure, stderr_tail = None, None, None, []
             try:
                 output.mkdir(mode=0o700, exist_ok=True)
                 atomic_json(output / f"command-{time.time_ns()}.json", command)
@@ -621,6 +659,7 @@ class LocalWorkers:
                         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                         start_new_session=True, limit=256 * 1024)
                     self.processes[task_id] = process
+                    exit_job = asyncio.create_task(self.reap_on_exit(process))
                     now = time.time()
                     self.store.update(task_id, state="running", pid=process.pid, error=None, metrics={
                         **task["metrics"], "conversion_started_at": task["metrics"].get("conversion_started_at", now),
@@ -680,8 +719,7 @@ class LocalWorkers:
                                            "message": str(event.get("message", event.get("error", "Conversion failed.")))[:1000]}
                     await process.wait()
                 finally:
-                    if process.returncode is None:
-                        await self.terminate(process)
+                    await self.terminate(process)
                     await stderr_job
                 recovered_numbers = []
                 async with self.lock:
@@ -727,8 +765,10 @@ class LocalWorkers:
                     if current['done_pages']:
                         self.dispatch_notification(task_id)
             finally:
-                if process and process.returncode is None:
+                if process is not None:
                     await self.terminate(process)
+                if exit_job is not None:
+                    await exit_job
                 if self.processes.get(task_id) is process:
                     self.processes.pop(task_id, None)
                 self.store.update(task_id, pid=None)
@@ -736,21 +776,26 @@ class LocalWorkers:
 
     @staticmethod
     async def terminate(process):
-        if process.returncode is not None:
-            return
-        try:
-            os.killpg(process.pid, signal.SIGCONT)
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            await asyncio.wait_for(process.wait(), timeout=5)
-        except asyncio.TimeoutError:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            await process.wait()
+        # stop(), run() and the exit watcher can converge on the same child.
+        # One shielded cleanup prevents duplicate signals and cancellation leaks.
+        cleanup = getattr(process, "_pdf_cleanup", None)
+        if cleanup is None:
+            async def reap():
+                try:
+                    await stop_process_group(process.pid)
+                finally:
+                    await process.wait()  # reap our direct child / drain its pipes
+            cleanup = asyncio.create_task(reap())
+            process._pdf_cleanup = cleanup
+        await asyncio.shield(cleanup)
+
+    @staticmethod
+    async def reap_on_exit(process):
+        # Process.wait() can wait for pipes inherited by grandchildren after
+        # the leader dies. Observe its returncode independently of pipe EOF.
+        while process.returncode is None:
+            await asyncio.sleep(.05)
+        await LocalWorkers.terminate(process)
 
     async def stop(self, task: dict, state: str, reason: str):
         async with self.lock:
@@ -830,6 +875,9 @@ class LocalWorkers:
 
     async def close(self):
         self.closing = True
+        async with self.lock:
+            probes = list(self.probes)
+        await asyncio.gather(*(self.terminate(process) for process in probes))
         for task in self.store.tasks():
             if task["state"] in ACTIVE_STATES:
                 await self.pause(task, "service_interrupted")

@@ -73,7 +73,8 @@ class Lexicon:
                 f"词库不存在：{self.db_path}\n请先运行 python3 scripts/fetch_lexicon.py"
             )
         self._con = sqlite3.connect(
-            f"file:{self.db_path}?mode=ro", uri=True, check_same_thread=False
+            self.db_path.resolve().as_uri() + "?mode=ro&immutable=1",
+            uri=True, check_same_thread=False
         )
         self._con.row_factory = sqlite3.Row
         self._inflection = self._load_lemma_table()
