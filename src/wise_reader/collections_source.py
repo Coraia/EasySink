@@ -237,6 +237,10 @@ def resolve(store, saved, *, imported=False):
         except HTTPException:
             continue
     if len(matches) != 1:
+        if not imported and saved.get("doc_id"):
+            # A local ID is only a hint after removal/reimport. Reuse the bounded
+            # stable-origin search and its ambiguity checks; never guess a new ID.
+            return resolve(store, saved, imported=True)
         return None
     return matches[0]
 

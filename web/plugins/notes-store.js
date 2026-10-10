@@ -205,8 +205,9 @@ export const noteStore = {
         entry.deleted = true;
       }
       await Promise.all(related.map((entry) => entry.chain));
+      let removed;
       try {
-        await api(`/notes/${note.id}`, { method: "DELETE" });
+        removed = await api(`/notes/${note.id}`, { method: "DELETE" });
       } catch (err) {
         related.forEach((entry) => {
           entry.deleted = false;
@@ -222,14 +223,14 @@ export const noteStore = {
         persist(draft, true);
       for (const entry of related) entries.delete(entry.client_id);
       notify();
-      return latest;
+      return { ...latest, undo_token: removed.undo_token };
     })());
   },
   undo(note) {
     return trackMutation((async () => {
-      const saved = await api("/notes", {
+      const saved = await api(note.undo_token ? "/notes/undo" : "/notes", {
         method: "POST",
-        body: { ...note, client_id: crypto.randomUUID() },
+        body: note.undo_token ? { token: note.undo_token } : { ...note, client_id: crypto.randomUUID() },
       });
       notify();
       return saved;

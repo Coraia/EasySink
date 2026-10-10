@@ -53,7 +53,7 @@ export function install(ctx) {
           )
           .map(
             (n) =>
-              `<div class="list-item"><div class="row between"><span class="meta">${e(n.title)} · ${date(n.created_at)}</span><button class="text-button" data-delete-note="${n.id}" aria-label="删除笔记">删除</button></div>${imageReference(n) ? imageExcerpt(n, `data-jump-note="${n.id}"`) : n.quote ? `<blockquote>${e(sourceExcerpt(n.quote))}</blockquote>` : ""}<p class="body">${e(n.body)}</p><button class="text-button" data-jump-note="${n.id}">回到${imageReference(n) ? "原图" : "这段原文"} →</button></div>`,
+              `<div class="list-item"><div class="row between"><span class="meta">${e(n.title)} · ${date(n.created_at)}</span><button class="text-button" data-delete-note="${n.id}" aria-label="删除笔记">删除</button></div>${imageReference(n) ? imageExcerpt(n, n.source_available === false ? 'disabled' : `data-jump-note="${n.id}"`) : n.quote ? `<blockquote>${e(sourceExcerpt(n.quote))}</blockquote>` : ""}<p class="body">${e(n.body)}</p>${n.source_available === false ? '<span class="muted">原文已移除，笔记与引用已保留</span>' : `<button class="text-button" data-jump-note="${n.id}">回到${imageReference(n) ? "原图" : "这段原文"} →</button>`}</div>`,
           )
           .join("") ||
         '<div class="empty">阅读时打开“笔记”，选中原文写下想法。</div>';

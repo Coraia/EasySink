@@ -32,6 +32,7 @@
 
 - 插件 id=collections，默认开，关闭保留资料。全局 route='collections'，侧栏入口“词句收藏”。
 - 新插件 ctx.hook('read', reader) 装载；reader.selectionAction、reader.on('selection-render'/'draw')、reader.tool、reader.panel、reader.choose/anchorFor/restore 复用现有接口。
+- `prepare-document` 在请求正文/画像前收到 `{docId, scope}`，仅并发准备该来源的收藏状态；实际读取时按同一 docId/scope 消费一次。相邻范围已有 seed 优先；旧路由响应不得发布。完整响应头及 body 共用1500ms期限，失败保留可见错误与显式重试。
 - `prepare-reading` 在首屏及相邻范围预热的分页之前运行，只准备当前篇章的收藏/反馈与 controller，不安装工具或 DOM 监听。`reader.collectionsSeed` 可从预热传递到落页，避免双重请求和纸面状态闪变。
 - 主控增加 ctx.hook('word', {reader,pop,item,anchor,scope})，词卡 DOM 已创建，插件可增收藏/反馈三入口；启用 collections 时旧 data-verdict 全局操作隐藏，停用时保留旧入口兼容。
 - 新前端可向 reader.collectionsController 提供 paint()/applyAnnotations() 等有界方法，主控按约定挂接。读书失败不得因收藏加载失败而阻断正文。

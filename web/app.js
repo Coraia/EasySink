@@ -121,6 +121,8 @@ async function route() {
   window.scrollTo(0, 0);
   try {
     const reading = name === "read" && /^\d+$/.test(id);
+    const preparation = { docId: reading ? Number(id) : null, scope };
+    if (reading) await ctx.run("prepare-document", preparation);
     // These reads are independent. Plugin installation still completes before
     // the reader mounts; personal selection is computed by the document API.
     const [{ plugins }, profile, doc] = await Promise.all([
@@ -136,6 +138,7 @@ async function route() {
     ctx.profile = profile;
     if (reading) {
       ctx.reader = new Reader(ctx, scope, doc);
+      ctx.reader.preparation = preparation;
       await ctx.reader.mount();
     } else if (name === "profile" || name === "settings")
       await renderProfile(scope);

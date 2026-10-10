@@ -8,7 +8,7 @@ from bisect import bisect_left, bisect_right
 
 from fastapi import HTTPException
 
-PROTOCOL = "context-meaning-v6"
+PROTOCOL = "context-meaning-v7"
 LIMIT = 6000
 
 

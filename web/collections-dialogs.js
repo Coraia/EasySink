@@ -163,9 +163,10 @@ export function previewCollection(ctx, store, item, owner) {
 }
 
 function renderExplanation(value) {
-  return value
-    ? `<p class="collections-text">${e(explanationText(value))}</p><p class="collections-source">${e(value.source || value.kind || "保存的解释")}</p>`
-    : '<p class="collections-help">还没有保存解释。</p>';
+  if (!value) return '<p class="collections-help">还没有保存解释。</p>';
+  const stamp = value.created_at && new Date(value.created_at);
+  const context = value.payload?.context;
+  return `<p class="collections-text">${e(explanationText(value))}</p><p class="collections-source">${e(value.source || value.kind || "保存的解释")}${stamp && !Number.isNaN(+stamp) ? ` · ${e(stamp.toLocaleString())}` : ""}</p>${context?.text ? `<details><summary>查看这次使用的原文${context.truncated ? " · 已截取" : ""}</summary><p class="collections-context">${e(sourceExcerpt(context.text))}</p></details>` : ""}`;
 }
 
 // Capture semantic source/range identity before any revision is replaced.
@@ -498,7 +499,7 @@ export function editCollection(
         value.kind === "context" &&
         !value.historical &&
         sameSelection(value.anchor, item.anchor),
-    );
+    ).sort((a, b) => Number(b.id) - Number(a.id));
     candidates.innerHTML = values.length
       ? `<h3>先查看，再采用</h3>${values.map((value, i) => `<section class="collections-history-entry">${renderExplanation(value)}${Number(item.explanation?.assist_id) === Number(value.id) ? '<span class="collections-help">当前已采用</span>' : `<button type="button" data-adopt="${i}">采用这条解释</button>`}</section>`).join("")}`
       : '<p class="collections-help">这处原文还没有可采用的解释。可回到原文主动解释后再查看。</p>';

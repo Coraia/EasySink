@@ -41,7 +41,7 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
     def notes_md():
         try:
             rows = ctx.store.query(
-                "SELECT n.*, d.title FROM wr_note n"
+                "SELECT n.*, COALESCE(d.title,json_extract(NULLIF(n.source_snapshot,''),'$.title')) AS title FROM wr_note n"
                 " LEFT JOIN document d ON d.id = n.doc_id ORDER BY n.id"
             )
         except Exception:

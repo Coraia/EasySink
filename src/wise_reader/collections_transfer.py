@@ -7,7 +7,7 @@ import re
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 
-from wise_reader.collections import MAX_ROWS, TABLES, item, key, now
+from wise_reader.collections import MAX_ROWS, TABLES, item, key, normalize_subrange, now
 from wise_reader.collections_source import anchor_key, digest, exists, index, packed, resolve, resolve_document, utf16, validate
 from wise_reader.content import Anchor, save_anchor
 
@@ -102,26 +102,105 @@ def scoped_notes(service, scope, selections):
     if not exists(service.store, "wr_note"):
         return []
     conditions, params = [], []
+    columns = {r["name"] for r in service.store.query("PRAGMA table_info(wr_note)")}
+    saved_json = "CASE WHEN json_valid(NULLIF(n.source_snapshot,'')) THEN NULLIF(n.source_snapshot,'') END" if "source_snapshot" in columns else "NULL"
     if scope.get("book_id") is not None:
-        conditions.append("EXISTS(SELECT 1 FROM wr_chapter c WHERE c.doc_id=n.doc_id AND c.book_id=?)")
-        params.append(scope["book_id"])
+        conditions.append("(EXISTS(SELECT 1 FROM wr_chapter c WHERE c.doc_id=n.doc_id AND c.book_id=?) OR json_extract(" + saved_json + ",'$.book_id')=?)")
+        params.extend((scope["book_id"], scope["book_id"]))
     if scope.get("ids") is not None:
         ids = list({r["doc_id"] for r in selections if r["doc_id"] is not None})
-        if not ids:
+        hashes = list({json.loads(r["data"])["source_identity"].get("text_sha256") for r in selections if r["doc_id"] is None} - {None})
+        alternatives = []
+        if ids:
+            alternatives.append("n.doc_id IN (" + ",".join("?" for _ in ids) + ")")
+            params.extend(ids)
+        if hashes:
+            alternatives.append("json_extract(" + saved_json + ",'$.source_identity.text_sha256') IN (" + ",".join("?" for _ in hashes) + ")")
+            params.extend(hashes)
+        if not alternatives:
             return []
-        conditions.append("n.doc_id IN (" + ",".join("?" for _ in ids) + ")")
-        params.extend(ids)
+        conditions.append("(" + " OR ".join(alternatives) + ")")
     rows = checked_rows(service.store, "SELECT n.*,a.payload AS anchor_json FROM wr_note n LEFT JOIN wr_anchor a ON a.owner='note' AND a.owner_id=n.id" + (" WHERE " + " AND ".join(conditions) if conditions else "") + " ORDER BY n.id", tuple(params))
     if scope.get("ids") is not None:
-        rows = [r for r in rows if any(contains(s, r["doc_id"], json.loads(r["anchor_json"]) if r["anchor_json"] else None) for s in selections)]
+        rows = [r for r in rows if any(note_in_selection(s, r) for s in selections)]
     return rows
+
+
+def saved_note_source(row):
+    """Read an archived note snapshot without inventing a new source binding."""
+    try:
+        saved = json.loads(row.get("source_snapshot") or "null")
+        if not isinstance(saved, dict) or not isinstance(saved.get("source_identity"), dict) or not saved.get("uid"):
+            return None
+        if saved.get("anchor") is not None:
+            Anchor.model_validate(saved["anchor"])
+        return saved
+    except (ValueError, TypeError):
+        return None
+
+
+def note_in_selection(selection, row):
+    archived = saved_note_source(row)
+    anchor = archived.get("anchor") if archived else row.get("anchor")
+    if not archived and not anchor and row.get("anchor_json"):
+        anchor = json.loads(row["anchor_json"])
+    # Live notes and undo receipts already have a local owner. An unbound
+    # collection must not erase that ownership merely because text matches.
+    return contains(selection, row["doc_id"], anchor, archived.get("source_identity") if archived else None)
+
+
+def clear_note_undo(service, scope, selections, notes):
+    """Permanent scoped cleanup also removes deleted-note resurrection receipts."""
+    if not exists(service.store, "wr_note_undo"):
+        return
+    conditions, params = [], []
+    if scope.get("book_id") is not None:
+        conditions.append("book_id=?")
+        params.append(scope["book_id"])
+    if scope.get("ids") is not None:
+        if not selections:
+            return
+        if all(r["doc_id"] is not None for r in selections):
+            ids = list({r["doc_id"] for r in selections})
+            conditions.append("doc_id IN (" + ",".join("?" for _ in ids) + ")")
+            params.extend(ids)
+    rows = checked_rows(service.store, "SELECT * FROM wr_note_undo WHERE " + (" AND ".join(conditions) or "1=1"), tuple(params))
+    note_ids = {r["id"] for r in notes}
+    for receipt in rows:
+        if scope.get("ids") is not None:
+            saved = json.loads(receipt["payload"])
+            if saved.get("id") not in note_ids and not any(note_in_selection(s, saved) for s in selections):
+                continue
+        service.store.execute("DELETE FROM wr_note_undo WHERE token=?", (receipt["token"],))
+
+
+def orphan_note_in_scope(service, row, selections):
+    saved = json.loads(row["data"])
+    anchor, source = saved.get("anchor"), saved["source_identity"]
+    doc_id, book_id = saved.get("doc_id"), row["book_id"]
+    if doc_id is None and book_id is None:
+        if any(s["doc_id"] is None and s["book_id"] is None and contains(s, None, anchor, source) for s in selections):
+            return True
+        if not anchor or not saved.get("quote"):
+            return False
+        # Resolve never-bound notes through the existing unique-source guard.
+        # Duplicate books, moved ranges and new revisions do not expand scope.
+        bound = resolve(service.store, saved, imported=True)
+        if not bound or anchor_key(bound["anchor"]) != anchor_key(anchor):
+            return False
+        doc_id, book_id = bound["doc_id"], bound["book_id"]
+    # These IDs were verified locally at import (or above), not trusted from
+    # the export file. Keep a known book owner even if another copy is identical.
+    return any(s["book_id"] == book_id and contains(s, doc_id, anchor, source) for s in selections)
 
 
 def scoped_orphan_notes(service, scope, selections):
     missing = "note_id IS NULL OR NOT EXISTS(SELECT 1 FROM wr_note n WHERE n.id=wr_collection_note_import.note_id)" if exists(service.store, "wr_note") else "1=1"
     sql, params = "SELECT * FROM wr_collection_note_import WHERE (" + missing + ")", []
     if scope.get("book_id") is not None:
-        sql += " AND book_id=?"
+        # With explicit collection IDs, unknown ownership can be checked below
+        # against those already book-filtered selections. Book-only stays exact.
+        sql += " AND (book_id=? OR book_id IS NULL)" if scope.get("ids") is not None else " AND book_id=?"
         params.append(scope["book_id"])
     if scope.get("ids") is not None:
         sources = list({packed(json.loads(r["data"])["source_identity"]) for r in selections})
@@ -131,11 +210,14 @@ def scoped_orphan_notes(service, scope, selections):
         params.extend(sources)
     rows = checked_rows(service.store, sql, tuple(params))
     if scope.get("ids") is not None:
-        rows = [r for r in rows if any(contains(s, None, json.loads(r["data"]).get("anchor"), json.loads(r["data"])["source_identity"]) for s in selections)]
+        rows = [r for r in rows if orphan_note_in_scope(service, r, selections)]
     return rows
 
 
 def note_snapshot(service, row):
+    archived = saved_note_source(row)
+    if archived:
+        return {**archived, "body": row["body"], "quote": row["quote"], "created_at": row["created_at"]}
     anchor = json.loads(row["anchor_json"]) if row["anchor_json"] else None
     snapshot = None
     if anchor and anchor.get("kind", "text") == "text":
@@ -153,7 +235,7 @@ def note_snapshot(service, row):
         snapshot = {"doc_id": row["doc_id"], "book_id": book_id, "title": doc["title"],
                     "book_title": source.get("book_title", ""), "source_identity": source,
                     "anchor": anchor, "quote": row["quote"], "context": ""}
-    prior = service.store.query_one("SELECT uid FROM wr_collection_note_import WHERE note_id=?", (row["id"],))
+    prior = service.store.query_one("SELECT uid FROM wr_collection_note_import WHERE note_id=?", (row["id"],)) if exists(service.store, "wr_collection_note_import") else None
     # Legacy IDs are only salted identity material, never import binding targets.
     uid = prior["uid"] if prior else digest(["note", snapshot["source_identity"], row["id"], row["created_at"], row["quote"]])
     return {**snapshot, "uid": uid, "kind": "note", "body": row["body"], "created_at": row["created_at"]}
@@ -261,6 +343,7 @@ def validate_import(data):
                 raise HTTPException(422, "章节身份无效")
             value = parsed.model_dump(mode="json")
             for sub in value["subranges"]:
+                sub.update(normalize_subrange(sub))
                 try:
                     sub_anchor = Anchor.model_validate(sub["anchor"])
                     if sub_anchor.version != parsed.anchor.version or sub_anchor.quote != sub["quote"]:
@@ -317,6 +400,7 @@ def merge_personal(local, incoming, *, restore_snapshot=False):
         references.append(reference)
     # Preserve distinct histories/meanings on the same range, but don't append
     # an identical snapshot again when a different import UID carries it.
+    references = [normalize_subrange(s) for s in references]
     result["subranges"] = list({packed(s): s for s in references}.values())
     if len(result["subranges"]) > MAX_ROWS:
         raise HTTPException(413, "合并后的子范围资料过多，未覆盖本机资料")
@@ -419,6 +503,8 @@ def cleanup(service, scope):
         feedback = scoped_feedback(service, scope, selections, deleted=True) if scope.get("feedback") else []
         notes = scoped_notes(service, scope, selections) if scope.get("notes") else []
         orphan_notes = scoped_orphan_notes(service, scope, selections) if scope.get("notes") else []
+        if scope.get("notes"):
+            clear_note_undo(service, scope, selections, notes)
         for category, rows in (("collections", selections if scope.get("collections") else []), ("feedback", feedback)):
             for row in rows:
                 service.store.execute("DELETE FROM wr_collection_undo WHERE token IN (SELECT token FROM wr_collection_undo_touch WHERE category=? AND record_id=?)", (category, row["id"]))

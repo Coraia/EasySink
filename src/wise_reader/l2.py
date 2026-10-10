@@ -6,12 +6,8 @@ from wise_reader.models import Kind
 from wise_reader.semantics import target
 
 
-def filter_candidates(l0, l1, profile, word_count, density=None, verdicts=None, *, retained=None):
-    """Select annotations; verified contextual `retained` occurrence spans win.
-
-    A retained member replaces an overlapping automatic phrase even when known,
-    repeated or at zero density. Parent resolves overlapping retained records.
-    """
+def filter_candidates(l0, l1, profile, word_count, density=None, verdicts=None):
+    """Select automatic annotations; contextual overrides are applied by the reader."""
     density = profile.density if density is None else density
     budget = max(1, round(word_count * density / 100)) if density > 0 else 0
     verdicts = verdicts or {}
@@ -44,15 +40,6 @@ def filter_candidates(l0, l1, profile, word_count, density=None, verdicts=None, 
     occupied = set()
     seen = set()
     automatic_count = 0
-    # Retained members never consume the automatic budget or repeat suppression.
-    for a in sorted(retained or (), key=lambda a: (a.last_token - a.first_token, a.first_token)):
-        if not a.note or not 0 <= a.first_token <= a.last_token < word_count:
-            continue
-        span = set(range(a.first_token, a.last_token + 1))
-        if span & occupied:
-            continue
-        chosen.append(replace(a, forced=True))
-        occupied |= span
     for a in eligible:
         key = target(a)
         span = set(range(a.first_token, a.last_token + 1))

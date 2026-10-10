@@ -193,10 +193,15 @@ class Store:
         return [dict(r) for r in rows]
 
     def delete_document(self, doc_id: int) -> None:
+        from wise_reader.note_sources import preserve
+        with self.transaction():
+            preserve(self, doc_id)
+            self._delete_document_source(doc_id)
+
+    def _delete_document_source(self, doc_id: int) -> None:
         self._con.execute("DELETE FROM document WHERE id = ?", (doc_id,))
         for table in (
             "reading_log",
-            "wr_note",
             "wr_bookmark",
             "wr_progress",
             "wr_translation",

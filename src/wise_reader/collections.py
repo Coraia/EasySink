@@ -80,8 +80,15 @@ def migrate(store):
         store.execute("CREATE INDEX IF NOT EXISTS wr_collection_assist_state ON wr_context_attempt(assist_id,state)")
 
 
+def normalize_subrange(value):
+    """Supply optional personal fields without changing the saved source range."""
+    return {"explanation": None, "explanation_history": [], "my_meaning": "", **value}
+
+
 def item(row):
     value = json.loads(row["data"])
+    if "subranges" in value:
+        value["subranges"] = [normalize_subrange(sub) for sub in value["subranges"]]
     return {**value, **{k: row[k] for k in ("id", "uid", "doc_id", "book_id", "kind", "created_at", "updated_at", "revision")}}
 
 
@@ -142,8 +149,7 @@ class Collections:
 
     @staticmethod
     def _subrange(snapshot, explanation=None):
-        return {"anchor": snapshot["anchor"], "quote": snapshot["quote"], "explanation": explanation,
-                "explanation_history": [], "my_meaning": ""}
+        return normalize_subrange({"anchor": snapshot["anchor"], "quote": snapshot["quote"], "explanation": explanation})
 
     def explanation(self, supplied, snapshot):
         if not supplied:
@@ -239,6 +245,12 @@ class Collections:
             if "my_meaning" in fields:
                 data["my_meaning"] = fields["my_meaning"]
             if fields.get("adopt_assist_id") is not None:
+                # Restored records may remain unbound until the original arrives.
+                # Resolve for this operation, never rewrite the saved snapshot or
+                # promote a historical OCR range to the current version.
+                bound = resolve(self.store, item(old))
+                if not bound or anchor_key(bound["anchor"]) != anchor_key(data["anchor"]):
+                    raise HTTPException(409, "原文无法按收藏时的版本与范围可靠对应，未采用解释")
                 destination = data
                 aid = fields["adopt_assist_id"]
                 assist = self.store.query_one("SELECT anchor FROM wr_assist WHERE id=?", (aid,)) if exists(self.store, "wr_assist") else None
@@ -259,7 +271,10 @@ class Collections:
                         if destination is None:
                             destination = self._subrange({"anchor": target, "quote": target["quote"]})
                             data["subranges"].append(destination)
-                exp = self.adopt(aid, {**destination, "doc_id": old["doc_id"]})
+                # Also repair optional fields in pre-normalization stored rows;
+                # normalization is persisted only with a successful guarded edit.
+                destination.update(normalize_subrange(destination))
+                exp = self.adopt(aid, {**destination, "doc_id": bound["doc_id"]})
                 if exp != destination.get("explanation"):
                     if destination.get("explanation"):
                         destination["explanation_history"].append(destination["explanation"])

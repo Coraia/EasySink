@@ -8,6 +8,50 @@ import {
 import { mountCollectionsList, mountResurface } from "../collections-list.js";
 import { mountCollectionWord } from "../collections-word.js";
 
+const STATE_READINESS_MS = 1500;
+
+// The preparation owns a handled result, never a publishing continuation.
+// It can start before the document exists and be consumed once by its reader.
+function startStateRead(store, docId, owner) {
+  const scope = childScope(store.scope, owner),
+    ownerSignal = owner?.signal || owner;
+  let timer;
+  const interrupted = new Promise((_, reject) => {
+    const aborted = () =>
+      reject(new DOMException("Collection read cancelled", "AbortError"));
+    scope.signal.addEventListener("abort", aborted, { once: true });
+    scope.cleanup(() => scope.signal.removeEventListener("abort", aborted));
+    if (scope.signal.aborted) aborted();
+    else
+      timer = setTimeout(() => {
+        // Reject first: fetch/body parsing may swallow cancellation.
+        reject(new Error("收藏记录加载超时，请重试"));
+        scope.dispose();
+      }, STATE_READINESS_MS);
+  });
+  const result = (async () => {
+    try {
+      const payload = await Promise.race([
+        store.read(`/state/${encodeURIComponent(docId)}`, scope),
+        interrupted,
+      ]);
+      scope.signal.throwIfAborted();
+      return { payload };
+    } catch (error) {
+      return { error };
+    } finally {
+      clearTimeout(timer);
+      scope.dispose();
+    }
+  })();
+  return {
+    docId,
+    scope,
+    result,
+    isCurrent: () => !ownerSignal?.aborted && !store.scope.signal.aborted,
+  };
+}
+
 export function install(ctx) {
   let stylesheet = document.querySelector("link[data-collections-style]");
   if (!stylesheet) {
@@ -22,7 +66,16 @@ export function install(ctx) {
 
   function createController(reader) {
     const scope = childScope(store.scope, reader.scope),
-      events = new EventTarget();
+      events = new EventTarget(),
+      beforeLayout = !reader.pages;
+    let prefetch = reader.preparation?.collectionsPrefetch;
+    if (prefetch) {
+      delete reader.preparation.collectionsPrefetch;
+      if (prefetch.docId !== reader.doc.id || !prefetch.isCurrent()) {
+        prefetch.scope.dispose();
+        prefetch = null;
+      }
+    }
     const painter = createMarkPainter(reader),
       overlay = createAnnotationOverlay(reader);
     let state = { items: [], feedback: [] },
@@ -32,12 +85,14 @@ export function install(ctx) {
       initial = true;
     let annotationSignature = "[]",
       markSignature = "[]";
-    const publish = (payload) => {
+    const publish = (payload, error = null) => {
       if (scope.signal.aborted) return;
+      if (!Array.isArray(payload?.items) || !Array.isArray(payload?.feedback))
+        throw new Error("收藏记录返回格式不完整，请重试");
       state = { items: payload.items || [], feedback: payload.feedback || [] };
       reader.collectionsSeed = payload;
-      controller.loaded = true;
-      controller.error = null;
+      controller.loaded = !error;
+      controller.error = error;
       const nextAnnotations = JSON.stringify(
         state.feedback
           .filter(
@@ -72,7 +127,10 @@ export function install(ctx) {
       }
       events.dispatchEvent(new Event("state"));
       if (mounted) {
-        reader.emit("collections-change", { state });
+        reader.emit("collections-change", {
+          state,
+          ...(error ? { error } : {}),
+        });
         if (annotationsChanged)
           reader.emit("annotations-change", {
             initial,
@@ -81,9 +139,28 @@ export function install(ctx) {
       }
       initial = false;
     };
+    const unavailable = (error) => {
+      if (scope.signal.aborted) return;
+      controller.loaded = false;
+      controller.error = error;
+      // Carry the exact fallback used to measure a neighboring packet through
+      // handoff. A fresh prepaint request could disagree with its page index.
+      // This is client-only failure metadata; successful seeds stay raw API data.
+      reader.collectionsSeed = {
+        ...state,
+        collectionsUnavailable: {
+          doc_id: reader.doc.id,
+          version: reader.doc.version,
+          message: error.message,
+        },
+      };
+      events.dispatchEvent(new Event("state"));
+      if (mounted) reader.emit("collections-change", { state, error });
+    };
     const controller = {
       events,
       loaded: false,
+      loading: false,
       error: null,
       scope,
       get state() {
@@ -97,28 +174,58 @@ export function install(ctx) {
       },
       async reload() {
         if (scope.signal.aborted) return;
-        const current = ++generation;
+        const current = ++generation,
+          docId = reader.doc.id,
+          version = reader.doc.version;
         requestScope?.dispose();
-        requestScope = childScope(scope);
+        const request = (requestScope = childScope(scope));
+        const read = prefetch || startStateRead(store, docId, request);
+        prefetch = null;
+        request.cleanup(() => read.scope.dispose());
+        controller.loading = true;
+        events.dispatchEvent(new Event("state"));
         try {
-          const payload = await store.read(
-            `/state/${encodeURIComponent(reader.doc.id)}`,
-            requestScope,
-          );
-          if (scope.signal.aborted || current !== generation) return;
-          publish(payload);
+          const result = await read.result;
+          if (
+            scope.signal.aborted ||
+            request.signal.aborted ||
+            current !== generation
+          )
+            return;
+          if (!read.isCurrent())
+            throw new DOMException(
+              "Collection preparation cancelled",
+              "AbortError",
+            );
+          if (result.error) throw result.error;
+          if (reader.doc.id !== docId || reader.doc.version !== version)
+            throw new Error("原文版本已变化，请重新加载收藏记录");
+          // A word-card retry can finish between first draw and the read hook.
+          // No mounted reflow listener contract exists here yet: keep the
+          // indexed fallback and let the user retry once UI mounting finishes.
+          if (beforeLayout && !mounted && reader.pages)
+            throw new Error("阅读准备尚未结束，请稍后重试收藏记录");
+          publish(result.payload);
         } catch (error) {
           if (
             scope.signal.aborted ||
-            current !== generation ||
-            error.name === "AbortError"
+            request.signal.aborted ||
+            current !== generation
           )
             return;
-          controller.loaded = false;
-          controller.error = error;
-          events.dispatchEvent(new Event("state"));
-          if (mounted) reader.emit("collections-change", { state, error });
+          unavailable(
+            error.name === "AbortError"
+              ? new Error("收藏记录加载已取消，请重试")
+              : error,
+          );
           // Body reading is never blocked by an optional record failure.
+        } finally {
+          request.dispose();
+          if (current === generation) {
+            requestScope = null;
+            controller.loading = false;
+            if (!scope.signal.aborted) events.dispatchEvent(new Event("state"));
+          }
         }
       },
       mount() {
@@ -158,12 +265,50 @@ export function install(ctx) {
     scope.cleanup(() => {
       controllers.delete(controller);
       requestScope?.dispose();
+      prefetch?.scope.dispose();
     });
-    controller.ready = reader.collectionsSeed
-      ? Promise.resolve(publish(reader.collectionsSeed))
-      : controller.reload();
+    const seed = reader.collectionsSeed;
+    if (seed) {
+      prefetch?.scope.dispose();
+      prefetch = null;
+      try {
+        const failure = seed.collectionsUnavailable;
+        if (
+          failure &&
+          (failure.doc_id !== reader.doc.id ||
+            failure.version !== reader.doc.version)
+        )
+          throw new Error("准备的收藏记录与当前原文不一致，请重新加载");
+        publish(seed, failure ? new Error(failure.message) : null);
+      } catch (error) {
+        unavailable(error);
+      }
+      controller.ready = Promise.resolve();
+    } else controller.ready = controller.reload();
     return controller;
   }
+
+  const prepareDocument = ctx.hook("prepare-document", (preparation) => {
+    const docId = preparation.docId;
+    if (
+      !Number.isSafeInteger(docId) ||
+      docId <= 0 ||
+      preparation.scope?.signal?.aborted
+    )
+      return;
+    if (
+      preparation.collectionsPrefetch?.docId === docId &&
+      preparation.collectionsPrefetch.isCurrent()
+    )
+      return;
+    preparation.collectionsPrefetch?.scope.dispose();
+    preparation.collectionsPrefetch = startStateRead(
+      store,
+      docId,
+      preparation.scope,
+    );
+    // Deliberately return undefined: document/plugins/profile fetch in parallel.
+  });
 
   const prepare = ctx.hook("prepare-reading", async (reader) => {
     const controller = reader.collectionsController || createController(reader);
@@ -180,6 +325,22 @@ export function install(ctx) {
       return;
     }
     if (scope.signal.aborted) return;
+    if (controller.error)
+      toast(
+        `收藏划线与反馈暂不可用：${controller.error.message}。正文可继续阅读。`,
+        {
+          label: "重试",
+          run: async () => {
+            await controller.reload();
+            if (!scope.signal.aborted)
+              toast(
+                controller.error
+                  ? `${controller.error.message}；可从收藏面板重试`
+                  : "正文收藏记录已加载",
+              );
+          },
+        },
+      );
     // A legacy host without prepare-reading needs one initial contextual
     // layout. Current hosts already apply the overlay before their first draw.
     if (
@@ -268,19 +429,29 @@ export function install(ctx) {
           "<div data-collections-panel></div>",
           (el, panelScope) => {
             const root = $("[data-collections-panel]", el);
-            if (controller.error) {
-              const button = document.createElement("button");
-              button.textContent = "重新加载正文划线与反馈";
-              el.prepend(button);
-              panelScope.on(button, "click", async () => {
-                button.disabled = true;
-                await controller.reload();
-                button.disabled = false;
-                button.textContent = controller.error
-                  ? "加载失败，点击重试"
-                  : "正文记录已加载";
-              });
-            }
+            const notice = document.createElement("div"),
+              status = document.createElement("p"),
+              button = document.createElement("button");
+            status.className = "collections-status";
+            status.setAttribute("role", "status");
+            button.type = "button";
+            button.textContent = "重新加载正文划线与反馈";
+            notice.append(status, button);
+            el.prepend(notice);
+            const renderAvailability = () => {
+              if (panelScope.signal.aborted) return;
+              notice.hidden = !controller.error && !controller.loading;
+              status.textContent = controller.loading
+                ? "正在加载正文划线与反馈…"
+                : controller.error
+                  ? `正文收藏记录暂不可用：${controller.error.message}。正文可继续阅读。`
+                  : "";
+              button.hidden = !controller.error;
+              button.disabled = controller.loading;
+            };
+            panelScope.on(controller.events, "state", renderAvailability);
+            panelScope.on(button, "click", () => void controller.reload());
+            renderAvailability();
             mountCollectionsList(ctx, store, root, panelScope, {
               bookId,
               docId: bookId ? null : reader.doc.id,
@@ -349,6 +520,7 @@ export function install(ctx) {
     });
   });
   return () => {
+    prepareDocument();
     prepare();
     read();
     word();

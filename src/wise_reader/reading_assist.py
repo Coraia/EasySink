@@ -542,11 +542,16 @@ async def produce_context(app, ctx, doc_id, target, text, context, identity, p, 
         require_consumers(flight)
         raw = await model_json(app, None,
             'Explain the selected English word/expression in its context in concise Chinese. '
-            'Return strict JSON {"meaning":"contextual meaning","explanation":"why this meaning fits, at most 250 Chinese characters"}. '
+            'Return strict JSON {"meaning":"brief meaning of the selected substring only","explanation":"one short sentence explaining its local usage, at most 100 Chinese characters"}. '
             'No whole-paragraph translation. If context does not resolve an ambiguity, say so instead of guessing. '
             'Explain the exact selected occurrence located by selected_occurrences (before / selected / after), '
             'not another occurrence or inflection of the same word elsewhere in the context. '
             'Preserve its grammatical role and any version, condition or scope qualifiers in the source. '
+            'The meaning field must define ONLY the selected substring, never absorb a neighboring head noun or verb. '
+            'For an attributive noun, give that noun\'s concept and say in explanation which following noun it modifies. '
+            'Explain only the nearest clause containing the occurrence. No doctrine, citation expansion, '
+            'ownership, author intentions, unstated implications or reconstructed speech. '
+            'Do not add "rather than/not X" contrasts unless the supplied clause explicitly makes that contrast. '
             'Ground every explanatory claim in the supplied source and context only. '
             'Use a short exact phrase from the supplied context to explain the sense. '
             'Do not invent earlier/later passages, identify an unstated author, or expand a citation into text not supplied. '

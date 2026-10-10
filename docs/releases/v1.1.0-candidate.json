@@ -1,0 +1,148 @@
+{
+  "schema": 1,
+  "product_version": "1.1.0",
+  "build": "2",
+  "date": "2026-10-11",
+  "status": "installed-candidate-awaiting-human-acceptance",
+  "git_tag": null,
+  "baseline": "023936a1d9df72715fc6794dbe64e3c38352eacb",
+  "spec": "https://github.com/Coraia/EasySink/issues/39",
+  "scope": "V1.1 personal reading loop, existing Web and macOS candidate; not general distribution or complete device matrix",
+  "included": [
+    "Complete local dictionary candidates and conservative phrase annotation",
+    "Independent source-bound word collections, highlights, understood and retained feedback",
+    "Overlap union and whole-highlight deletion with undo",
+    "Personal meanings, bounded explicit AI context, cache/history and preview adoption",
+    "Current-book/global collections, source preview and explicit return",
+    "Daily resurfacing and persistent controls",
+    "JSON restore, Markdown export, scoped cleanup and data-retaining plugin switch",
+    "Source-preserving notes and atomic server undo",
+    "Bounded collection readiness and overlapping preparation"
+  ],
+  "installed_artifact": {
+    "manifest_sha256": "fcf13e56842c8879d199a38baaf7918007470c895f14b6685be5fcded3385bbc",
+    "frozen_source_manifest_sha256": "b2323057bf1e815c1f8d333a49360f2750e1d634209bcb50c7195d9087d2176b",
+    "archive_sha256": "94d903f86abac15c531119c9c124f854a75df1bf47148db23143f94aece76a87",
+    "version": "1.1.0",
+    "build": "2"
+  },
+  "validation": {
+    "method": "Actual Web/native UI plus bounded temporary-DB production API evidence and matched V1 performance; no new unit tests",
+    "opening": [
+      {
+        "doc": 10,
+        "n_per_version": 10,
+        "same_source_anchor": true,
+        "firstSourceMs": {
+          "B": 227.8,
+          "C": 214.1,
+          "frozen_noise": 33.80000000000001,
+          "within_paired_noise": true
+        },
+        "readyMs": {
+          "B": 301.2,
+          "C": 288.3,
+          "frozen_noise": 31.700000000000017,
+          "within_paired_noise": true
+        }
+      },
+      {
+        "doc": 23,
+        "n_per_version": 10,
+        "same_source_anchor": true,
+        "firstSourceMs": {
+          "B": 27.2,
+          "C": 32.0,
+          "frozen_noise": 59,
+          "within_paired_noise": true
+        },
+        "readyMs": {
+          "B": 103.0,
+          "C": 108.8,
+          "frozen_noise": 45.20000000000002,
+          "within_paired_noise": true
+        }
+      },
+      {
+        "doc": 51,
+        "n_per_version": 10,
+        "same_source_anchor": true,
+        "firstSourceMs": {
+          "B": 21.4,
+          "C": 19.2,
+          "frozen_noise": 5.200000000000003,
+          "within_paired_noise": true
+        },
+        "readyMs": {
+          "B": 68.4,
+          "C": 67.1,
+          "frozen_noise": 13.400000000000006,
+          "within_paired_noise": true
+        }
+      },
+      {
+        "doc": 137,
+        "n_per_version": 10,
+        "same_source_anchor": true,
+        "firstSourceMs": {
+          "B": 24.5,
+          "C": 23.9,
+          "frozen_noise": 10.699999999999996,
+          "within_paired_noise": true
+        },
+        "readyMs": {
+          "B": 96.7,
+          "C": 99.8,
+          "frozen_noise": 12.099999999999994,
+          "within_paired_noise": true
+        }
+      }
+    ],
+    "turn_frame_p95_ms": [
+      17.1,
+      17.6
+    ],
+    "turns_per_version": 6,
+    "over34ms_frames": 0,
+    "real_provider_transports": 41,
+    "provider_auto_retries": 0,
+    "old_user_records_preserved": true,
+    "runtime_identity": {
+      "served_assets": 61,
+      "installed_runtime_files": 145
+    }
+  },
+  "known_limits": [
+    "technical-01 thread context meaning still expands to nearby phrase; not all30 samples rerun under finalv7",
+    "Inherited V1-D01 conversion-load frame and V1-D02 academic semantic ambiguity",
+    "No final full physical trackpad speed/device matrix, quantitative selection latency or30-minute memory soak",
+    "No new actual OCR revision/import benchmark, clean-machine signing/notarization or every UI recovery permutation"
+  ],
+  "evidence": [
+    {
+      "local_path": "docs/74-v11-delivery.md",
+      "sha256": "c0268c4970a70d9524046cd9ee357c9c96e83b57f4fac23fc20c467d8ed8e7eb"
+    },
+    {
+      "local_path": "outputs/v11-delivery-20261011/walkthrough-observations.json",
+      "sha256": "8d744f11e4c280589798c0648e83a06c32be3ac863488635699786cb95b2ae27"
+    },
+    {
+      "local_path": "outputs/v11-delivery-20261011/baseline/final-performance-summary.json",
+      "sha256": "e30a03e737d64194d9cfa785d065cc5b088422dab2a65d80ab75429a88107b77"
+    },
+    {
+      "local_path": "outputs/v11-delivery-20261011/baseline/deployment/final-runtime-identity.json",
+      "sha256": "eeaaefb820d23dc2de69ee9cc05ea8854f9e5c7717019e4559bb58486f24a9dd"
+    },
+    {
+      "local_path": "outputs/v11-delivery-20261011/baseline/deployment/legacy-row-audit.json",
+      "sha256": "df789b8dc8cb9e1c23f926d1ac3291cff9825576474b5c05105f95175ed79273"
+    },
+    {
+      "local_path": "outputs/v11-delivery-20261011/v11-client/BUILD-COMPLETE.json",
+      "sha256": "377ce97d90132a7bb6c838498ffdfd0413375225a2172674598df8c7ca8183cb"
+    }
+  ],
+  "privacy": "Private originals, databases, settings, backups and raw provider responses remain local and are not committed."
+}

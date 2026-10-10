@@ -90,14 +90,16 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
             return {"ok": True, "recycled": True, **payload}
 
         def remove_old_book():
-            ch = ctx.store.query("SELECT doc_id FROM wr_chapter WHERE book_id = ?", (book_id,))
-            ctx.store.execute("DELETE FROM wr_chapter WHERE book_id = ?", (book_id,))
-            ctx.store.execute("DELETE FROM wr_book WHERE id = ?", (book_id,))
-            for row in ch:
-                if pdf is not None and pdf.document_metadata(row["doc_id"]) is not None:
-                    continue
-                if not ctx.store.query_one("SELECT id FROM wr_chapter WHERE doc_id=?", (row["doc_id"],)):
-                    ctx.store.delete_document(row["doc_id"])
+            with ctx.store.transaction():
+                ch = ctx.store.query("SELECT doc_id FROM wr_chapter WHERE book_id = ?", (book_id,))
+                for row in ch:
+                    if pdf is not None and pdf.document_metadata(row["doc_id"]) is not None:
+                        continue
+                    if not ctx.store.query_one("SELECT id FROM wr_chapter WHERE doc_id=? AND book_id<>?", (row["doc_id"], book_id)):
+                        # Capture note provenance while chapter/book metadata still exists.
+                        ctx.store.delete_document(row["doc_id"])
+                ctx.store.execute("DELETE FROM wr_chapter WHERE book_id = ?", (book_id,))
+                ctx.store.execute("DELETE FROM wr_book WHERE id = ?", (book_id,))
             return {"ok": True}
 
         return await run_in_threadpool(remove_old_book)

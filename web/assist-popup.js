@@ -25,7 +25,7 @@ function sameSelection(value, anchor) {
 function validLocalRecord(r, value, anchor, neighbors) {
   const context = value.payload?.context;
   if (!sameSelection(value, anchor) || value.doc_id !== r.doc.id ||
-      value.version !== r.doc.version || !context || context.protocol !== "context-meaning-v6" ||
+      value.version !== r.doc.version || !context || context.protocol !== "context-meaning-v7" ||
       context.requested_neighbors.previous !== neighbors.context_previous ||
       context.requested_neighbors.next !== neighbors.context_next) return false;
   const blocks = new Map(r.doc.blocks.map(block => [block.id, block]));
