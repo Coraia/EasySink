@@ -359,6 +359,7 @@ export class PageCurlRenderer {
       const copy = document.createElement("div");
       copy.innerHTML = source.leafMarkup(index);
       const page = copy.firstElementChild;
+      source.r.collectionsController?.paint(page);
       page
         .querySelectorAll(".inline-grammar,.bookmark-marker,.paragraph-actions,.pdf-object-actions,[data-pdf-source],[data-pdf-note]")
         .forEach((el) => el.remove());

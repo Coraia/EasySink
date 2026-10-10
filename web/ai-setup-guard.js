@@ -22,7 +22,7 @@ export async function openReadingAI(reader, request = {}) {
   reader.focus.close();
   reader.closePop();
   getSelection()?.removeAllRanges();
-  const title = { grammar: "语法分析", translation: "翻译所选文字" };
+  const title = { grammar: "语法分析", translation: "翻译所选文字", context: "查看词卡" };
   let view = reader.readingAI;
   if (view?.failed) { view.scope.dispose(); view.dialog.remove(); view = reader.readingAI = null; }
   if (!view) {
@@ -67,6 +67,17 @@ export async function openReadingAI(reader, request = {}) {
     scope.on(resume, "click", () => {
       const {anchor, kind} = view.request;
       view.close();
+      if (anchor && kind === "context") {
+        reader.restore(anchor, {automatic: true, mark: false}).then(() => {
+          if (reader.scope.signal.aborted) return;
+          const source = [...document.querySelectorAll("#article .source-unit")].find(node =>
+            node.dataset.sourceBlock === anchor.block_id &&
+            +node.dataset.sourceStart < anchor.end && +node.dataset.sourceEnd > anchor.start);
+          if (source) reader.lookup(anchor.quote, source, anchor);
+          else reader.choose(anchor);
+        }).catch(error => reader.status(error.message, {notice: true}));
+        return;
+      }
       if (!anchor || !reader.selectionActions.has(kind)) return;
       reader.choose(anchor);
       Promise.resolve(reader.selectionActions.get(kind).fn(anchor)).catch(error => reader.status(error.message, {notice: true}));

@@ -225,7 +225,10 @@ export class ReadingPages {
           throw new Error("相邻阅读内容已更新，请从目录重新核对阅读位置");
         // A bounded neighboring range, not a second mounted reader or a whole book.
         const reader = Object.create(Object.getPrototypeOf(this.r));
-        Object.assign(reader, {ctx: this.r.ctx, scope: this.r.scope, doc, search: ""});
+        Object.assign(reader, {ctx: this.r.ctx, scope: {signal: controller.signal}, doc, sourceBlocks: doc.blocks, search: ""});
+        await reader.ctx.run("prepare-reading", reader);
+        controller.signal.throwIfAborted();
+        doc.blocks = reader.collectionsController?.applyAnnotations(reader.sourceBlocks) || reader.sourceBlocks;
         const pages = Object.create(ReadingPages.prototype);
         measure = this.measure.cloneNode(false);
         this.measure.parentElement.append(measure);
@@ -673,6 +676,7 @@ export class ReadingPages {
     $("#article").innerHTML = Array.from({ length: this.count }, (_, i) =>
       this.leafMarkup(this.index + i),
     ).join("");
+    this.r.collectionsController?.paint($("#article"));
     this.navigationUI();
     this.r.renderSelection();
     this.r.ctx.run("draw", this.r).catch(console.error);
@@ -975,6 +979,7 @@ export class ReadingPages {
       if (setup) setup.incomingStartedAt = performance.now();
       const backIndex = index + (direction < 0 ? this.count - 1 : 0);
       incoming.innerHTML = Array.from({ length: this.count }, (_, i) => source.leafMarkup(index + i)).join("");
+      source.r.collectionsController?.paint(incoming);
       incoming.querySelectorAll(".paragraph-actions").forEach(el => el.remove());
       if (setup) setup.incomingReadyAt = performance.now();
       this.painter.wasWarm = this.painter.cache.has(this.painter.key(frontIndex)) &&

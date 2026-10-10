@@ -238,7 +238,10 @@ async function renderHome(scope) {
     }
   });
   await ctx.run("home", view);
-  if (!scope.signal.aborted) draw();
+  if (!scope.signal.aborted) {
+    draw();
+    view.mountCollectionsResurface?.();
+  }
 }
 function importText() {
   const draft = local.get("import-draft", { title: "", text: "" });

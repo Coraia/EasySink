@@ -1,4 +1,5 @@
 import { sameSelection } from "./source-selection.js";
+import { renderDictionaryCard } from "./dictionary-card.js";
 import { anchorFromDOMRange } from "./selection-range.js";
 import { $, $$, e, api, Scope, local, toast, errorBox } from "./core.js";
 import { sourceUrlRanges, overlapsSourceUrl } from "./source-urls.js";
@@ -16,6 +17,7 @@ export class Reader {
     this.ctx = ctx;
     this.scope = scope;
     this.doc = doc;
+    this.sourceBlocks = handoff?.pages.r.sourceBlocks || doc.blocks;
     this.generation = 0;
     this.lookups = 0;
     this.panelScope = null;
@@ -24,6 +26,7 @@ export class Reader {
     this.selection = null;
     this.restoring = true;
     this.handoff = handoff;
+    this.collectionsSeed = handoff?.pages.r.collectionsSeed;
   }
   async mount() {
     const d = this.doc;
@@ -33,6 +36,15 @@ export class Reader {
     this.ctx.root.innerHTML = readerShell(d, this.ctx.enabled("progress"));
     installReaderChrome(this);
     setupReadingInteractions(this);
+    await this.ctx.run("prepare-reading", this);
+    if (this.scope.signal.aborted) return;
+    this.on("annotations-change", () => {
+      // Reapply occurrence feedback to the unchanged source. No server request,
+      // global mastery change or whole-book reload is needed.
+      this.draw().catch(error => {
+        if (error.name !== "AbortError") this.status(error.message);
+      });
+    });
     this.pages = new ReadingPages(this);
     await this.draw();
     const s = this.scope;
@@ -192,6 +204,7 @@ export class Reader {
     const primary = [
       "outline",
       "notes",
+      "collections",
       "progress",
       "appearance",
       "typography",
@@ -308,6 +321,7 @@ export class Reader {
       .join("");
   }
   draw() {
+    this.doc.blocks = this.collectionsController?.applyAnnotations(this.sourceBlocks) || this.sourceBlocks;
     this.pages.indexSource();
     const prepared = this.handoff?.pages;
     const ready = prepared && !this.handoff.adopted
@@ -349,6 +363,7 @@ export class Reader {
         return true;
       }
       this.doc = doc;
+      this.sourceBlocks = doc.blocks;
       await this.draw();
       if (this.scope.signal.aborted || generation !== this.generation) return false;
       await this.restore(anchor, {automatic: true});
@@ -447,6 +462,9 @@ export class Reader {
     this.popElement?.remove();
     this.popElement = null;
   }
+  renderDictionary(pop, item) {
+    renderDictionaryCard(pop, {...item, anchor: item.anchor || this.popAnchor});
+  }
   pop(el, custom) {
     this.closePop();
     const item = custom || this.annotations[+el.dataset.annotation];
@@ -462,8 +480,10 @@ export class Reader {
       model: "AI 注释 · 可核对",
       "context-rule": "本句语境规则",
       "phrase-rule": "常用表达",
+      "dictionary-phrase": "表达释义 · 请结合上下文",
+      "context-retained": "在这里保留的注释",
     };
-    pop.innerHTML = `<button class="close" aria-label="关闭注释">×</button><div class="meta">${e(labels[item.source] || "词典释义")}</div><h3>${e(item.text)}</h3><div class="meaning">${e(item.note || "词典中暂无释义")}</div><p class="muted">${e(item.detail || "选择“已掌握”后，会减少这项注释。")}</p>${item.target ? '<footer><button data-verdict="known">已掌握 ✓</button><button data-verdict="unknown">保留注释</button></footer>' : ""}`;
+    pop.innerHTML = `<button class="close" aria-label="关闭注释">×</button><div class="meta">${e(labels[item.source] || "词典释义")}</div><h3>${e(item.text)}</h3><div class="meaning">${e(item.note || "词典中暂无释义")}</div><p class="muted">${e(item.detail || "通用释义仅供参考，可主动解释此处用法。")}</p>${item.target && !this.ctx.enabled("collections") ? '<footer><button data-verdict="known">已掌握 ✓</button><button data-verdict="unknown">保留注释</button></footer>' : ""}`;
     const anchor =
       item.anchor ||
       (item.block
@@ -471,6 +491,7 @@ export class Reader {
         : this.selection);
     this.popAnchor = anchor;
     document.body.append(pop);
+    this.renderDictionary(pop, item);
     let frame = 0;
     const place = () => {
       frame = 0;
@@ -533,15 +554,25 @@ export class Reader {
     place();
     scope.on($(".close", pop), "click", () => this.closePop());
     scope.on(document, "keydown", (ev) => {
+      if (document.querySelector("dialog[open]")) return;
       if (ev.key === "Escape") {
         this.closePop();
         el.focus?.();
       }
     });
     scope.on(document, "pointerdown", (ev) => {
+      if (document.querySelector("dialog[open]")) return;
       if (!pop.contains(ev.target) && !el.contains(ev.target)) this.closePop();
     });
     scope.on(pop, "click", async (ev) => {
+      const member = ev.target.closest("[data-dictionary-member]");
+      if (member && anchor) {
+        const start = anchor.start + Number(member.dataset.dictionaryMember);
+        const end = start + Number(member.dataset.memberLength);
+        const part = this.anchorFor(anchor.block_id, start, end);
+        if (part?.quote) await this.lookup(part.quote, el, part);
+        return;
+      }
       const btn = ev.target.closest("[data-verdict]");
       if (!btn) return;
       $$("footer button", pop).forEach((b) => (b.disabled = true));
@@ -575,6 +606,7 @@ export class Reader {
         $$("footer button", pop).forEach((b) => (b.disabled = false));
       }
     });
+    this.ctx.run("word", { reader: this, pop, item, anchor, scope });
     this.enhancePop(pop, item, anchor, scope).catch((err) => {
       if (err.name !== "AbortError") this.status(err.message);
     });
@@ -593,6 +625,8 @@ export class Reader {
         text: word,
         note: result.note,
         detail: result.detail,
+        dictionary: result.dictionary,
+        phonetic: result.phonetic,
         target: result.found ? result.lemma : "",
         source: "dictionary",
         anchor,

@@ -1,3 +1,14 @@
+.dictionary-candidates { margin: 14px 0; font-size: 14px; line-height: 1.65; }
+.dictionary-caption { color: var(--muted); font-size: 12px; margin: 8px 0; }
+.dictionary-senses { padding: 0; list-style: none; margin: 6px 0 12px; }
+.dictionary-senses li { margin: 9px 0; overflow-wrap: anywhere; }
+.dictionary-label { display: inline-block; margin-right: 7px; color: var(--accent); font-size: 12px; }
+.dictionary-full { border-top: 1px solid var(--border); padding-top: 8px; }
+.dictionary-full summary { cursor: pointer; color: var(--accent); padding: 6px 0; }
+.dictionary-missing { color: var(--muted); font-size: 13px; }
+.dictionary-members { margin: 10px 0; color: var(--accent); }
+.dictionary-members summary { cursor: pointer; padding: 6px 0; }
+.dictionary-members button { padding: 5px 9px; font-size: 13px; }
 :root {
   --bg: #f5f4ef;
   --paper: #fffefa;

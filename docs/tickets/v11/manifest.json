@@ -1,0 +1,103 @@
+{
+  "spec": 39,
+  "tickets": [
+    {
+      "local": 1,
+      "number": 40,
+      "id": 5793520127,
+      "url": "https://github.com/Coraia/EasySink/issues/40",
+      "title": "V1.1 T01：语境记录：词语收藏、整体划线与独立反馈",
+      "blockers": [],
+      "verified_edges": [],
+      "body_readback_matches": true,
+      "labels": [
+        "ready-for-agent"
+      ]
+    },
+    {
+      "local": 2,
+      "number": 41,
+      "id": 5793521124,
+      "url": "https://github.com/Coraia/EasySink/issues/41",
+      "title": "V1.1 T02：离线释义：完整义项、可靠表达与词卡",
+      "blockers": [],
+      "verified_edges": [],
+      "body_readback_matches": true,
+      "labels": [
+        "ready-for-agent"
+      ]
+    },
+    {
+      "local": 3,
+      "number": 42,
+      "id": 5793521998,
+      "url": "https://github.com/Coraia/EasySink/issues/42",
+      "title": "V1.1 T03：主动语境解释：有界上下文、缓存与采用历史",
+      "blockers": [],
+      "verified_edges": [],
+      "body_readback_matches": true,
+      "labels": [
+        "ready-for-agent"
+      ]
+    },
+    {
+      "local": 4,
+      "number": 43,
+      "id": 5793522902,
+      "url": "https://github.com/Coraia/EasySink/issues/43",
+      "title": "V1.1 T04：词句收藏管理：来源预览、资料导出与恢复",
+      "blockers": [
+        40
+      ],
+      "verified_edges": [
+        40
+      ],
+      "body_readback_matches": true,
+      "labels": [
+        "ready-for-agent"
+      ]
+    },
+    {
+      "local": 5,
+      "number": 44,
+      "id": 5793524063,
+      "url": "https://github.com/Coraia/EasySink/issues/44",
+      "title": "V1.1 T05：书架再次遇见：当天稳定、主动轮换与持续关闭",
+      "blockers": [
+        43
+      ],
+      "verified_edges": [
+        43
+      ],
+      "body_readback_matches": true,
+      "labels": [
+        "ready-for-agent"
+      ]
+    },
+    {
+      "local": 6,
+      "number": 45,
+      "id": 5793525157,
+      "url": "https://github.com/Coraia/EasySink/issues/45",
+      "title": "V1.1 T06：V1.1 交付：真实质量、完整走查、性能与客户端",
+      "blockers": [
+        40,
+        41,
+        42,
+        43,
+        44
+      ],
+      "verified_edges": [
+        40,
+        41,
+        42,
+        43,
+        44
+      ],
+      "body_readback_matches": true,
+      "labels": [
+        "ready-for-agent"
+      ]
+    }
+  ]
+}

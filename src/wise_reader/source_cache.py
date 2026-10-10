@@ -20,7 +20,7 @@ class SourceCache:
     def __init__(self, store, lexicon):
         self.store = store
         revision = hashlib.sha256(b"source-analysis-v1")
-        for name in ("tokenize.py", "l0.py", "lexicon.py", "semantics.py", "models.py", "engine.py", "source_cache.py"):
+        for name in ("tokenize.py", "l0.py", "lexicon.py", "dictionary_payload.py", "dictionary_phrases.py", "semantics.py", "models.py", "engine.py", "source_cache.py"):
             revision.update((Path(__file__).parent / name).read_bytes())
         for path in (lexicon.db_path, lexicon.lemma_path):
             stat = path.stat() if path.exists() else None

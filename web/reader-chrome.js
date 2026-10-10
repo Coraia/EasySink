@@ -4,6 +4,7 @@ import { $, e, local, toast } from "./core.js";
 const icons = {
   outline: '<path d="M4 5h16M4 12h16M4 19h16"/>',
   notes: '<path d="M5 3h11l3 3v15H5zM8 8h8M8 12h8M8 16h5"/>',
+  collections: '<path d="M6 3h12v18l-6-4-6 4zM9 7h6M9 10h6"/>',
   progress:
     '<path d="M3 9h5m4 0h9M3 16v2m6-2v2m6-2v2m6-2v2"/><circle cx="10" cy="9" r="2"/>',
   appearance:
@@ -166,7 +167,7 @@ export function installReaderChrome(r) {
         ev.target instanceof Element ? ev.target : ev.target.parentElement;
       const gesture = released;
       released = null;
-      if (r.aiSetupOpen) return;
+      if (r.aiSetupOpen || modal() || target.closest("dialog")) return;
       const dismissedSelection = r.selectionDismissedByPointer;
       r.selectionDismissedByPointer = false;
       // Undo belongs above the reader's dismiss surface and toolbar.
@@ -246,7 +247,7 @@ export function installReaderChrome(r) {
     document,
     "keydown",
     (ev) => {
-      if (r.aiSetupOpen) return;
+      if (r.aiSetupOpen || modal()) return;
       if (ev.key === "Escape") {
         if (r.panelId) {
           r.dismissPanel();
@@ -415,6 +416,7 @@ export function installCoreReaderTools(r) {
   for (const id of [
     "outline",
     "notes",
+    "collections",
     "progress",
     "appearance",
     "typography",

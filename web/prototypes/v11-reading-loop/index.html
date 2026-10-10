@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wise Reader · V1.1 阅读闭环原型</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app"></div>
+<div id="selection-tools" class="selection-tools" role="toolbar" aria-label="选区操作" hidden></div>
+<button id="handle-start" class="handle start" aria-label="调整选区开头" hidden></button>
+<button id="handle-end" class="handle end" aria-label="调整选区结尾" hidden></button>
+<aside id="wordcard" class="wordcard" aria-label="词语详情" hidden></aside>
+<div id="panel-shade" class="panel-shade" hidden></div>
+<aside id="panel" class="panel" aria-label="阅读面板" hidden></aside>
+<dialog id="dialog"></dialog>
+<div id="toast" role="status" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

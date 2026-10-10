@@ -51,8 +51,7 @@ def candidates(doc: Document, lexicon: Lexicon) -> list[Annotation]:
             lexicon.lemma(key),
             entry.gloss() if entry else "",
             entry.rank if entry else 0,
-            entry.translation.strip().splitlines()[0][:100]
-            if entry and entry.translation else "",
+            entry.full_gloss() if entry else "",
         )
     for token, key in zip(doc.tokens, keys):
         suppressed = _is_acronym(token)
@@ -66,7 +65,7 @@ def candidates(doc: Document, lexicon: Lexicon) -> list[Annotation]:
         if capitalized and not _is_sentence_start(doc, token):
             suppressed = True
 
-        if entry is None or not entry.has_chinese:
+        if entry is None or not entry.has_definition:
             continue
 
         if capitalized and not entry.pos and not _has_authority(entry):

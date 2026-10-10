@@ -2,6 +2,7 @@ import { installSelectionHandles } from "./selection-handles.js";
 import { anchorSegments, linkedRanges } from "./source-selection.js";
 import { $, $$, e, api, toast } from "./core.js";
 import { offerAISetup } from "./ai-setup-guard.js";
+import { installContextPopup } from "./assist-popup.js";
 
 export function setupReadingInteractions(r) {
   r.events = new EventTarget();
@@ -201,7 +202,20 @@ export function setupReadingInteractions(r) {
     if (r.selection) {
       const image = r.selection.kind === "image";
       const actions = [...r.selectionActions].filter(([id]) => !image || ["notes", "bookmarks", "pdf-source"].includes(id));
-      el.innerHTML = `<div class="selection-quote">${image ? "已选原图" : "已选原文"} · ${e(r.selection.quote.length > 110 ? r.selection.quote.slice(0, 110) + "…" : r.selection.quote)}</div><div class="selection-actions" role="toolbar" aria-label="所选原文操作">${actions.map(([id, { label }]) => `<button type="button" data-selection-action="${id}">${e(r.pending.has(id) ? "取消" + label : label)}</button>`).join("")}<button type="button" data-selection-clear aria-label="取消选择" title="取消选择">×</button></div>${!image && r.ctx.enabled("grammar") ? '<div class="selection-scope">语法分析按完整句子处理；翻译、朗读和笔记仍按当前选区。</div>' : ""}`;
+      const primaryIds = ["collections-highlight", "notes", "translation", "grammar"];
+      const primary = image ? actions : primaryIds.flatMap(id => actions.filter(([key]) => key === id));
+      const secondary = image ? [] : actions.filter(([id]) => !primaryIds.includes(id));
+      const button = ([id, { label }], compact = false) => {
+        const name = compact ? ({ notes: "笔记", translation: "翻译", grammar: "语法" }[id] || label) : label;
+        return `<button type="button" data-selection-action="${e(id)}" title="${e(label)}">${e(r.pending.has(id) ? "取消" + name : name)}</button>`;
+      };
+      const extraPending = secondary.some(([id]) => r.pending.has(id));
+      el.innerHTML = `<div class="selection-quote">${image ? "已选原图" : "已选原文"} · ${e(r.selection.quote.length > 110 ? r.selection.quote.slice(0, 110) + "…" : r.selection.quote)}</div>
+        <div class="selection-actions" role="toolbar" aria-label="所选原文操作">${primary.map(action => button(action, !image)).join("")}
+          ${secondary.length ? `<button type="button" data-selection-more aria-controls="selection-more-actions" aria-expanded="${Boolean(r.selectionMoreOpen)}">更多${extraPending ? " · 可取消" : ""}</button>` : ""}
+          <button type="button" data-selection-clear aria-label="取消选择" title="取消选择">×</button></div>
+        ${secondary.length ? `<div id="selection-more-actions" class="selection-actions" role="toolbar" aria-label="更多原文操作" ${r.selectionMoreOpen ? "" : "hidden"}>${secondary.map(action => button(action)).join("")}</div>` : ""}
+        ${!image && r.ctx.enabled("grammar") ? '<div class="selection-scope">语法分析按完整句子处理；翻译、朗读和笔记仍按当前选区。</div>' : ""}`;
     }
     r.emit("selection-render");
     r.positionSelection();
@@ -211,6 +225,7 @@ export function setupReadingInteractions(r) {
     for (const controller of r.pending.values()) controller.cancel();
     r.pending.clear();
     r.selection = { ...anchor };
+    r.selectionMoreOpen = false;
     const last = anchorSegments(anchor).at(-1);
     r.selectionPlacement = {
       block_id: last.block_id,
@@ -228,6 +243,7 @@ export function setupReadingInteractions(r) {
     for (const controller of r.pending.values()) controller.cancel();
     r.pending.clear();
     r.selection = null;
+    r.selectionMoreOpen = false;
     r.selectionPlacement = null;
     if (native) getSelection()?.removeAllRanges();
     r.renderSelection();
@@ -348,6 +364,12 @@ export function setupReadingInteractions(r) {
     r.emit("assist-change");
   });
   r.scope.on($("#reading-selection"), "click", (ev) => {
+    if (ev.target.closest("[data-selection-more]")) {
+      r.selectionMoreOpen = !r.selectionMoreOpen;
+      r.renderSelection();
+      $("[data-selection-more]", $("#reading-selection"))?.focus({ preventScroll: true });
+      return;
+    }
     const action = ev.target.closest("[data-selection-action]");
     if (action && r.selection)
       Promise.resolve(
@@ -453,9 +475,11 @@ export function setupReadingInteractions(r) {
   installSelectionHandles(r);
   r.enhancePop = async (pop, item, anchor, scope) => {
     if (!anchor) return;
+    installContextPopup(r, pop, anchor, scope);
     const word = anchor.quote.normalize("NFKC");
-    let result;
-    if (/^[A-Za-z]+(?:['’-][A-Za-z]+)*$/.test(word)) {
+    const singleWord = /^[A-Za-z]+(?:['’-][A-Za-z]+)*$/.test(word);
+    let result = item;
+    if (!item.dictionary && word.trim() && word.length <= 96 && word.trim().split(/\s+/).length <= 6) {
       try {
         result = await api("/lookup", {
           method: "POST",
@@ -467,57 +491,21 @@ export function setupReadingInteractions(r) {
       }
       if (scope.signal.aborted) return;
     }
+    if (result?.dictionary) {
+      item.dictionary = result.dictionary;
+      pop.dictionaryRecord = result.dictionary;
+      if (result !== item) r.renderDictionary?.(pop, item);
+      r.emit("dictionary-record", { pop, item, anchor, dictionary: result.dictionary, record: result.dictionary, scope });
+    }
     const pronunciation = document.createElement("div");
     pronunciation.className = "word-pronunciation";
-    pronunciation.innerHTML = `${result?.phonetic ? `<span data-word-ipa>/${e(result.phonetic.replace(/^\[|\]$|^\/|\/$/g, ""))}/</span>` : ""}${r.ctx.enabled("tts") ? '<button type="button" data-word-speak>听发音</button>' : ""}`;
+    pronunciation.innerHTML = `${singleWord && result?.phonetic ? `<span data-word-ipa>/${e(result.phonetic.replace(/^\[|\]$|^\/|\/$/g, ""))}/</span>` : ""}${r.ctx.enabled("tts") ? '<button type="button" data-word-speak>听发音</button>' : ""}`;
     $("h3", pop).after(pronunciation);
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "context-action";
-    button.textContent = "解释这里的意思";
-    const content = document.createElement("div");
-    content.className = "context-result";
-    content.setAttribute("role", "status");
-    pop.append(button, content);
-    let controller;
-    scope.on(button, "click", async () => {
-      if (controller) {
-        controller.cancel();
-        controller = null;
-        button.textContent = "解释这里的意思";
-        content.textContent = "";
-        return;
-      }
-      controller = r.assistController();
-      const current = controller;
-      button.textContent = "取消解释";
-      content.textContent = "正在结合上下文…";
-      try {
-        const value = await api(`/documents/${r.doc.id}/context`, {
-          method: "POST",
-          body: { anchor, request_id: controller.requestId },
-          signal: controller.signal,
-        });
-        if (scope.signal.aborted || controller !== current) return;
-        if (!r.assists.some((a) => a.id === value.id)) r.assists.push(value);
-        content.innerHTML = `<div class="meta">${e(value.source)}</div><p>${e(value.payload.meaning)}</p><p>${e(value.payload.explanation)}</p>`;
-        button.textContent = "重新查看上下文";
-      } catch (err) {
-        if (err.name !== "AbortError" && !scope.signal.aborted)
-          content.textContent = err.message;
-      } finally {
-        if (controller === current) {
-          controller = null;
-          button.textContent = "解释这里的意思";
-        }
-      }
-    });
     scope.on(pronunciation, "click", (ev) => {
       if (ev.target.closest("[data-word-speak]")) r.speech?.toggle(anchor);
     });
     r.emit("speech-controls");
     scope.cleanup(() => {
-      controller?.cancel();
       if (
         r.speech?.anchor?.block_id === anchor.block_id &&
         r.speech.anchor.start === anchor.start &&

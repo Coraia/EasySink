@@ -6,7 +6,12 @@ from wise_reader.models import Kind
 from wise_reader.semantics import target
 
 
-def filter_candidates(l0, l1, profile, word_count, density=None, verdicts=None):
+def filter_candidates(l0, l1, profile, word_count, density=None, verdicts=None, *, retained=None):
+    """Select annotations; verified contextual `retained` occurrence spans win.
+
+    A retained member replaces an overlapping automatic phrase even when known,
+    repeated or at zero density. Parent resolves overlapping retained records.
+    """
     density = profile.density if density is None else density
     budget = max(1, round(word_count * density / 100)) if density > 0 else 0
     verdicts = verdicts or {}
@@ -26,17 +31,28 @@ def filter_candidates(l0, l1, profile, word_count, density=None, verdicts=None):
             if not forced and (a.suppressed or 0 < a.rarity <= threshold):
                 continue
         else:
-            if not profile.l1_enabled and not forced:
+            if not profile.l1_enabled and a.source != "dictionary-phrase" and not forced:
                 continue
             if a.kind == Kind.CULTURE and a.domain in profile.domains and not forced:
                 continue
         eligible.append(replace(a, forced=forced))
     # Resolve overlap only when actually selecting; expressions precede ordinary word glosses.
-    eligible.sort(key=lambda a: (a.forced, a.kind != Kind.WORD, a.rarity), reverse=True)
+    eligible.sort(key=lambda a: (
+        a.forced, a.kind != Kind.WORD, a.last_token - a.first_token, a.rarity,
+    ), reverse=True)
     chosen = []
     occupied = set()
     seen = set()
     automatic_count = 0
+    # Retained members never consume the automatic budget or repeat suppression.
+    for a in sorted(retained or (), key=lambda a: (a.last_token - a.first_token, a.first_token)):
+        if not a.note or not 0 <= a.first_token <= a.last_token < word_count:
+            continue
+        span = set(range(a.first_token, a.last_token + 1))
+        if span & occupied:
+            continue
+        chosen.append(replace(a, forced=True))
+        occupied |= span
     for a in eligible:
         key = target(a)
         span = set(range(a.first_token, a.last_token + 1))

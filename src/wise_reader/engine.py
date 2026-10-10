@@ -68,7 +68,7 @@ class Engine:
         doc = parse(text)
         candidates = l0.candidates(doc, self.lexicon)
         words = semantics.contextualize(doc, candidates)
-        expressions = semantics.phrases(doc)
+        expressions = semantics.phrases(doc, self.lexicon)
         row = {
             "title": title or _title_from(text), "text": text,
             "word_count": len(doc.tokens), "text_hash": text_hash(text),
@@ -141,7 +141,7 @@ class Engine:
                 if 0 <= a.first_token <= a.last_token < len(doc.tokens)
                 and doc.text[slice(*doc.slice(a.first_token, a.last_token))] == a.surface
             ]
-            expressions += semantics.phrases(doc)
+            expressions += semantics.phrases(doc, self.lexicon)
             self._source_cache.save(row, words, expressions)
         result = (doc, words, expressions)
         with self._analysis_lock:
@@ -269,21 +269,7 @@ class Engine:
         return result
 
     def lookup(self, word: str) -> dict:
-        entry = self.lexicon.lookup(word)
-        lemma = self.lexicon.lemma(word)
-        if entry is None:
-            return {"word": word, "lemma": lemma, "found": False}
-        return {
-            "word": word,
-            "lemma": lemma,
-            "found": True,
-            "phonetic": entry.phonetic,
-            "note": entry.gloss(),
-            "detail": entry.translation.strip().splitlines()[0][:100]
-            if entry.translation
-            else "",
-            "rank": entry.rank,
-        }
+        return self.lexicon.lookup_payload(word)
 
 
 def _title_from(text: str) -> str:

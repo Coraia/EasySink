@@ -40,6 +40,7 @@ PLUGINS: tuple[PluginSpec, ...] = (
     ),
     PluginSpec("immersive", "沉浸阅读", "隐藏顶栏，只留正文。"),
     PluginSpec("notes", "笔记", "划词记下想法，集中在笔记页查看。", backend="notes"),
+    PluginSpec("collections", "词句收藏", "保留此处词语与摘录，独立记录理解与注释，在书架再次遇见。", backend="collections"),
     PluginSpec(
         "translate",
         "选区翻译",
