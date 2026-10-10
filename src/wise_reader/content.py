@@ -55,17 +55,21 @@ class PDFSource(BaseModel):
         return self
 
 
-class Anchor(BaseModel):
-    version: str = Field(default="", max_length=64)
+class AnchorSegment(BaseModel):
     block_id: str = Field(default="", max_length=80)
     start: int = Field(default=0, ge=0)
     end: int = Field(default=0, ge=0)
     quote: str = Field(default="", max_length=10000)
     prefix: str = Field(default="", max_length=80)
     suffix: str = Field(default="", max_length=80)
-    ratio: float = Field(default=0, ge=0, le=1)
     kind: Literal["text", "image"] = "text"
     pdf_source: PDFSource | None = None
+
+
+class Anchor(AnchorSegment):
+    version: str = Field(default="", max_length=64)
+    ratio: float = Field(default=0, ge=0, le=1)
+    segments: list[AnchorSegment] = Field(default_factory=list, max_length=256)
 
 
 def save_anchor(store, owner, owner_id, doc_id, anchor):

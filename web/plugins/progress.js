@@ -1,11 +1,17 @@
 import { $, api, local, e, date } from "../core.js";
 export function install(ctx) {
-  const home = ctx.hook("home", async ({ scope }) => {
+  const home = ctx.hook("home", async (view) => {
+    const { scope } = view;
     const list = await api("/progress", { signal: scope.signal });
     if (scope.signal.aborted || !list.length) return;
     const p = list[0];
+    const book = view.collections?.find((book) =>
+      book.chapters?.some((chapter) => chapter.doc_id === p.doc_id),
+    );
+    const chapter = book?.chapters.find((chapter) => chapter.doc_id === p.doc_id);
+    const pdf = book?.source === "pdf" || Boolean(book?.pdf);
     $("#home-continue").innerHTML =
-      `<div class="card row between"><div><div class="eyebrow" style="margin-bottom:5px">接着上次的好奇心</div><h3 style="margin:0">${e(p.title)}</h3><span class="meta">${Math.round(p.scroll_ratio * 100)}% · ${date(p.updated_at)}</span></div><button id="continue-reading" class="primary">继续阅读 →</button></div>`;
+      `<div class="card row between wrap"><div><div class="eyebrow" style="margin-bottom:5px">接着上次的好奇心</div><h3 style="margin:0">${e(book?.title || p.title)}</h3>${chapter ? `<div class="meta">${pdf ? "阅读范围" : "第 " + (chapter.idx + 1) + " 章"} · ${e(p.title)}</div>` : ""}<span class="meta">${chapter && !pdf ? "本章 " : ""}${Math.round(p.scroll_ratio * 100)}% · ${date(p.updated_at)}</span></div><button id="continue-reading" class="primary">继续阅读 →</button></div>`;
     scope.on($("#continue-reading"), "click", () =>
       ctx.jump(p.doc_id, { ...(p.anchor || { ratio: p.scroll_ratio }), resume_position: true }),
     );

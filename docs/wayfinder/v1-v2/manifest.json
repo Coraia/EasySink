@@ -1,0 +1,250 @@
+{
+  "schema": 1,
+  "status": "published-verified",
+  "created": "2026-10-09",
+  "repository": "Coraia/EasySink",
+  "map": {
+    "title": "Wise Reader · V1→V2 决策地图",
+    "label": "wayfinder:map",
+    "body_file": "map.md",
+    "issue_number": 23,
+    "url": "https://github.com/Coraia/EasySink/issues/23",
+    "database_id": 5773404927
+  },
+  "tickets": [
+    {
+      "key": "v1-gate",
+      "title": "V1 收口：哪些证据足以进入下一阶段",
+      "label": "wayfinder:grilling",
+      "stage": "V1",
+      "mode": "HITL",
+      "body_file": "tickets/v1-gate.md",
+      "blocked_by": [],
+      "order": 1,
+      "issue_number": 24,
+      "url": "https://github.com/Coraia/EasySink/issues/24",
+      "database_id": 5773405432,
+      "state": "closed",
+      "assignee": "fisherever",
+      "alignment_status": "resolved",
+      "alignment_round_url": "https://github.com/Coraia/EasySink/issues/24#issuecomment-6076888192",
+      "alignment_answers_url": "https://github.com/Coraia/EasySink/issues/24#issuecomment-6077370532",
+      "desktop_research": {
+        "agent_id": "01a11f90-be80-7771-9915-13f9351bd632",
+        "branch": "research/reader-desktop-distribution-20261009",
+        "report": "docs/68-desktop-distribution-research.md",
+        "status": "completed-reviewed",
+        "commit": "992261b5294eabfcc1b249c414f90c602fdc4b93",
+        "report_url": "https://github.com/Coraia/EasySink/blob/992261b5294eabfcc1b249c414f90c602fdc4b93/docs/68-desktop-distribution-research.md"
+      },
+      "resolution_url": "https://github.com/Coraia/EasySink/issues/24#issuecomment-6077370532"
+    },
+    {
+      "key": "dictionary-research",
+      "title": "词典复用：欧路与开放词库能承担哪些能力",
+      "label": "wayfinder:research",
+      "stage": "V1.1",
+      "mode": "AFK",
+      "body_file": "tickets/dictionary-research.md",
+      "blocked_by": [],
+      "order": 2,
+      "issue_number": 25,
+      "url": "https://github.com/Coraia/EasySink/issues/25",
+      "database_id": 5773405893,
+      "state": "closed",
+      "resolution_url": "https://github.com/Coraia/EasySink/issues/25#issuecomment-6075401045"
+    },
+    {
+      "key": "assessment-research",
+      "title": "评估方法：如何可靠识别语境中的帮助需求",
+      "label": "wayfinder:research",
+      "stage": "V2",
+      "mode": "AFK",
+      "body_file": "tickets/assessment-research.md",
+      "blocked_by": [],
+      "order": 3,
+      "issue_number": 26,
+      "url": "https://github.com/Coraia/EasySink/issues/26",
+      "database_id": 5773406349,
+      "state": "closed",
+      "resolution_url": "https://github.com/Coraia/EasySink/issues/26#issuecomment-6075402386"
+    },
+    {
+      "key": "record-semantics",
+      "title": "词句记录：收藏、掌握与注释如何独立",
+      "label": "wayfinder:grilling",
+      "stage": "V1.1",
+      "mode": "HITL",
+      "body_file": "tickets/record-semantics.md",
+      "blocked_by": [],
+      "order": 4,
+      "issue_number": 27,
+      "url": "https://github.com/Coraia/EasySink/issues/27",
+      "database_id": 5773406782
+    },
+    {
+      "key": "dictionary-policy",
+      "title": "释义策略：基础词注与 AI 如何协作",
+      "label": "wayfinder:grilling",
+      "stage": "V1.1",
+      "mode": "HITL",
+      "body_file": "tickets/dictionary-policy.md",
+      "blocked_by": [
+        "dictionary-research",
+        "record-semantics"
+      ],
+      "order": 5,
+      "issue_number": 28,
+      "url": "https://github.com/Coraia/EasySink/issues/28",
+      "database_id": 5773407265
+    },
+    {
+      "key": "evaluation-gate",
+      "title": "V2 验收：如何同时衡量准确性与沉浸感",
+      "label": "wayfinder:grilling",
+      "stage": "V2",
+      "mode": "HITL",
+      "body_file": "tickets/evaluation-gate.md",
+      "blocked_by": [
+        "v1-gate",
+        "assessment-research"
+      ],
+      "order": 6,
+      "issue_number": 29,
+      "url": "https://github.com/Coraia/EasySink/issues/29",
+      "database_id": 5773407692
+    },
+    {
+      "key": "learning-evidence",
+      "title": "学习依据：V1.1 最少需要保留哪些事实",
+      "label": "wayfinder:grilling",
+      "stage": "V1.1 → V2",
+      "mode": "HITL",
+      "body_file": "tickets/learning-evidence.md",
+      "blocked_by": [
+        "record-semantics",
+        "evaluation-gate"
+      ],
+      "order": 7,
+      "issue_number": 30,
+      "url": "https://github.com/Coraia/EasySink/issues/30",
+      "database_id": 5773408117
+    },
+    {
+      "key": "reading-loop",
+      "title": "V1.1 原型：收藏、再遇见与回原文怎样连贯",
+      "label": "wayfinder:prototype",
+      "stage": "V1.1",
+      "mode": "HITL",
+      "body_file": "tickets/reading-loop.md",
+      "blocked_by": [
+        "record-semantics"
+      ],
+      "order": 8,
+      "issue_number": 31,
+      "url": "https://github.com/Coraia/EasySink/issues/31",
+      "database_id": 5773408600
+    },
+    {
+      "key": "adaptation",
+      "title": "V2 策略：何时调整辅助以及如何撤回",
+      "label": "wayfinder:grilling",
+      "stage": "V2",
+      "mode": "HITL",
+      "body_file": "tickets/adaptation.md",
+      "blocked_by": [
+        "dictionary-policy",
+        "learning-evidence"
+      ],
+      "order": 9,
+      "issue_number": 32,
+      "url": "https://github.com/Coraia/EasySink/issues/32",
+      "database_id": 5773408997
+    },
+    {
+      "key": "handoff",
+      "title": "阶段交接：先做哪些切片、凭什么进入下一阶段",
+      "label": "wayfinder:grilling",
+      "stage": "V1 → V2",
+      "mode": "HITL",
+      "body_file": "tickets/handoff.md",
+      "blocked_by": [
+        "reading-loop",
+        "adaptation",
+        "desktop-prototype"
+      ],
+      "order": 10,
+      "issue_number": 33,
+      "url": "https://github.com/Coraia/EasySink/issues/33",
+      "database_id": 5773409482
+    },
+    {
+      "key": "desktop-prototype",
+      "title": "V1 客户端原型：轻量分发能否保住阅读体验",
+      "label": "wayfinder:prototype",
+      "stage": "V1",
+      "mode": "HITL",
+      "body_file": "tickets/desktop-prototype.md",
+      "blocked_by": [
+        "v1-gate"
+      ],
+      "order": 11,
+      "issue_number": 34,
+      "url": "https://github.com/Coraia/EasySink/issues/34",
+      "database_id": 5775255936,
+      "state": "open"
+    }
+  ],
+  "approved_scope_questions": [
+    "Q1",
+    "Q2",
+    "Q3",
+    "Q4",
+    "Q5",
+    "Q6"
+  ],
+  "ticket_and_dependency_approval": true,
+  "publication_authorization": {
+    "date": "2026-10-09",
+    "source": "User: 可以发布",
+    "scope": "approved ten decision tickets and eleven native dependencies"
+  },
+  "published_on": "2026-10-09",
+  "verification_file": "outputs/wayfinder-v1-gate-20261009/final-publication-verification.json",
+  "research_dispatch": {
+    "status": "completed-reviewed",
+    "date": "2026-10-09",
+    "skill": "research",
+    "agents": [
+      {
+        "ticket_key": "dictionary-research",
+        "issue_number": 25,
+        "agent_id": "01a11f3a-7b29-71a1-8302-4a1da794adcc",
+        "branch": "research/reader-dictionary-20261009",
+        "report": "docs/66-dictionary-reuse-research.md",
+        "status": "completed-reviewed",
+        "commit": "7290ecc499e7f3930a06f270d6d095a4b87395b5",
+        "report_url": "https://github.com/Coraia/EasySink/blob/7290ecc499e7f3930a06f270d6d095a4b87395b5/docs/66-dictionary-reuse-research.md",
+        "resolution_url": "https://github.com/Coraia/EasySink/issues/25#issuecomment-6075401045"
+      },
+      {
+        "ticket_key": "assessment-research",
+        "issue_number": 26,
+        "agent_id": "01a11f3a-7b97-7f73-8dab-4c3dc61eae10",
+        "branch": "research/reader-assessment-20261009",
+        "report": "docs/67-contextual-assessment-research.md",
+        "status": "completed-reviewed",
+        "commit": "ce9e23bb5f784ff7ea3b374c30cd99fe3f5bf563",
+        "report_url": "https://github.com/Coraia/EasySink/blob/ce9e23bb5f784ff7ea3b374c30cd99fe3f5bf563/docs/67-contextual-assessment-research.md",
+        "resolution_url": "https://github.com/Coraia/EasySink/issues/26#issuecomment-6075402386"
+      }
+    ],
+    "verification_file": "outputs/wayfinder-v1-v2-publication-20261009/research-resolution-verification.json"
+  },
+  "publication_note_url": "https://github.com/Coraia/EasySink/issues/23#issuecomment-6075100556",
+  "scope_extension_authorization": {
+    "date": "2026-10-09",
+    "source": "用户：Q11、Q12接受建议；Q10更换英文扫描书并添加指定论文",
+    "scope": "one desktop prototype child and two dependencies; resolve V1 standards decision only"
+  }
+}

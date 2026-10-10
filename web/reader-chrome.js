@@ -1,3 +1,4 @@
+import { openReadingAI } from "./ai-setup-guard.js";
 import { $, e, local, toast } from "./core.js";
 
 const icons = {
@@ -165,6 +166,9 @@ export function installReaderChrome(r) {
         ev.target instanceof Element ? ev.target : ev.target.parentElement;
       const gesture = released;
       released = null;
+      if (r.aiSetupOpen) return;
+      const dismissedSelection = r.selectionDismissedByPointer;
+      r.selectionDismissedByPointer = false;
       // Undo belongs above the reader's dismiss surface and toolbar.
       if (target.closest("#toast")) return;
       if (location.search.includes("acceptance"))
@@ -178,6 +182,11 @@ export function installReaderChrome(r) {
           panel: r.panelId,
         });
       if (gesture?.moved && !target.closest("input,textarea,select")) {
+        consume(ev);
+        return;
+      }
+      if (dismissedSelection && !target.closest("button,a,input,textarea,select") &&
+          !onInk(target, ev.clientX, ev.clientY)) {
         consume(ev);
         return;
       }
@@ -237,6 +246,7 @@ export function installReaderChrome(r) {
     document,
     "keydown",
     (ev) => {
+      if (r.aiSetupOpen) return;
       if (ev.key === "Escape") {
         if (r.panelId) {
           r.dismissPanel();
@@ -385,8 +395,9 @@ export function installCoreReaderTools(r) {
     r.panel(
       "more",
       "阅读工具",
-      `<div id="more-plugin-tools" class="more-plugin-tools"></div><div id="more-book-actions"></div><nav class="more-links"><a href="#/ai">AI 与语音设置 ↗</a><a href="#/profile">阅读偏好 ↗</a><a href="#/labs">功能管理 ↗</a></nav>`,
+      `<div id="more-plugin-tools" class="more-plugin-tools"></div><div id="more-book-actions"></div><nav class="more-links"><button type="button" data-reading-ai>文本 AI 设置</button><a href="#/ai">语音设置 ↗</a><a href="#/profile">阅读偏好 ↗</a><a href="#/labs">功能管理 ↗</a></nav>`,
       (el, scope) => {
+        scope.on($("[data-reading-ai]", el), "click", () => openReadingAI(r));
         const extra = $("#reader-extra-tools"),
           book = $("#reader-book-actions");
         $("#more-plugin-tools", el).append(...extra.childNodes);

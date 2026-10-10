@@ -58,6 +58,30 @@ const ctx = {
     if (anchor) local.set(`jump:${doc_id}`, anchor);
     ctx.navigate(`#/read/${doc_id}`);
   },
+  commitReadingRange(previous, pages) {
+    if (ctx.reader !== previous || previous.scope.signal.aborted || !pages) return;
+    // Everything required to draw the destination was prepared before landing.
+    // Replace only after commit; never enter route()'s loading screen.
+    const painter = previous.pages.painter;
+    previous.rangeHandoff = true;
+    painter.handingOff = true;
+    previous.scope.dispose();
+    const scope = (ctx.scope = new Scope());
+    ctx.readStarted = performance.now();
+    const reader = new Reader(ctx, scope, pages.r.doc, {pages, painter});
+    // This committed page turn supersedes an older interrupted jump. Handoff
+    // skips normal jump restoration, so leaving it queued would move a later reopen.
+    local.remove(`jump:${reader.doc.id}`);
+    ctx.reader = reader;
+    history.pushState(null, "", `#/read/${reader.doc.id}`);
+    reader.mount().catch(error => {
+      if (error.name !== "AbortError" && !scope.signal.aborted)
+        reader.status("阅读工具暂未完成加载，正文已保留。请稍后重新打开。", {notice: true});
+    });
+    previous.pages.trackpad?.handoff?.(reader);
+    const root = $(".reader");
+    if (root) root.dataset.rangeTurns = JSON.stringify(ctx.rangeTurns || []);
+  },
 };
 const host = new PluginHost(ctx);
 ctx.host = host;
@@ -75,7 +99,7 @@ function cards(items) {
   return items
     .map((d, i) => {
       if (d.cardKey) return `<article class="book-card" data-card-key="${e(d.cardKey)}"><div class="book-cover" style="--cover:${palette[i % palette.length]}"><small>${e(d.coverLabel)}</small><div class="cover-title">${e(d.title)}</div></div><div class="book-info"><h3>${e(d.title)}</h3><div class="row"><span data-card-subtitle>${e(d.subtitle)}</span><span>·</span><span>${date(d.created_at)}</span></div><div data-card-status>${d.statusHTML || ""}</div><footer><a class="book-card-open" data-card-open href="${e(d.href)}" aria-label="${e(d.title)} · 打开"><span data-card-action>${e(d.action)}</span><span aria-hidden="true"> ↗</span></a><a class="book-card-status-link" href="${e(d.statusHref)}">处理详情</a></footer></div></article>`;
-      return `<a class="book-card" href="${d.href || "#/read/" + d.id}"><div class="book-cover" style="--cover:${palette[i % palette.length]}"><small>${e(d.coverLabel || "WISE READER / ARTICLE")}</small><div class="cover-title">${e(d.title)}</div></div><div class="book-info"><h3>${e(d.title)}</h3><div class="row"><span>${e(d.subtitle || `${d.word_count?.toLocaleString() || 0} 词`)}</span><span>·</span><span>${date(d.created_at)}</span></div><footer><span>${e(d.action || "打开阅读")}</span><span>↗</span></footer></div></a>`;
+      return `<a class="book-card" href="${d.href || "#/read/" + d.id}"><div class="book-cover" style="--cover:${palette[i % palette.length]}"><small>${e(d.coverLabel || "WISE READER / ARTICLE")}</small><div class="cover-title">${e(d.title)}</div></div><div class="book-info"><h3>${e(d.title)}</h3><div class="row"><span>${e(d.subtitle || `${d.word_count?.toLocaleString() || 0} 词`)}</span><span>·</span><span>${date(d.created_at)}</span></div>${d.readingChapter ? `<p class="meta">${e(d.readingChapter)}</p>` : ""}<footer><span>${e(d.action || "打开阅读")}</span><span>↗</span></footer></div></a>`;
     })
     .join("");
 }
@@ -152,12 +176,17 @@ async function renderHome(scope) {
     const bookCount = filter === "archived" ? 0 : view.collections.length;
     $("#shelf-count").textContent =
       `${bookCount} 本书 · ${items.length - bookCount} 篇内容`;
-    const search = $("#shelf-search").value.toLowerCase();
-    items = items.filter((d) => d.title.toLowerCase().includes(search));
+    const search = $("#shelf-search").value.trim().toLowerCase();
+    items = items.filter((d) => d.title.toLowerCase().includes(search) ||
+      d.chapters?.some(chapter => chapter.title.toLowerCase().includes(search)));
     if (filter === "recent") items = items.slice(0, 6);
     $("#article-grid").innerHTML =
       cards(items) ||
-      '<div class="empty"><h3>这里还没有内容</h3><p>添加一篇文章，或导入一本 EPUB，开始自己的阅读旅程。</p></div>';
+      (search
+        ? '<div class="empty"><h3>没有找到匹配的内容</h3><p>试试书名或章节标题；清空搜索即可查看完整书架。</p></div>'
+        : filter === "archived"
+          ? '<div class="empty"><h3>暂无归档内容</h3><p>已归档的阅读会出现在这里。</p></div>'
+          : '<div class="empty"><h3>这里还没有内容</h3><p>添加一篇文章，或导入一本 EPUB，开始自己的阅读旅程。</p></div>');
   };
   $("#article-grid").innerHTML =
     '<p class="muted" role="status">正在整理书架…</p>';

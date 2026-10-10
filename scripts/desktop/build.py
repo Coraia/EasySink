@@ -25,9 +25,12 @@ ROOT = Path(__file__).resolve().parents[2]
 PDF_PINS = {
     "pdfplumber": "0.11.10", "pdfminer-six": "20260107", "pypdfium2": "5.14.0",
     "pillow": "12.3.0", "charset-normalizer": "3.5.2", "cryptography": "50.0.2",
-    "cffi": "2.1.1", "pycparser": "3.0",
+    "cffi": "2.1.1", "pycparser": "3.0", "psutil": "7.2.2",
 }
-DIRECT = ("fastapi", "uvicorn", "httpx", "pydantic", "pydantic-settings", "python-multipart")
+DIRECT = ("fastapi", "uvicorn", "httpx", "pydantic", "pydantic-settings", "python-multipart", "markdown-it-py")
+SCRIPTS = ("scripts/pdf_lab_convert.py", "scripts/formula_recognize.py",
+           "scripts/setup_mineru_runtime.py", "scripts/desktop/backend.py",
+           "scripts/desktop/runtime.py", "scripts/desktop/prepare_ocr.py")
 
 
 def run(command, **kwargs):
@@ -46,6 +49,28 @@ def copy(source, destination):
     shutil.copyfile(source, destination)
 
 
+def source_files():
+    """Include untracked production modules/UI, but never data or experiments."""
+    for source in sorted((ROOT / "src").rglob("*.py")):
+        if "__pycache__" not in source.parts:
+            yield source
+    for source in sorted((ROOT / "web").rglob("*")):
+        relative = source.relative_to(ROOT / "web")
+        if relative.parts[0] == "prototypes" and relative.parts[:3] != ("prototypes", "pdf-lab", "vendor"):
+            continue
+        if any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
+            continue
+        if source.is_file():
+            yield source
+    yield from (ROOT / relative for relative in SCRIPTS)
+
+
+def source_hashes():
+    sources = [*source_files(), *(ROOT / "desktop").glob("*.swift"),
+               Path(__file__), ROOT / "scripts/desktop/dependencies.lock", ROOT / "uv.lock"]
+    return {str(p.relative_to(ROOT)): sha(p) for p in sorted(sources)}
+
+
 def resources(app):
     # Rebuild just these generated trees. Never glob/copy the repository root.
     app.mkdir(parents=True, exist_ok=True)
@@ -58,19 +83,8 @@ def resources(app):
                 if directory.is_dir() and not directory.is_symlink():
                     directory.chmod(0o755)
             shutil.rmtree(target)
-    for source in sorted((ROOT / "src").rglob("*.py")):
-        if "__pycache__" not in source.parts:
-            copy(source, app / source.relative_to(ROOT))
-    for source in sorted((ROOT / "web").rglob("*")):
-        relative = source.relative_to(ROOT / "web")
-        if relative.parts[0] == "prototypes" and relative.parts[:3] != ("prototypes", "pdf-lab", "vendor"):
-            continue
-        if any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
-            continue
-        if source.is_file():
-            copy(source, app / "web" / relative)
-    for relative in ("scripts/pdf_lab_convert.py", "scripts/desktop/backend.py"):
-        copy(ROOT / relative, app / relative)
+    for source in source_files():
+        copy(source, app / source.relative_to(ROOT))
     for name in ("stardict.db", "lemma.en.txt"):
         source, target = ROOT / "data" / name, app / "data" / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -199,6 +213,9 @@ def main():
     parser.add_argument("--refresh-app", action="store_true")
     parser.add_argument("--archive", action="store_true", help="Also produce a compressed distributable ZIP")
     args = parser.parse_args()
+    # The current canonical lock is authoritative even on a source-only refresh.
+    # Otherwise newly added runtime dependencies would silently remain absent.
+    args.dependency_lock = (args.dependency_lock or ROOT / "scripts/desktop/dependencies.lock").resolve()
     started = time.monotonic()
     if sys.platform != "darwin" or platform.machine() != "arm64":
         parser.error("This candidate build requires an Apple Silicon Mac.")
@@ -214,6 +231,8 @@ def main():
     marker = output / "desktop-build-inputs.json"
     if bundle.exists() and not (args.refresh_app and marker.exists()):
         parser.error("Output exists; --refresh-app reuses this builder's runtime/dictionary, or choose --output DIR")
+    frozen_sources = source_hashes()
+    requested_lock_hash = sha(args.dependency_lock)
     contents = bundle / "Contents"
     macos = contents / "MacOS"
     macos.mkdir(parents=True, exist_ok=True)
@@ -223,6 +242,8 @@ def main():
     for source in swift:
         destination = snapshot / source.name
         shutil.copyfile(source, destination)
+        if sha(destination) != frozen_sources[str(source.relative_to(ROOT))]:
+            raise RuntimeError(f"Swift source changed during snapshot: {source.name}; freeze and rebuild.")
         swift_inputs.append(destination)
     run(["xcrun", "swiftc", "-parse-as-library", "-O", "-target", "arm64-apple-macos13.0",
          "-module-name", "WiseReader", *swift_inputs, "-o", macos / "WiseReader",
@@ -241,6 +262,13 @@ def main():
         original = json.loads(marker.read_text())
         info, runtime = original["runtime"], Path(original["runtime_source"])
         lock = output / "desktop-dependencies.lock"
+        if not lock.exists() or sha(lock) != requested_lock_hash:
+            # A source refresh can introduce parser/runtime dependencies too.
+            # Only this generated runtime becomes writable; seal it again below.
+            for path in [python_root, *python_root.rglob("*")]:
+                if not path.is_symlink():
+                    path.chmod(path.stat().st_mode | 0o200)
+            lock = dependencies(uv, python_root / "bin/python3", output, args.dependency_lock)
     else:
         runtime, info = runtime_source(uv, args.runtime)
         shutil.copytree(runtime / "lib", python_root / "lib",
@@ -254,16 +282,22 @@ def main():
             shutil.copytree(runtime / "share", python_root / "share", symlinks=True)
         lock = dependencies(uv, python_root / "bin/python3", output, args.dependency_lock)
     resources(app)
+    for relative, digest in frozen_sources.items():
+        packaged = app / relative
+        if relative.startswith(("src/", "web/", "scripts/")) and relative not in {
+                "scripts/desktop/build.py", "scripts/desktop/dependencies.lock"}:
+            if not packaged.is_file() or sha(packaged) != digest:
+                raise RuntimeError(f"Packaged source changed during build: {relative}; freeze and rebuild.")
     audit_native_runtime(python_root, output)
     readonly_resources(contents / "Resources")
     inputs = {"runtime": info, "runtime_source": str(runtime), "runtime_build": (python_root / "BUILD").read_text().strip(),
               "dependency_lock_sha256": sha(lock), "swift_sources": {"desktop/" + p.name: sha(p) for p in swift_inputs},
-              "builder_sha256": sha(Path(__file__)), "uv_lock_sha256": sha(ROOT / "uv.lock")}
+              "builder_sha256": sha(Path(__file__)), "uv_lock_sha256": sha(ROOT / "uv.lock"),
+              "source_sha256": frozen_sources}
     marker.write_text(json.dumps(inputs, indent=2) + "\n")
     # Native executable gets an ad-hoc local signature. Full app is an unsigned
     # development candidate: no notarization, hardened runtime, or Gatekeeper claim.
     run(["codesign", "--force", "--sign", "-", macos / "WiseReader"])
-    print(f"APP READY: {bundle}", flush=True)
     files = inventory(bundle)
     costs = {"unpacked_bytes": sum(f.get("bytes", 0) for f in files),
              "dictionary_bytes": sum(f.get("bytes", 0) for f in files if "/app/data/" in f["path"]),
@@ -277,10 +311,13 @@ def main():
         run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", bundle, archive])
         costs.update(archive_bytes=archive.stat().st_size, archive_sha256=sha(archive))
     costs["total_build_elapsed_seconds"] = time.monotonic() - started
+    if source_hashes() != frozen_sources or sha(args.dependency_lock) != requested_lock_hash:
+        raise RuntimeError("Source/dependency inputs changed during build. This is not a frozen candidate; rebuild.")
     manifest = output / "desktop-manifest.json"
     manifest.write_text(json.dumps({"schema_version": 1, "candidate": True, "notarized": False,
         "inputs": inputs, "costs": costs, "files": files}, indent=2) + "\n")
     (output / "desktop-manifest.sha256").write_text(sha(manifest) + "  desktop-manifest.json\n")
+    print(f"APP READY: {bundle}", flush=True)
     print(json.dumps({"manifest": str(manifest), "costs": costs}, indent=2), flush=True)
 
 

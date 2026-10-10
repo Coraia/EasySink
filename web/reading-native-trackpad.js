@@ -32,7 +32,7 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
   }
   function inPaper(target) {
     return target instanceof Element && Boolean(target.closest('#reading-stage')) &&
-      !target.closest('a,input,textarea,select,[contenteditable],#reading-selection,#translation-pane') &&
+      !target.closest('a,input,textarea,select,[contenteditable],#reading-selection,#translation-pane,.inline-grammar') &&
       (!target.closest('button') || Boolean(target.closest('.reading-edge-grip')));
   }
   function gate() {
@@ -65,6 +65,7 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
     if (!pages || bound.has(pages)) return;
     bound.add(pages);
     pages.trackpad = { cancel(reason) {
+      if (reason === 'route-leave' && reader.rangeHandoff) return;
       if (reason === 'settled') {
         if (flight?.pages === pages) {
           counts.landings++; log('landed', { id: flight.id }); flight = null;
@@ -75,8 +76,18 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
       } else if (active?.pages === pages || flight?.pages === pages || pending.some(g => g.pages === pages)) {
         cancel(reason, false);
       }
+    }, handoff(nextReader) {
+      bind(nextReader);
+      for (const g of new Set([...pending, active, flight].filter(Boolean))) {
+        if (g.pages === pages) g.pages = nextReader.pages;
+      }
+      log('range-handoff', { from: reader.doc.id, to: nextReader.doc.id, queued: pending.length });
+      gate();
     } };
-    reader.scope.cleanup(() => { cancel('route-leave'); over = false; gate(); });
+    reader.scope.cleanup(() => {
+      if (reader.rangeHandoff) return;
+      cancel('route-leave'); over = false; gate();
+    });
     publish(); gate();
   }
   const removeHook = ctx.hook('read', bind);

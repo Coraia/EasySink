@@ -58,13 +58,125 @@ def send(connection, value):
     connection.send_bytes(data)
 
 
+def recover_detector_gaps(image, result, engine):
+    """Retry bounded source gaps where a connected drop cap can merge text rows.
+
+ Primary OCR is retained by the caller. Only actual source pixels and model
+ outputs are used; the page number and expected words are not inputs.
+ """
+    import cv2, numpy as np
+    from PIL import Image
+    if result.boxes is None or not 1 <= len(result.boxes) <= 240:
+        return (result, [])
+    boxes = result.boxes.tolist()
+    texts = list(result.txts)
+    scores = list(result.scores)
+    rows = []
+    for i, (b, t, s) in enumerate(zip(boxes, texts, scores)):
+        x0, y0 = np.min(b, axis=0)
+        x1, y1 = np.max(b, axis=0)
+        if s >= 0.95 and len(t) >= 40 and (len(t.split()) >= 7) and (x1 - x0 > image.width * 0.65) and (y1 - y0 < image.height * 0.04):
+            rows.append((float(y0), float(y1), float(x0), float(x1), i))
+    trace = []
+    additions = []
+    for row in sorted(rows):
+        if len(trace) >= 2:
+            break
+        y0, y1, x0, x1, i = row
+        h = y1 - y0
+        following = [r for r in rows if y0 < r[0] < y1 + h and abs(r[2] - x0) < h]
+        if not following:
+            continue
+        previous = max([max((p[1] for p in b)) for j, b in enumerate(boxes) if j != i and min((p[1] for p in b)) < y0 - 0.5 * h] or [0])
+        if y0 - previous < 2 * h:
+            continue
+        top = int(max(previous, y0 - 5 * h))
+        bottom = int(min(image.height, y1))
+        left = max(0, int(x0 - h))
+        right = min(image.width, int(x1 + h))
+        crop = image.crop((left, top, right, bottom))
+        gray = cv2.cvtColor(np.asarray(crop), cv2.COLOR_RGB2GRAY)
+        _, ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        count, labels, stats, centers = cv2.connectedComponentsWithStats(ink)
+        candidates = []
+        for k, (cx, cy, cw, ch, area) in enumerate(stats[1:], 1):
+            if 1.25 * h < ch < 3 * h and 0.25 * h < cw < 2 * h and (x0 - h < left + cx < x0 + 1.2 * h) and (top + cy < y0 - 0.5 * h):
+                candidates.append((k, int(cx), int(cy), int(cw), int(ch)))
+        evidence = {'gap': [left, top, right, bottom], 'line_height': h, 'components': candidates}
+        trace.append(evidence)
+        if len(candidates) != 1:
+            crop.close()
+            continue
+        k, cx, cy, cw, ch = candidates[0]
+        cap_image = crop.crop((max(0, cx - 3), max(0, cy - 3), min(crop.width, cx + cw + 3), min(crop.height, cy + ch + 3)))
+        try:
+            cap = engine(cap_image, use_det=False)
+        finally:
+            engine.use_det = True
+            cap_image.close()
+        evidence['cap_texts'] = list(cap.txts or [])
+        evidence['cap_scores'] = [float(s) for s in cap.scores or []]
+        if len(cap.txts or []) != 1 or len(cap.txts[0]) != 1 or (not cap.txts[0].isascii()) or (not cap.txts[0].isupper()) or (cap.scores[0] < 0.98):
+            crop.close()
+            continue
+        pixels = np.array(crop)
+        pixels[labels == k] = np.median(pixels[ink == 0], axis=0).astype(np.uint8)
+        masked = Image.fromarray(pixels)
+        retry = engine(masked, use_det=True)
+        masked.close()
+        crop.close()
+        evidence.update(texts=list(retry.txts or []), scores=[float(s) for s in retry.scores or []], boxes=None if retry.boxes is None else retry.boxes.tolist())
+        accepted = []
+        for b, t, s in zip(retry.boxes.tolist() if retry.boxes is not None else [], retry.txts or [], retry.scores or []):
+            b = [[p[0] + left, p[1] + top] for p in b]
+            bx0, by0 = np.min(b, axis=0)
+            bx1, by1 = np.max(b, axis=0)
+            if s < 0.95 or len(t) < 30 or by1 > y0 + 0.3 * h:
+                continue
+            duplicate = False
+            for old in boxes + [a[0] for a in additions]:
+                ox0, oy0 = np.min(old, axis=0)
+                ox1, oy1 = np.max(old, axis=0)
+                overlap = max(0, min(bx1, ox1) - max(bx0, ox0)) * max(0, min(by1, oy1) - max(by0, oy0))
+                if overlap > 0.4 * min((bx1 - bx0) * (by1 - by0), (ox1 - ox0) * (oy1 - oy0)):
+                    duplicate = True
+                    break
+            if not duplicate:
+                accepted.append((b, t, float(s)))
+        if not accepted:
+            continue
+        first = min(accepted, key=lambda item: min((p[1] for p in item[0])))
+        first_left = min((p[0] for p in first[0]))
+        first_top = min((p[1] for p in first[0]))
+        if not first[1][:1].islower() or abs(first_left - (left + cx + cw)) > 0.6 * h or abs(first_top - (top + cy)) > 0.6 * h:
+            continue
+        evidence['accepted_lines'] = len(accepted)
+        additions.extend(accepted)
+        additions.append(([[left + cx, top + cy], [left + cx + cw, top + cy], [left + cx + cw, top + cy + ch], [left + cx, top + cy + ch]], cap.txts[0], float(cap.scores[0])))
+    engine.use_det = True
+    if not additions:
+        return (result, trace)
+    for b, t, s in additions:
+        boxes.append(b)
+        texts.append(t)
+        scores.append(s)
+    indices = sorted(range(len(boxes)), key=lambda i: (min((p[1] for p in boxes[i])), min((p[0] for p in boxes[i]))))
+    result.boxes = np.array([boxes[i] for i in indices])
+    result.txts = tuple((texts[i] for i in indices))
+    result.scores = tuple((scores[i] for i in indices))
+    return (result, trace)
+
+
 def recognize(args, doc, engine, number, attempt, source_sha):
     started = time.perf_counter()
     page = doc[number - 1]
     bitmap = None
     try:
         width, height = page.get_size()
-        scale = min(1.0, args.max_side / max(width, height))
+        # PDF geometry is in points, not pixels. Capping at 1 silently rendered
+        # small-format scanned books at 72 DPI and lost ordinary text around
+        # drop caps even when max_side allowed much more source detail.
+        scale = args.max_side / max(width, height)
         bitmap = page.render(scale=scale)
         image = bitmap.to_pil().convert('RGB')
         pixels = image.size
@@ -77,6 +189,10 @@ def recognize(args, doc, engine, number, attempt, source_sha):
     rendered = time.perf_counter()
     try:
         result = engine(image)
+        primary = {'boxes': None if result.boxes is None else result.boxes.tolist(),
+                   'texts': list(result.txts or []),
+                   'scores': [float(s) for s in (result.scores or [])]}
+        result, gap_retries = recover_detector_gaps(image, result, engine)
     finally:
         image.close()
     recognized = time.perf_counter()
@@ -84,7 +200,9 @@ def recognize(args, doc, engine, number, attempt, source_sha):
     texts = [] if result.txts is None else list(result.txts)
     scores = [] if result.scores is None else [float(s) for s in result.scores]
     raw = {'page_number': number, 'pixel_dimensions': pixels,
-           'original_dimensions': [width, height], 'boxes': boxes,
+           'render_scale': scale, 'render_policy': 'long_edge_max_side_v1',
+           'original_dimensions': [width, height], 'primary': primary,
+           'detector_gap_retries': gap_retries, 'gap_retry_policy': 'connected_initial_v1', 'boxes': boxes,
            'texts': texts, 'scores': scores, 'engine_stage_seconds': list(result.elapse_list or [])}
     # Keep the first response even if cardinality/geometry validation fails.
     attempt_path = args.output/'raw'/f'p{number:06d}-attempt{attempt}.json'

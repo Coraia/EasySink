@@ -16,6 +16,9 @@ from wise_reader.pdf_lab.worker import LocalWorkers
 from wise_reader.store import _now
 
 from .representation import build_representation
+from .formulas import FormulaService
+from .enhancements import EnhancementService
+from .enhancement_publication import prepare_page as prepare_enhancement_page
 from .uploads import MAX_PAGES, error, receive_original
 
 log = logging.getLogger(__name__)
@@ -74,6 +77,8 @@ class PDFModule:
                 doc_id INTEGER PRIMARY KEY, was_archived INTEGER NOT NULL
             );
         """)
+        self.formulas = FormulaService(self)
+        self.enhancements = EnhancementService(self)
 
     def enabled(self):
         return self.store.is_plugin_enabled("pdf", True)
@@ -107,6 +112,8 @@ class PDFModule:
         if self.started:
             return
         self.started = True
+        await self.formulas.start()
+        await self.enhancements.start()
         await self.workers.recover()
         for source in self.originals.books():
             mapping = await asyncio.to_thread(self._ensure_book, source)
@@ -125,6 +132,9 @@ class PDFModule:
                     ranges[((number - 1) // RANGE_PAGES) * RANGE_PAGES + 1] = task["id"]
             for number, task_id in ranges.items():
                 await self.publish_range(task_id, number, retained=True)
+            self.enhancements.pages_available(mapping['book_id'], [
+                (row['page_number'], row['task_id']) for row in self.store.query(
+                    'SELECT page_number,task_id FROM wr_pdf_page WHERE book_id=?', (mapping['book_id'],))])
         self.watcher = asyncio.create_task(self.watch_processing())
 
     def seed_accepted_pages(self, mapping, source):
@@ -145,6 +155,8 @@ class PDFModule:
         if self.watcher:
             self.watcher.cancel()
             await asyncio.gather(self.watcher, return_exceptions=True)
+        await self.formulas.close()
+        await self.enhancements.close()
         await self.workers.close()
 
     async def watch_processing(self):
@@ -155,6 +167,7 @@ class PDFModule:
                 await self.processing_changed(enabled)
             if enabled:
                 self._fill_bridge_repairs()
+                await self.enhancements.tick()
             if enabled and self.pending_repairs:
                 key = next(iter(self.pending_repairs))
                 item = self.pending_repairs[key]
@@ -182,6 +195,8 @@ class PDFModule:
             if not enabled:
                 await asyncio.to_thread(self.store.execute,
                     "UPDATE wr_pdf_book SET generation=generation+1 WHERE lifecycle='active'")
+                await self.formulas.processing_changed(False)
+                await self.enhancements.processing_changed(False)
                 for source in await asyncio.to_thread(self.originals.books):
                     await self.workers.pause_book(source["id"], "processing_disabled")
 
@@ -258,7 +273,8 @@ class PDFModule:
             "SELECT book_id FROM wr_pdf_book WHERE lifecycle='recycled' ORDER BY book_id DESC")]
 
     async def capabilities(self):
-        payload = await self.workers.capabilities()
+        # This endpoint is the import dialog's explicit status/refresh boundary.
+        payload = await self.workers.capabilities(fresh=True)
         return {**payload, "processing_enabled": self.enabled(), "cloud_enabled": False,
                 "supported_actions": ["convert", "pause", "resume", "cancel", "recognize"] if self.enabled() else ["pause", "cancel"],
                 "supports_region": False, "reading_range_pages": RANGE_PAGES}
@@ -266,7 +282,7 @@ class PDFModule:
     async def import_file(self, file, engine="auto"):
         # Selecting a named location is the user's authorization for this file.
         # The default remains this computer; configuring a host never opts in.
-        if engine not in {"auto", "digital", "docling", "omarchy"}:
+        if engine not in {"auto", "digital", "docling", "omarchy", "mineru_source"}:
             await file.close()
             raise error(422, "unsupported_engine", "Choose a supported PDF processing location.")
         if not self.enabled():
@@ -274,7 +290,8 @@ class PDFModule:
             raise error(409, "processing_disabled", "PDF processing is disabled; retained books remain readable.")
         began = time.monotonic()
         try:
-            temporary, title, digest, size, count = await receive_original(file, self.originals.root)
+            temporary, title, digest, size, count = await receive_original(
+                file, self.originals.root, reclaim=self.engine._source_cache.reclaim)
         except OSError as exc:
             raise error(507 if exc.errno == 28 else 500, "storage_failed", "Local PDF receipt failed.")
         try:
@@ -385,7 +402,8 @@ class PDFModule:
         for page in results[candidate["id"]]["pages"]:
             number = page["page_number"]
             ledger = next((r for r in accepted if r["page_number"] == number), None)
-            if ledger and tasks[ledger["task_id"]]["created_at"] > candidate["created_at"]:
+            if ledger and (self.enhancements.task_intent_time(tasks[ledger["task_id"]])
+                           > self.enhancements.task_intent_time(candidate)):
                 continue  # resumed base work cannot replace a newer localized result
             if (page["blocks"] or page["text"].strip()) and page.get("quality_state") != "rejected":
                 pages[number] = page
@@ -395,16 +413,19 @@ class PDFModule:
         prefix = f"/api/pdf-lab/books/{source['id']}/"
         for page in result["pages"]:
             for block in page["blocks"]:
-                asset = block.get("asset_url")
-                if asset:
-                    if not asset.startswith(prefix):
-                        raise ValueError("Published resource does not belong to this original.")
-                    block["asset_url"] = f"/api/pdf/books/{mapping['book_id']}/" + asset[len(prefix):]
+                # Inline formulas are registered task assets just like figures.
+                # Rewrite only the declared resources, never arbitrary strings.
+                for item in [block, *block.get("inline_objects", [])]:
+                    asset = item.get("asset_url")
+                    if asset:
+                        if not asset.startswith(prefix):
+                            raise ValueError("Published resource does not belong to this original.")
+                        item["asset_url"] = f"/api/pdf/books/{mapping['book_id']}/" + asset[len(prefix):]
         text, blocks, revision = build_representation(result["pages"], mapping["book_id"], source["file_sha256"])
         return text, blocks, revision, [(p["page_number"], p["conversion_task_id"]) for p in result["pages"]
             if (p["blocks"] or p["text"].strip()) and p.get("quality_state") != "rejected"]
 
-    async def publish_range(self, task_id, page_number, retained=False, *, expected_generation=None):
+    async def publish_range(self, task_id, page_number, retained=False, *, expected_generation=None, publication_guard=None):
         """Return done/deferred/stale so queued repairs cannot be silently lost."""
         async with self.bridge_lock:
             task = self.originals.task(task_id)
@@ -417,6 +438,18 @@ class PDFModule:
             allowed = {"running", "completed", "partial"} | ({"paused"} if retained else set())
             if not epoch or epoch["generation"] != mapping["generation"] or not self.enabled():
                 return 'stale'
+            if task["engine"] == "external_vision":
+                # Recovery/reconciliation must honor the same retained authorization
+                # as immediate publication, including cancelled or superseded results.
+                job_id = (task.get("metrics") or {}).get("enhancement_job_id")
+                supplied_guard = publication_guard
+                def enhancement_guard():
+                    return bool(job_id and self.enhancements.publication_allowed(
+                        {"id": job_id, "generation": epoch["generation"]})
+                        and (supplied_guard is None or supplied_guard()))
+                publication_guard = enhancement_guard
+                if not publication_guard():
+                    return 'stale'
             if task['state'] in {'queued', 'preparing'}:
                 return 'deferred'
             if task['state'] not in allowed:
@@ -431,15 +464,17 @@ class PDFModule:
             old = self.store.query_one("SELECT * FROM wr_pdf_range WHERE book_id=? AND start_page=?", (mapping["book_id"], start))
             if old and old["revision"] == revision:
                 self.clear_bridge_failure(mapping["book_id"], task_id, start)
+                self.enhancements.pages_available(mapping['book_id'], accepted)
                 return 'done'
             title = self.store.query_one("SELECT title FROM wr_book WHERE id=?", (mapping["book_id"],))["title"]
             prepared = await asyncio.to_thread(self.engine.prepare_import, f"{title} · 原页 {start}–{end}", text, blocks)
             prepared["version"] = revision
             anchors = self.store.query("SELECT * FROM wr_anchor WHERE doc_id=?", (old["doc_id"],)) if old else []
             states = await asyncio.to_thread(self.anchor_states, anchors, blocks, revision)
-            committed = await asyncio.to_thread(self._commit_range, mapping, task_id, prepared, start, end, accepted, states, retained)
+            committed = await asyncio.to_thread(self._commit_range, mapping, task_id, prepared, start, end, accepted, states, retained, publication_guard)
             if committed:
                 self.clear_bridge_failure(mapping["book_id"], task_id, start)
+                self.enhancements.pages_available(mapping['book_id'], accepted)
                 return 'done'
             return 'deferred'  # recheck lifecycle after a concurrent pause/resume
 
@@ -471,8 +506,10 @@ class PDFModule:
                            "mapped" if reliable else "uncertain"))
         return states
 
-    def _commit_range(self, expected, task_id, prepared, start, end, accepted, states, retained):
+    def _commit_range(self, expected, task_id, prepared, start, end, accepted, states, retained, publication_guard=None):
         with self.store.transaction():
+            if publication_guard is not None and not publication_guard():
+                return
             current = self.mapping(expected["book_id"])
             task = self.originals.task(task_id)
             epoch = self.store.query_one("SELECT * FROM wr_pdf_task_epoch WHERE task_id=?", (task_id,))
@@ -508,6 +545,44 @@ class PDFModule:
             for state in states:
                 self.store.execute("INSERT OR REPLACE INTO wr_pdf_anchor_status VALUES(?,?,?,?,?)", state)
             return True
+
+    async def apply_enhancement(self, job, page):
+        """Called under the service's control lock; never expand the source scope."""
+        def allowed():
+            mapping = self.mapping(job["book_id"])
+            return bool(mapping and mapping["lifecycle"] == "active"
+                and mapping["source_sha256"] == job["source_sha256"]
+                and mapping["generation"] == job["generation"]
+                and self.enabled() and not self.closing
+                and self.enhancements.publication_allowed(job))
+        if not allowed():
+            return "stale"
+        preparation = asyncio.create_task(asyncio.to_thread(prepare_enhancement_page, self, job, page))
+        try:
+            task = await asyncio.shield(preparation)
+        except asyncio.CancelledError:
+            # The preparation thread cannot be cancelled. Join it before
+            # retiring its task so it cannot leave a late running record.
+            task = await preparation
+            if task is not None:
+                self.originals.update(task['id'], state='cancelled')
+            raise
+        if task is None:
+            return "deferred"
+        if not allowed():
+            self.originals.update(task["id"], state="cancelled")
+            return "stale"
+        try:
+            self._bind_task(self.mapping(job["book_id"]), task)
+            self.originals.update(task["id"], state="running")
+            published = await asyncio.to_thread(self.workers.publish, task)
+            self.originals.update(task["id"], state="completed", metrics={**published["metrics"], "enhancement_job_id": job["id"]})
+            return await self.publish_range(task["id"], page["page_number"],
+                expected_generation=job["generation"], publication_guard=allowed)
+        except BaseException as exc:
+            self.originals.update(task['id'], state='cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed',
+                error={'code': 'enhancement_publication_failed', 'message': 'Publication did not complete; retained material remains available.'})
+            raise
 
     async def operate(self, book_id, action, engine="auto", start_page=None, end_page=None, region=None):
         async with self.control_lock:
@@ -557,6 +632,7 @@ class PDFModule:
                 if failure:
                     raise error(409, failure["code"], failure["message"])
             elif action == "cancel":
+                await self.enhancements.cancel_book(book_id)
                 self.store.execute("UPDATE wr_pdf_book SET generation=generation+1 WHERE book_id=?", (book_id,))
                 task = await self.workers.cancel(task)
             else:
@@ -588,5 +664,7 @@ class PDFModule:
                         if not row["was_archived"]:
                             self.store.execute("DELETE FROM wr_archive WHERE doc_id=?", (row["doc_id"],))
                         self.store.execute("DELETE FROM wr_pdf_archive_hold WHERE doc_id=?", (row["doc_id"],))
+            await self.formulas.cancel_book(book_id)
+            await self.enhancements.cancel_book(book_id)
             await self.workers.pause_book(source["id"], "book_recycled" if action == "recycle" else "book_restored")
             return self.book_payload(book_id)

@@ -1,3 +1,4 @@
+import { linkedRanges, rangeAnchor } from "../source-selection.js";
 import { $, $$, e } from "../core.js";
 
 export function install(ctx) {
@@ -57,7 +58,7 @@ export function install(ctx) {
       const b = ev.target.closest("[data-pair]");
       if (b) {
         const value = result, pair = +b.dataset.pair, token = ++navigation;
-        const restored = await r.restore({ ...value.anchor, ...value.payload.segments[pair] }, {mark: false});
+        const restored = await r.restore(rangeAnchor(value.anchor, value.payload.segments[pair]), {mark: false});
         if (!restored || r.scope.signal.aborted || result !== value || token !== navigation) return;
         locked = pair;
         highlight(pair);
@@ -88,14 +89,13 @@ export function install(ctx) {
       const word = ev.target.closest("[data-source-start]");
       if (
         !word ||
-        !result ||
-        word.dataset.sourceBlock !== result.anchor.block_id
+        !result
       )
         return;
       const i = result.payload.segments.findIndex(
-        (v) =>
-          +word.dataset.sourceStart < v.end &&
-          +word.dataset.sourceEnd > v.start,
+        (v) => linkedRanges(result.anchor, [v]).some(part =>
+          word.dataset.sourceBlock === part.block_id &&
+          +word.dataset.sourceStart < part.end && +word.dataset.sourceEnd > part.start),
       );
       if (i >= 0) highlight(i);
     });

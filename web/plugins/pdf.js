@@ -2,6 +2,9 @@ import { $, $$, Scope, e, local, toast } from "../core.js";
 import { imageAnchor } from "./notes.js?v=20261008-pdf";
 import { PDFOutline } from "./pdf-outline.js?v=20261008-outline";
 import { pdfFailedPageNotice, pdfFallbackPageNotice, pdfImportProgress } from "./pdf-import-progress.js";
+import { formulaDetails, mountFormulaDetails, placeFormulaPanel } from "../pdf-formula.js";
+import { attachRegionPicker } from "../pdf-region-picker.js";
+import { mountPDFEnhancement } from "../pdf-enhancement.js";
 
 const PDFJS = new URL(
   "../prototypes/pdf-lab/vendor/pdfjs-6.4.299/",
@@ -37,6 +40,7 @@ async function pdfApi(path, { signal, method = "GET", body } = {}) {
             `PDF 服务暂不可用（${response.status}）。`,
     );
     error.status = response.status;
+    error.code = detail?.code;
     throw error;
   }
   if (!data || typeof data !== "object")
@@ -131,7 +135,7 @@ function adaptersOf(caps) {
 }
 function processingLocation(engine) {
   if (engine === "omarchy") return "你的 Omarchy";
-  if (["auto", "digital", "docling"].includes(engine)) return "当前电脑";
+  if (["auto", "digital", "docling", "mineru_source"].includes(engine)) return "当前电脑";
   return "位置未确认";
 }
 function taskProcessing(task, caps) {
@@ -197,7 +201,7 @@ function processingChoices(caps, capabilityError = "") {
           : `${processingLocation(item.id)} · ${item.label || item.id}`,
     // A new, unknown adapter must not silently become an external destination.
     available:
-      ["auto", "digital", "docling", "omarchy"].includes(item.id) &&
+      ["auto", "digital", "docling", "mineru_source", "omarchy"].includes(item.id) &&
       item.available === true,
     missing_reason:
       capabilityError ||
@@ -212,12 +216,9 @@ function processingPicker(caps, capabilityError = "", ranges = false) {
   const options = choices.map((item) =>
     `<option value="${e(item.id)}" ${item.id === "auto" ? "selected" : ""} ${item.available && (!ranges || supportsPageRanges(item)) ? "" : "disabled"}>${e(item.label)}${ranges && !supportsPageRanges(item) ? "（仅支持整书）" : item.available ? "" : "（不可用）"}</option>`,
   ).join("");
-  const unavailable = choices.filter((item) => !item.available).map((item) =>
-    `<p class="meta">${e(item.label)}：${e(item.missing_reason)}</p>`,
-  ).join("");
   if (ranges)
-    return `<label>原页识别位置 <select data-pdf-range-engine>${options}</select></label><p class="meta">Omarchy 当前仅支持整书处理，请使用上方整书入口。</p>`;
-  return `<label>整书处理位置 <select data-pdf-engine>${options}</select></label><p class="meta" data-pdf-engine-note></p>${unavailable}<p class="meta" data-pdf-resume-note></p>`;
+    return `<label>原页识别位置 <select data-pdf-range-engine>${options}</select></label><p class="meta" data-pdf-range-engine-note></p><p class="meta">Omarchy 当前仅支持整书处理，请使用上方整书入口。</p>`;
+  return `<label>整书处理位置 <select data-pdf-engine>${options}</select></label><p class="meta" data-pdf-engine-note></p><p class="meta" data-pdf-resume-note></p>`;
 }
 function updateProcessingControls(controls, pdf, task, caps) {
   if (!controls) return;
@@ -233,14 +234,21 @@ function updateProcessingControls(controls, pdf, task, caps) {
     originalRangeAllowed = supportsPageRanges(original) || wholeBookTask(task, pdf);
   for (const input of $$("select,input", controls))
     input.disabled = pending || !canProcess;
-  const note = $("[data-pdf-engine-note]", controls);
-  if (note)
-    note.textContent =
-      selected === "omarchy"
-        ? "在你的 Omarchy 上识别整书，无付费 API。"
-        : processingLocation(selected) === "当前电脑"
-          ? "新任务在当前电脑处理。"
-          : "此处理位置尚未确认。";
+  for (const [selector, item] of [["[data-pdf-engine-note]", choice], ["[data-pdf-range-engine-note]", rangeChoice]]) {
+    const note = $(selector, controls);
+    if (!note) continue;
+    note.textContent = !item?.available
+      ? `所选处理方式暂不可用：${item?.missing_reason || "处理能力尚未确认，请重新打开此面板。"}`
+      : item.id === "auto"
+        ? `自动模式在当前电脑提取文字层；${adaptersOf(caps).find((adapter) => adapter.id === "docling")?.available ? "需要识别的页面使用 Docling。" : "扫描页和无法提取的部分保留原图。"}也可单独选择“原式优先”或“你的 Omarchy”（以可用状态为准）。`
+        : item.id === "mineru_source"
+          ? "在当前电脑使用原式优先识别；公式和复杂表格保留原图，公式可按需识别。"
+          : item.id === "omarchy"
+            ? "在你的 Omarchy 上识别整书，无付费 API。"
+            : item.id === "digital"
+              ? "在当前电脑提取文字层，无法提取的部分保留原图。"
+              : "在当前电脑使用 Docling 识别阅读内容。";
+  }
   const resumeNote = $("[data-pdf-resume-note]", controls);
   if (resumeNote)
     resumeNote.textContent = resumableStates.has(task.state)
@@ -307,7 +315,57 @@ class OriginalViewer {
     dialog.setAttribute("aria-label", "PDF 原版核对");
     dialog.innerHTML = `<div class="pdf-original-head"><button type="button" data-pdf-return class="text-button">← 回到阅读</button><span>PDF 原版核对 · ${e(this.title)}</span><button type="button" data-pdf-close class="icon-button" aria-label="关闭原版">×</button></div><div class="pdf-original-controls"><form data-pdf-page-form><label>PDF 原页 <input type="number" min="1" value="${this.pageNumber}" data-pdf-page aria-label="跳转 PDF 原页"></label><span data-pdf-total>/ —</span><button>前往</button></form><div class="row"><label>缩放 <select data-pdf-zoom aria-label="原版缩放"><option value="1">适合宽度</option><option value=".75">75%</option><option value="1.25">125%</option><option value="1.5">150%</option><option value="2">200%</option></select></label><button type="button" data-pdf-rotate title="顺时针旋转" aria-label="顺时针旋转">↻</button></div></div><p data-pdf-location class="meta" role="status">正在显示原页…</p><div class="pdf-original-scroll" tabindex="0"><p data-pdf-render-state class="muted" role="status">正在读取原件…</p><div class="pdf-original-sheet" hidden></div></div>`;
     document.body.append(dialog);
+    const regionControls = document.createElement("div");
+    regionControls.className = "pdf-region-controls";
+    regionControls.innerHTML = '<button type="button" data-pdf-region disabled>框选区域</button><button type="button" data-pdf-enhance disabled>识别本页</button>';
+    $(".pdf-original-controls", dialog).append(regionControls);
+    const enhanceHost = document.createElement("section");
+    enhanceHost.className = "pdf-enhancement-host";
+    enhanceHost.setAttribute("aria-label", "局部识别增强");
+    $(".pdf-original-controls", dialog).after(enhanceHost);
+    this.scope.on($("[data-pdf-region]", dialog), "click", () => {
+      if (!this.regionPicker) return;
+      this.enhancementScope?.dispose(); enhanceHost.replaceChildren();
+      this.selectedRegion = null;
+      this.regionPicker.activate();
+      $("[data-pdf-location]", dialog).textContent = "在原页上拖动框选需要识别的区域；Esc 取消框选。";
+      $("[data-pdf-enhance]", dialog).disabled = true;
+    });
+    this.scope.on(dialog, "cancel", (event) => {
+      if (!this.regionPicker?.active) return;
+      event.preventDefault(); this.regionPicker.clear();
+    });
+    this.scope.on($("[data-pdf-enhance]", dialog), "click", () => {
+      if (!this.pageGeometry) return;
+      this.enhancementScope?.dispose();
+      this.enhancementScope = mountPDFEnhancement(enhanceHost, this.scope, {
+        book: this.book, page: this.pageNumber, region: this.selectedRegion?.bbox || null,
+      });
+    });
     const close = () => dialog.close();
+    const outsideDialog = (event) => {
+      if (event.target !== dialog) return false;
+      const bounds = dialog.getBoundingClientRect();
+      return event.clientX < bounds.left || event.clientX > bounds.right ||
+        event.clientY < bounds.top || event.clientY > bounds.bottom;
+    };
+    let backdropPress = null;
+    this.scope.on(dialog, "pointerdown", (event) => {
+      backdropPress = event.isPrimary && event.button === 0 && outsideDialog(event)
+        ? { x: event.clientX, y: event.clientY }
+        : null;
+    });
+    this.scope.on(dialog, "pointercancel", () => { backdropPress = null; });
+    this.scope.on(dialog, "click", (event) => {
+      const press = backdropPress;
+      backdropPress = null;
+      // Dismiss only a backdrop tap, never a selection dragged out of the PDF.
+      if (!press || !outsideDialog(event) ||
+          Math.hypot(event.clientX - press.x, event.clientY - press.y) > 8) return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    });
     this.scope.on($("[data-pdf-return]", dialog), "click", close);
     this.scope.on($("[data-pdf-close]", dialog), "click", close);
     this.scope.on(dialog, "close", () => this.dispose(true));
@@ -410,6 +468,11 @@ class OriginalViewer {
     this.renderTask?.cancel();
     this.renderTask?.promise.catch(() => {});
     this.renderTask = null;
+    this.regionScope?.dispose(); this.regionScope = null; this.regionPicker = null;
+    this.selectedRegion = null; this.pageGeometry = null;
+    this.enhancementScope?.dispose(); this.enhancementScope = null;
+    $(".pdf-enhancement-host", this.dialog)?.replaceChildren();
+    for (const button of $$("[data-pdf-region],[data-pdf-enhance]", this.dialog)) button.disabled = true;
     const sheet = $(".pdf-original-sheet", this.dialog),
       message = $("[data-pdf-render-state]", this.dialog),
       location = $("[data-pdf-location]", this.dialog),
@@ -481,6 +544,17 @@ class OriginalViewer {
       sheet.append(canvas);
       sheet.hidden = false;
       message.hidden = true;
+      this.pageGeometry = { page_number: number, width: base.width, height: base.height, rotation: this.rotation };
+      this.regionScope = new Scope();
+      this.regionPicker = attachRegionPicker(sheet, this.regionScope, this.pageGeometry, (region) => {
+        this.selectedRegion = region;
+        const button = $("[data-pdf-enhance]", this.dialog);
+        button.disabled = false;
+        button.textContent = region ? "识别所选区域" : "识别本页";
+        location.textContent = region ? `PDF 原页 ${number} · 区域已选中，只有框内原图会发送给选定服务` : `PDF 原页 ${number} 已显示`;
+      });
+      for (const button of $$("[data-pdf-region],[data-pdf-enhance]", this.dialog)) button.disabled = false;
+      $("[data-pdf-enhance]", this.dialog).textContent = "识别本页";
       const highlight = this.highlight(page, base, viewport, sheet);
       await frame();
       await frame();
@@ -615,6 +689,8 @@ class OriginalViewer {
   dispose(returnToReader = false) {
     if (this.closed) return;
     this.closed = true;
+    this.regionScope?.dispose();
+    this.enhancementScope?.dispose();
     this.renderToken += 1;
     this.renderTask?.cancel();
     this.renderTask?.promise.catch(() => {});
@@ -661,6 +737,7 @@ class PDFReading {
     this.busy = false;
     this.viewer = null;
     this.pointerDown = false;
+    this.api = pdfApi;
   }
   install() {
     const r = this.r;
@@ -685,6 +762,35 @@ class PDFReading {
       this.jumpTimer = setTimeout(ready, 100);
       this.scope.cleanup(() => clearTimeout(this.jumpTimer));
     }
+    const openInline = (event) => {
+      const element = event.target.closest("[data-pdf-inline]");
+      if (!element || r.selecting || r.adjustingSelection || getSelection()?.toString().trim()) return;
+      const item = r.pages.inlineObjects?.get(element.dataset.sourceBlock)
+        ?.find((object) => object.start === +element.dataset.pdfInline);
+      if (!item) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.inlineFormula(item, element.getBoundingClientRect());
+    };
+    // Capture before word/annotation click handlers, but leave pointer gestures
+    // and native cross-paragraph selection untouched.
+    this.scope.on($("#article"), "click", openInline, { capture: true });
+    // Window capture precedes the reader's document-level Space-to-turn key.
+    this.scope.on(window, "keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") openInline(event);
+    }, { capture: true });
+    this.scope.on($("#article"), "error", (event) => {
+      const object = event.target.closest?.(".pdf-inline-formula");
+      if (!object) return;
+      object.classList.add("pdf-inline-missing");
+      object.setAttribute("aria-label", "原式预览暂不可用，核对原版");
+    }, { capture: true });
+    r.on("selection-render", () => {
+      // The stored source anchor keeps its object character. Only the menu's
+      // human-readable excerpt substitutes a label, never source DOM text.
+      const quote = $("#reading-selection .selection-quote");
+      if (quote) quote.textContent = quote.textContent.replaceAll("\uFFFC", "〔原式〕");
+    });
     this.scope.on($("#article"), "click", (event) => {
       const figure = event.target.closest("[data-pdf-object]");
       if (
@@ -861,12 +967,17 @@ class PDFReading {
   }
   objectActions(block, rect) {
     const r = this.r;
+    const formula = Boolean(block.formula_id) || block.type === "formula";
     r.closePop();
     r.panel(
       "pdf-object",
-      "原图",
-      `<p class="meta">PDF 原页 ${e(block.source?.page_number || "—")}</p><div class="pdf-object-actions">${actionButton("source", "核对原版", !block.source)}${r.ctx.enabled("notes") ? actionButton("note", "记一笔") : ""}${r.ctx.enabled("bookmarks") ? actionButton("bookmark", "书签") : ""}</div>`,
+      formula ? "原式" : "原图",
+      `${formula ? formulaDetails(block, this.book) : `<p class="meta">PDF 原页 ${e(block.source?.page_number || "—")}</p>`}<div class="pdf-object-actions">${actionButton("source", "核对原版", !block.source)}${r.ctx.enabled("notes") ? actionButton("note", "记一笔") : ""}${r.ctx.enabled("bookmarks") ? actionButton("bookmark", "书签") : ""}</div>`,
       (el, scope) => {
+        if (formula) {
+          mountFormulaDetails(this, block, el, scope);
+          placeFormulaPanel(scope, rect);
+        }
         const panel = $("#tool-panel");
         panel.classList.add("pdf-object-menu");
         const place = () => {
@@ -874,8 +985,10 @@ class PDFReading {
           panel.style.left = `${Math.max(12, Math.min(rect?.left || 12, innerWidth - box.width - 12))}px`;
           panel.style.top = `${Math.max(12, Math.min((rect?.bottom || 40) + 8, innerHeight - box.height - 12))}px`;
         };
-        place();
-        scope.on(window, "resize", place);
+        if (!formula) {
+          place();
+          scope.on(window, "resize", place);
+        }
         scope.cleanup(() => {
           panel.classList.remove("pdf-object-menu");
           panel.style.left = "";
@@ -925,6 +1038,17 @@ class PDFReading {
         });
       },
     );
+  }
+  inlineFormula(item, rect) {
+    const r = this.r;
+    r.closePop();
+    r.closePanel();
+    r.panel("pdf-formula", "原式", `${formulaDetails(item, this.book)}<div class="pdf-object-actions">${actionButton("source", "核对原版", !item.source?.page_number)}</div>`, (el, scope) => {
+      mountFormulaDetails(this, item, el, scope);
+      placeFormulaPanel(scope, rect);
+      scope.on($("[data-pdf-action='source']", el), "click", () =>
+        this.openOriginal(item.source, r.anchorFor(item.block_id, item.start, item.end)));
+    });
   }
   async details() {
     const r = this.r;

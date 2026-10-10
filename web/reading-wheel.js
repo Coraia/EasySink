@@ -213,7 +213,7 @@ export function installReadingTrackpad(ctx) {
     const inPaper =
       Boolean(target?.closest("#reading-stage")) &&
       !target.closest(
-        "button, a, input, textarea, select, [contenteditable], #reading-selection, #translation-pane",
+        "button, a, input, textarea, select, [contenteditable], #reading-selection, #translation-pane, .inline-grammar",
       );
     const ours = Boolean(
       pages?.preview &&

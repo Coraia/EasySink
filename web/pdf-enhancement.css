@@ -1,0 +1,17 @@
+.pdf-original-dialog .pdf-enhancement-host:empty { display: none; }
+.pdf-enhancement-host { padding: 12px 20px; border-bottom: 1px solid var(--line); overflow: auto; max-height: 42vh; }
+.pdf-enhancement-host h3 { margin: 0 0 8px; font-size: 17px; }
+.pdf-enhancement-host p { margin: 8px 0; }
+.pdf-enhancement-host .enhance-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.pdf-enhancement-host label { display: grid; gap: 5px; font-size: 13px; }
+.pdf-enhancement-host input { width: 100%; min-width: 0; box-sizing: border-box; }
+.pdf-enhancement-host .enhance-check { display: flex; align-items: center; gap: 6px; }
+.pdf-enhancement-host .enhance-check input { width: auto; }
+.pdf-enhancement-host .enhance-error { color: #a04432; }
+.pdf-enhancement-host .enhance-output { white-space: pre-wrap; max-height: 180px; overflow: auto; font-size: 14px; }
+.pdf-enhancement-host .enhance-receipt { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 12px; }
+.pdf-enhancement-host summary { cursor: pointer; padding: 6px 0; }
+.pdf-region-picking { cursor: crosshair; touch-action: none; user-select: none; }
+.pdf-region-selection { position: absolute; pointer-events: none; border: 2px solid #276eab; background: rgba(40, 118, 187, .15); box-sizing: border-box; }
+.pdf-original-controls .pdf-region-controls { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+@media (max-width: 650px) { .pdf-enhancement-host .enhance-fields { grid-template-columns: 1fr; } }

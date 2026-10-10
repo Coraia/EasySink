@@ -1,8 +1,10 @@
 # Wise Reader
 
-面向中文读者的本地英文阅读 Web 原型。中文解释贴近正文，阅读偏好与笔记自动保存；17 个扩展可以逐个开关。
+面向中文读者的本地英文阅读应用，提供 Web 阅读器和 macOS 客户端。中文解释贴近正文，阅读偏好与笔记自动保存；17 个扩展可以逐个开关。
 
-当前版本：**Web 原型 03**。使用已有 FastAPI / SQLite / 本地词典，前端为可拆卸 ES modules。
+当前产品基线：**V1 · `v1.0.0`（2026-10-10）**。使用 FastAPI / SQLite / 本地词典，前端为可拆卸 ES modules，macOS 客户端复用阅读核心。该标签冻结本次已体验的源码；包内历史版本号暂保持不变，以对应已安装并走查的客户端。
+
+版本范围、证据摘要及已知限制见 [V1 版本记录](docs/releases/v1.0.0.json)。本次为当前 Mac 上的个人使用基线；签名公证、干净机器分发和完整设备覆盖尚未验收。已同意后续处理高负载下个别慢帧、学术译文的术语与限定范围问题，保留原始失败记录。
 
 ## 启动
 
@@ -28,7 +30,7 @@ EPUB/PDF/TXT/Markdown 导入、章节目录、沉浸阅读、笔记、书签、�
 
 PDF 从同一个「添加阅读」入口导入，原件登记后即保存在书架，不依赖点击开始阅读。阅读版沿用现有 Reader，按已完成的原页范围逐步开放，提供查词、选区译文、语法、发音和阅读记录。选区菜单及「更多 → PDF 处理」可核对原版；图表、公式或无法可靠重排的区域保留原图，也可记笔记和加书签。处理面板可暂停、继续、取消或重新识别指定原页；回收站可恢复同一书籍。关闭 PDF 处理保留已有原件、阅读版与记录。
 
-PDF 转换运行在独立 `.venv-pdf-lab` 环境，轻量依赖见 `requirements-pdf-lab.txt`；本机 OCR 使用已准备的 Docling/Apple Vision。`.venv-pdf-lab/bin/python scripts/pdf_lab_convert.py --capabilities` 可核对实际可用能力，模型缺失不会被描述成文件损坏。普通导入不调用付费服务；外部图像识别增强尚未接入。转换完成不代表复杂版面、公式或任意扫描件已校对。
+PDF 转换运行在独立环境，轻量依赖见 `requirements-pdf-lab.txt`；可按实际就绪状态选择本机提取/OCR、原式优先或自有 Omarchy 服务。`.venv-pdf-lab/bin/python scripts/pdf_lab_convert.py --capabilities` 可核对 Web 开发环境能力，客户端运行时准备见 [桌面说明](desktop/README.md)。普通导入不调用付费服务；外部图像增强由用户明确选择页或区域后发起，保留有效缓存、重放资料、额度与结果未知状态。公式先保留原式，主动识别时才运行对应模型。转换完成不代表复杂版面、公式或任意扫描件已校对。
 
 AI 是可选的：基础词注来自本地词典；点词后主动请求上下文，或选句后翻译、分析语法。仅翻译所选文字，右侧与原文联动；语法在原段落下方展开，已有结果用 +/− 重用。无自动整章/整书模型调用。进入「AI 与语音」配置已有 Chat Completions 兼容服务，凭据只保存在本机服务端，不回填页面。
 
@@ -54,6 +56,9 @@ npx playwright install chromium
 
 ## 文档
 
+- [V1 版本记录与遗留项](docs/releases/v1.0.0.json)
+- [V1 → V1.1 → V2 路线图](docs/65-v1-v2-roadmap.md)
+- [macOS 客户端运行与构建](desktop/README.md)
 - [领域词汇表](GLOSSARY.md)
 - [工程技能的 issue tracker 约定](docs/agents/issue-tracker.md)、[领域文档约定](docs/agents/domain.md)
 - [PDF 支持设计对齐与决策进度](docs/50-pdf-alignment.md)

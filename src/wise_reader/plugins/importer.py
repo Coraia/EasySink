@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import posixpath
 import zipfile
 from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree as ET
 
 from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, UploadFile
+from markdown_it import MarkdownIt
 
 from wise_reader import content
 from wise_reader.plugins.runtime import PluginContext, require_plugin
@@ -18,6 +21,62 @@ MAX_BYTES = 20 * 1024 * 1024
 MAX_CHAPTERS = 500
 MAX_EXPANDED = 100 * 1024 * 1024
 EPUB_CONTAINER = "META-INF/container.xml"
+
+
+def migrate(store):
+    store.executescript("""
+    CREATE TABLE IF NOT EXISTS wr_import_source(
+      fingerprint TEXT PRIMARY KEY, book_id INTEGER NOT NULL, chapter_count INTEGER NOT NULL);
+    """)
+
+
+def epub_fingerprint(data):
+    """Ignore transport wrappers and ZIP timestamps, not publication contents.
+
+    Call only after parse_epub_structured has validated the extraction bounds.
+    Old books without this identity are deliberately not merged by title/text.
+    """
+    digest = hashlib.sha256(b"epub-package-v1\0")
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        root = _epub_root(archive)
+        entries = []
+        for info in archive.infolist():
+            if info.is_dir() or not info.filename.startswith(root):
+                continue
+            name = info.filename[len(root):]
+            parts = name.split("/")
+            if any(p == "__MACOSX" or p == ".DS_Store" or p.startswith("._") for p in parts):
+                continue
+            entries.append((name, info))
+        names = [name for name, _ in entries]
+        if len(names) != len(set(names)):
+            raise ValueError("EPUB 包含重复资源路径，尚未导入")
+        for name, info in sorted(entries, key=lambda item: item[0]):
+            payload = archive.read(info)
+            digest.update(json.dumps([name, len(payload)], ensure_ascii=False).encode())
+            digest.update(b"\0")
+            digest.update(payload)
+    return digest.hexdigest()
+
+
+def existing_import(store, fingerprint):
+    row = store.query_one(
+        "SELECT b.*, s.chapter_count FROM wr_import_source s"
+        " JOIN wr_book b ON b.id=s.book_id WHERE s.fingerprint=?", (fingerprint,))
+    if not row:
+        return None
+    chapters = store.query(
+        "SELECT c.title, c.doc_id, d.word_count FROM wr_chapter c"
+        " JOIN document d ON d.id=c.doc_id WHERE c.book_id=? ORDER BY c.idx", (row["id"],))
+    if len(chapters) != row["chapter_count"]:
+        return None
+    resume = store.query_one(
+        "SELECT p.doc_id FROM wr_progress p JOIN wr_chapter c ON c.doc_id=p.doc_id"
+        " WHERE c.book_id=? ORDER BY p.updated_at DESC LIMIT 1", (row["id"],))
+    return {"book_id": row["id"], "title": row["title"], "author": row["author"],
+            "source": row["source"], "chapters": chapters, "reused": True,
+            "reading_doc_id": resume["doc_id"] if resume else chapters[0]["doc_id"],
+            "notice": "已保留已有章节和阅读记录。"}
 
 
 def _epub_roots(archive):
@@ -196,11 +255,26 @@ def register(app: FastAPI, ctx: PluginContext):
         if len(data) > MAX_BYTES:
             raise HTTPException(413, "文件超过 20 MB")
         name = (file.filename or "upload.txt").strip()
+        fingerprint = None
         try:
             if is_epub_upload(data, name, file.content_type):
                 title, author, chapters = parse_epub_structured(data)
                 source = "epub"
-            elif name.lower().endswith((".txt", ".md", ".markdown")):
+                fingerprint = epub_fingerprint(data)
+                existing = existing_import(ctx.store, fingerprint)
+                if existing:
+                    return existing
+            elif name.lower().endswith((".md", ".markdown")):
+                title, author, plain = parse_plain(data, name)
+                # CommonMark + tables; raw HTML is text, never active markup.
+                parser = MarkdownIt("commonmark", {"html": False}).enable("table")
+                blocks = content.html_blocks(parser.render(plain[0][1]))
+                if not blocks:
+                    raise ValueError("文件没有可读取的文字")
+                text = "\n\n".join(b["text"] for b in blocks)
+                source = "markdown"
+                chapters = [(title, text, blocks)]
+            elif name.lower().endswith(".txt"):
                 title, author, plain = parse_plain(data, name)
                 source = "txt"
                 chapters = [(t, s, content.blocks_from_text(s)) for t, s in plain]
@@ -213,6 +287,8 @@ def register(app: FastAPI, ctx: PluginContext):
                 )
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+        except (zipfile.BadZipFile, RuntimeError, OSError) as e:
+            raise HTTPException(400, "EPUB 资源损坏或无法读取，尚未导入") from e
         # Parsing, lexical analysis, cache compression and JSON serialization
         # happen in this sync endpoint's worker, before taking the Store lock.
         prepared = [ctx.engine.prepare_import(heading, text, blocks)
@@ -220,6 +296,13 @@ def register(app: FastAPI, ctx: PluginContext):
         saved = []
         # Only writes enter the book-wide atomic transaction.
         with ctx.store.transaction():
+            if fingerprint:
+                # Two uploads may parse concurrently; serialize identity and all
+                # chapter writes together so only one complete book is created.
+                existing = existing_import(ctx.store, fingerprint)
+                if existing:
+                    return existing
+                ctx.store.execute("DELETE FROM wr_import_source WHERE fingerprint=?", (fingerprint,))
             book_id = content.add_book(ctx.store, title, author, source)
             for idx, entry in enumerate(prepared):
                 doc = ctx.engine.persist_import(entry)
@@ -232,12 +315,16 @@ def register(app: FastAPI, ctx: PluginContext):
                         "word_count": doc["word_count"],
                     }
                 )
+            if fingerprint:
+                ctx.store.execute("INSERT INTO wr_import_source VALUES(?,?,?)",
+                                  (fingerprint, book_id, len(saved)))
 
         return {
             "book_id": book_id,
             "title": title,
             "author": author,
             "source": source,
+            "reused": False,
             "chapters": saved,
             "notice": "已保留章节、标题、段落、列表和代码。图片显示替代文字；本原型不保留原书版式与脚注链接。",
         }

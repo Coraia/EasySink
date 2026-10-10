@@ -9,6 +9,9 @@ import {
 
 // Software-only animation budget; hardware keeps native Retina resolution.
 const SOFTWARE_PIXELS = 320000;
+// RGBA storage only; decoded SVGs and drawing buffers have separate lifetimes.
+const TEXTURE_BYTES = 96_000_000;
+const MAX_CAPTURE_JOBS = 8;
 
 // One GPU service for one reader lifetime. Turns reuse programs, buffers and
 // cached textures; each frame uploads a small mesh aligned with the curl.
@@ -17,6 +20,7 @@ export class PageCurlRenderer {
     this.pages = pages;
     this.cache = new Map();
     this.jobs = new Map();
+    this.captureTail = Promise.resolve();
     this.captures = new Set();
     this.epoch = 0;
     this.canvas = document.createElement("canvas");
@@ -30,10 +34,31 @@ export class PageCurlRenderer {
     this.assetBytes = 0;
     this.raf = 0;
     this.warmTimer = 0;
-    pages.r.scope.cleanup(() => this.dispose());
+    // Opt-in measurement keeps the normal reading path's export size unchanged.
+    this.collectPerformance = new URLSearchParams(location.search).get("readingPerf") === "1";
+    this.metricSequence = 0;
+    pages.r.scope.cleanup(() => { if (!this.handingOff && this.pages === pages) this.dispose(); });
+  }
+  rebind(pages) {
+    clearTimeout(this.warmTimer);
+    this.surfaceWarm = null;
+    for (const capture of this.captures) capture.abort();
+    this.captures.clear();
+    this.jobs.clear();
+    const previousRoot = this.root;
+    this.pages = pages;
+    this.root = $(".reader");
+    this.layer = $("#page-curl-layer");
+    this.handingOff = false;
+    this.root.dataset.curlContexts = this.gl ? "1" : "0";
+    this.root.dataset.curlMetrics = JSON.stringify(this.metrics || []);
+    for (const key of ["curlDevice", "curlDriver", "curlCachedLeaves", "curlCachedPixels"])
+      if (previousRoot.dataset[key]) this.root.dataset[key] = previousRoot.dataset[key];
+    pages.r.scope.cleanup(() => { if (!this.handingOff && this.pages === pages) this.dispose(); });
   }
   init() {
     if (this.gl || this.failed) return;
+    const setup = this.collectPerformance ? (this.contextSetup = { startedAt: performance.now() }) : null;
     try {
       const gl = (this.gl = this.canvas.getContext("webgl", {
         alpha: true,
@@ -41,6 +66,7 @@ export class PageCurlRenderer {
         premultipliedAlpha: false,
       }));
       if (!gl) throw new Error("WebGL unavailable");
+      if (setup) setup.contextCreatedAt = performance.now();
       const debug = gl.getExtension("WEBGL_debug_renderer_info");
       const driver = debug
         ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)
@@ -99,6 +125,7 @@ export class PageCurlRenderer {
       if (!gl.getProgramParameter(this.program, gl.LINK_STATUS))
         throw new Error(gl.getProgramInfoLog(this.program));
       gl.useProgram(this.program);
+      if (setup) setup.programReadyAt = performance.now();
       this.u = Object.fromEntries(
         [
           "view",
@@ -161,9 +188,16 @@ export class PageCurlRenderer {
       this.failed = true;
       this.root.dataset.curlFallback = error.message;
     }
+    if (setup) {
+      setup.finishedAt = performance.now();
+      setup.canvasWidth = this.canvas.width;
+      setup.canvasHeight = this.canvas.height;
+      setup.failed = this.failed;
+    }
   }
   invalidate() {
     this.epoch++;
+    this.surfaceWarm = null;
     clearTimeout(this.warmTimer);
     for (const capture of this.captures) capture.abort();
     this.captures.clear();
@@ -173,18 +207,31 @@ export class PageCurlRenderer {
         this.gl.deleteTexture(value.texture);
     this.cache.clear();
   }
-  key(index) {
-    return `${this.pages.generation}:${this.epoch}:${devicePixelRatio || 1}:${index}`;
+  key(index, source = this.pages) {
+    return `${source.r.doc.id}:${source.r.doc.version}:${source.generation}:${this.epoch}:${devicePixelRatio || 1}:${index}`;
   }
   async inlineImages(page, ratio, signal) {
     const images = [...page.querySelectorAll("img")];
+    const positive = value => Number.isFinite(value) && value > 0 ? value : 0;
+    const prose = document.querySelector("#article .reading-prose");
+    const liveFont = prose ? parseFloat(getComputedStyle(prose).fontSize) : 0;
+    const font = positive(liveFont) || positive(parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--reading-size"))) || 22;
     for (const image of images) {
       signal.throwIfAborted();
       const url = new URL(image.getAttribute("src"), location.origin);
       if (url.origin !== location.origin || !/^\/api\/pdf\/books\/\d+\/assets\//.test(url.pathname))
         throw new Error("Unregistered page image");
-      const targetWidth = Math.max(1, Math.ceil(Number(image.getAttribute("width")) * ratio));
-      const targetHeight = Math.max(1, Math.ceil(Number(image.getAttribute("height")) * ratio));
+      // Capture pages are detached: their client rect / computed font can be
+      // zero. Inline formula geometry is source points / source body font (em).
+      // Resolve those em values against live prose, with conservative intrinsic
+      // dimensions as fallback, never a missing attribute coerced to 1px.
+      const headingScale = image.closest("h2") ? 1.15 : 1;
+      const width = positive(Number(image.dataset.pdfWidthEm) * font * headingScale) ||
+        positive(Number(image.getAttribute("width"))) || positive(image.naturalWidth);
+      const height = positive(Number(image.dataset.pdfHeightEm) * font * headingScale) ||
+        positive(Number(image.getAttribute("height"))) || positive(image.naturalHeight);
+      const targetWidth = width ? Math.ceil(width * ratio) : null;
+      const targetHeight = height ? Math.ceil(height * ratio) : null;
       const key = `${url.href}:${targetWidth}x${targetHeight}`;
       let cached = this.assets.get(key);
       if (!cached) {
@@ -205,15 +252,18 @@ export class PageCurlRenderer {
         // Large retained scans are sampled at the actual paper texture density,
         // rather than embedding their full-resolution bytes in the SVG.
         if (size > 16 * 1024 * 1024) {
-          if (!Number.isFinite(targetWidth * targetHeight) || targetWidth * targetHeight > 6e6)
+          if (!targetWidth || !targetHeight || !Number.isFinite(targetWidth * targetHeight) || targetWidth * targetHeight > 6e6)
             throw new Error("Page image exceeds texture budget");
           const bitmap = await createImageBitmap(blob, {resizeWidth: targetWidth, resizeHeight: targetHeight, resizeQuality: "high"});
+          const canvas = document.createElement("canvas");
           try {
-            const canvas = document.createElement("canvas");
             canvas.width = targetWidth; canvas.height = targetHeight;
             canvas.getContext("2d").drawImage(bitmap, 0, 0);
             blob = await new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error("Page image sampling failed")), "image/png"));
-          } finally { bitmap.close(); }
+          } finally {
+            bitmap.close();
+            canvas.width = canvas.height = 0;
+          }
         }
         const data = await new Promise((resolve, reject) => {
           const reader = new FileReader();
@@ -224,7 +274,7 @@ export class PageCurlRenderer {
         signal.throwIfAborted();
         cached = {data, size: data.length * 2};
         if (cached.size <= 24 * 1024 * 1024) {
-          while (this.assets.size && (this.assetBytes + cached.size > 24 * 1024 * 1024 || this.assets.size >= 8)) {
+          while (this.assets.size && (this.assetBytes + cached.size > 24 * 1024 * 1024 || this.assets.size >= 256)) {
             const oldest = this.assets.keys().next().value;
             this.assetBytes -= this.assets.get(oldest).size;
             this.assets.delete(oldest);
@@ -241,8 +291,8 @@ export class PageCurlRenderer {
     }
     return images.length;
   }
-  async prepare(index) {
-    const key = this.key(index),
+  async prepare(index, source = this.pages) {
+    const key = this.key(index, source),
       hit = this.cache.get(key);
     if (hit) {
       this.cache.delete(key);
@@ -250,12 +300,21 @@ export class PageCurlRenderer {
       return hit;
     }
     if (this.jobs.has(key)) return this.jobs.get(key);
-    if (!this.pages.pages[index]) return null;
-    const epoch = this.epoch,
+    if (this.pages.r.scope.signal.aborted || this.jobs.size >= MAX_CAPTURE_JOBS) return null;
+    // The unfilled half of an odd final spread is a real blank paper face.
+    if (index < 0 || index >= source.pages.length + source.count - 1) return null;
+    const owner = this.pages, epoch = this.epoch,
       generation = this.pages.generation;
     const capture = new AbortController();
     this.captures.add(capture);
+    const previousCapture = this.captureTail;
+    let rasterImage = null;
     const job = (async () => {
+      // A texture count limit cannot bound concurrent decoded SVG surfaces.
+      // Keep one capture active; abort also releases its decoder on route leave.
+      await previousCapture;
+      capture.signal.throwIfAborted();
+      if (owner !== this.pages || epoch !== this.epoch || generation !== this.pages.generation) return null;
       this.init();
       if (this.failed) return null;
       const leaf = $(".page-leaf"),
@@ -298,13 +357,13 @@ export class PageCurlRenderer {
         })
         .join("\n");
       const copy = document.createElement("div");
-      copy.innerHTML = this.pages.leafMarkup(index);
+      copy.innerHTML = source.leafMarkup(index);
       const page = copy.firstElementChild;
       page
         .querySelectorAll(".inline-grammar,.bookmark-marker,.paragraph-actions,.pdf-object-actions,[data-pdf-source],[data-pdf-note]")
         .forEach((el) => el.remove());
       const embeddedImages = await this.inlineImages(page, ratio, capture.signal);
-      if (epoch !== this.epoch || generation !== this.pages.generation || this.pages.r.scope.signal.aborted) return null;
+      if (owner !== this.pages || epoch !== this.epoch || generation !== this.pages.generation || this.pages.r.scope.signal.aborted) return null;
       page.querySelectorAll("[id]").forEach((el) => el.removeAttribute("id"));
       Object.assign(page.style, {
         width: rect.width + "px",
@@ -318,15 +377,32 @@ export class PageCurlRenderer {
       const w = Math.ceil(rect.width * ratio),
         h = Math.ceil(rect.height * ratio);
       const markup = `<div xmlns="http://www.w3.org/1999/xhtml" class="paged-reader" style="${xml(vars)}width:${rect.width}px;height:${rect.height}px;color:${root.getPropertyValue("--ink")};background:${root.getPropertyValue("--paper")}"><style>${xml(this.rules)}</style><div id="article" style="width:100%;height:100%;display:block">${new XMLSerializer().serializeToString(page)}</div></div>`;
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${rect.width} ${rect.height}"><foreignObject width="100%" height="100%">${markup}</foreignObject></svg>`;
+      // Keep the SVG viewport in pixels and scale inside the HTML subtree.
+      // WebKit does not consistently apply a viewBox scale to foreignObject
+      // HTML when the SVG is decoded as an image.
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><foreignObject width="${w}" height="${h}"><div xmlns="http://www.w3.org/1999/xhtml" style="transform:scale(${ratio});transform-origin:0 0;width:${rect.width}px;height:${rect.height}px">${markup}</div></foreignObject></svg>`;
       const image = await new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error("Page raster failed"));
+        const img = (rasterImage = new Image());
+        let settled = false;
+        const finish = (error) => {
+          if (settled) return;
+          settled = true;
+          img.onload = img.onerror = null;
+          capture.signal.removeEventListener("abort", abort);
+          if (error) {
+            img.removeAttribute("src");
+            reject(error);
+          } else resolve(img);
+        };
+        const abort = () => finish(capture.signal.reason || new DOMException("Page capture cancelled", "AbortError"));
+        img.onload = () => finish();
+        img.onerror = () => finish(new Error("Page raster failed"));
+        if (capture.signal.aborted) { abort(); return; }
+        capture.signal.addEventListener("abort", abort, {once: true});
         img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
       });
       if (
-        epoch !== this.epoch ||
+        owner !== this.pages || epoch !== this.epoch ||
         generation !== this.pages.generation ||
         this.pages.r.scope.signal.aborted ||
         this.failed
@@ -370,16 +446,17 @@ export class PageCurlRenderer {
         width: rect.width,
         height: rect.height,
         pixels: w * h,
+        bytes: w * h * 4,
         pixelWidth: w,
         pixelHeight: h,
         ratio,
         key,
       };
       this.cache.set(key, value);
-      // Six leaves and at most 24 million pixels (~96MB RGBA), regardless of book.
+      // Preserve native raster density and the existing six-leaf / 96MB budget.
       while (
         this.cache.size > 6 ||
-        [...this.cache.values()].reduce((n, v) => n + v.pixels, 0) > 24e6
+        [...this.cache.values()].reduce((n, v) => n + v.bytes, 0) > TEXTURE_BYTES
       ) {
         const pinned = this.scene?.textures || [];
         const oldest = [...this.cache.keys()].find((k) => !pinned.includes(k));
@@ -392,6 +469,9 @@ export class PageCurlRenderer {
       this.root.dataset.curlCachedPixels = String(
         [...this.cache.values()].reduce((n, v) => n + v.pixels, 0),
       );
+      this.root.dataset.curlCachedBytes = String(
+        [...this.cache.values()].reduce((n, v) => n + v.bytes, 0),
+      );
       return value;
     })()
       .catch((error) => {
@@ -399,9 +479,15 @@ export class PageCurlRenderer {
         return null;
       })
       .finally(() => {
+        if (rasterImage) {
+          rasterImage.onload = rasterImage.onerror = null;
+          rasterImage.removeAttribute("src");
+          rasterImage = null;
+        }
         this.captures.delete(capture);
-        this.jobs.delete(key);
+        if (this.jobs.get(key) === job) this.jobs.delete(key);
       });
+    this.captureTail = job;
     this.jobs.set(key, job);
     return job;
   }
@@ -428,10 +514,55 @@ export class PageCurlRenderer {
         await this.prepare(i);
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
+      // Texture readiness does not allocate the final drawing buffer. Prepare
+      // that same buffer while idle; attach still verifies its current size.
+      if (p !== this.pages || generation !== p.generation || epoch !== this.epoch ||
+          p.r.scope.signal.aborted || p.animating || this.failed || !this.gl) return;
+      const rect = $("#article").getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        const { width, height } = this.surfaceDimensions(rect);
+        const setup = this.collectPerformance ? {
+          startedAt: performance.now(), canvasBefore: [this.canvas.width, this.canvas.height],
+          source: "idle-texture-warm",
+        } : null;
+        this.resizeSurface(width, height, setup);
+        if (setup) this.surfaceWarm = setup;
+      }
       this.root.dataset.curlWarm = "true";
     }, 120);
   }
+  surfaceDimensions(rect) {
+    const pixels = this.software ? SOFTWARE_PIXELS : 8000000;
+    const ratio = Math.min(
+        devicePixelRatio || 1,
+        3,
+        this.maxCanvas / rect.height,
+        this.maxCanvas / rect.width,
+        Math.sqrt(pixels / (rect.width * rect.height)),
+      ),
+      width = Math.ceil(rect.width * ratio),
+      height = Math.ceil(rect.height * ratio);
+    return { pixels, ratio, width, height };
+  }
+  resizeSurface(width, height, setup) {
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      if (setup) setup.resizeStartedAt = performance.now();
+      this.canvas.width = width;
+      if (setup) setup.widthAssignedAt = performance.now();
+      this.canvas.height = height;
+      if (setup) setup.heightAssignedAt = performance.now();
+    }
+    if (setup) {
+      setup.sizeReadyAt = performance.now();
+      setup.canvasAfter = [this.canvas.width, this.canvas.height];
+      setup.resized = Boolean(setup.resizeStartedAt);
+    }
+  }
   attach(before, incoming, direction, front, back, grab) {
+    const setup = this.collectPerformance ? (this.attachSetup = {
+      startedAt: performance.now(), canvasBefore: [this.canvas.width, this.canvas.height],
+      contextAlreadyCreated: Boolean(this.gl),
+    }) : null;
     if (this.failed || !front || !back) return false;
     const gl = this.gl,
       rect = $("#article").getBoundingClientRect(),
@@ -445,6 +576,7 @@ export class PageCurlRenderer {
     const double = leaves.length === 2,
       leaf = leaves[direction > 0 && double ? 1 : 0],
       gap = double ? leaves[1].x - leaves[0].x - front.width : 0;
+    if (setup) setup.geometryReadAt = performance.now();
     Object.assign(this.layer.style, {
       left: rect.left - stage.left + "px",
       top: rect.top - stage.top + "px",
@@ -465,18 +597,10 @@ export class PageCurlRenderer {
       this.layer.append(before);
     }
     this.layer.append(this.canvas);
+    if (setup) setup.layersMountedAt = performance.now();
     // Software rasterizers pay per shaded pixel. Keep the animated sheet
     // bounded; the live source DOM and its static text retain full resolution.
-    const pixels = this.software ? SOFTWARE_PIXELS : 8000000;
-    const ratio = Math.min(
-        devicePixelRatio || 1,
-        3,
-        this.maxCanvas / rect.height,
-        this.maxCanvas / rect.width,
-        Math.sqrt(pixels / (rect.width * rect.height)),
-      ),
-      width = Math.ceil(rect.width * ratio),
-      height = Math.ceil(rect.height * ratio);
+    const { pixels, ratio, width, height } = this.surfaceDimensions(rect);
     this.root.dataset.curlDrawRatio = ratio.toFixed(3);
     this.root.dataset.curlTextureRatio = Math.min(
       front.ratio,
@@ -506,12 +630,10 @@ export class PageCurlRenderer {
       software: this.software,
       pixels,
     });
-    if (this.canvas.width !== width || this.canvas.height !== height) {
-      this.canvas.width = width;
-      this.canvas.height = height;
-    }
+    this.resizeSurface(width, height, setup);
     gl.viewport(0, 0, width, height);
     gl.useProgram(this.program);
+    if (setup) setup.viewportProgramAt = performance.now();
     gl.uniform2f(this.u.view, rect.width, rect.height);
     gl.uniform1f(this.u.mirror, direction);
     gl.uniform1f(
@@ -538,6 +660,7 @@ export class PageCurlRenderer {
       gl.bindTexture(gl.TEXTURE_2D, value.texture);
       gl.uniform1i(i === 0 ? this.u.front : this.u.back, i);
     }
+    if (setup) setup.uniformsTexturesAt = performance.now();
     this.scene = {
       rect,
       leaf,
@@ -549,12 +672,15 @@ export class PageCurlRenderer {
     this.samples = [];
     this.inputSamples = [];
     this.solveSamples = [];
+    this.drawTimes = [];
+    this.submitSamples = [];
     this.lastInputPose = null;
     this.lastFrame = 0;
     this.started = performance.now();
     this.firstFrame = null;
     this.root.dataset.curlPhase = "dragging";
     this.layer.dataset.renderer = "webgl-developable-paper";
+    if (setup) setup.finishedAt = performance.now();
     return true;
   }
   draw(progress, grab, dy, inputAt) {
@@ -651,8 +777,12 @@ export class PageCurlRenderer {
       grab,
       dy,
     });
+    if (this.collectPerformance && this.drawTimes.length < 4096) {
+      this.drawTimes.push(now - this.started);
+      this.submitSamples.push(performance.now() - now);
+    }
   }
-  record(completed, reason, requested, settle) {
+  record(completed, reason, requested, settle, setup) {
     if (!this.scene) return;
     const percentile = (values) => {
       const sorted = [...values].sort((a, b) => a - b);
@@ -689,6 +819,27 @@ export class PageCurlRenderer {
           : null,
       };
     }
+    if (this.collectPerformance) {
+      metric.sequence = ++this.metricSequence;
+      metric.documentId = this.pages.r.doc.id;
+      metric.pageIndex = this.pages.index;
+      metric.raw = {
+        timeOrigin: performance.timeOrigin,
+        startedAt: this.started,
+        requestedAt: requested,
+        releaseAt: settle?.releaseAt ?? null,
+        recordedAt: performance.now(),
+        frameIntervalsMs: this.samples.slice(0, 4096),
+        inputToDrawMs: this.inputSamples.slice(0, 4096),
+        solveMs: this.solveSamples.slice(0, 4096),
+        drawAtMs: this.drawTimes,
+        submitMs: this.submitSamples,
+        counts: { frame: this.samples.length, input: this.inputSamples.length, draw: this.solveSamples.length },
+        truncated: Math.max(this.samples.length, this.inputSamples.length, this.solveSamples.length) > 4096,
+        setup: setup ? { turn: setup, attach: this.attachSetup || null, context: this.contextSetup || null, surfaceWarm: this.surfaceWarm || null } : null,
+        scope: "JS draw submission intervals and last coalesced input; not GPU presentation or physical latency",
+      };
+    }
     this.metrics ??= [];
     this.metrics.push(metric);
     this.metrics = this.metrics.slice(-30);
@@ -708,6 +859,9 @@ export class PageCurlRenderer {
     this.invalidate();
     this.assets.clear();
     this.assetBytes = 0;
+    // Shrink while the context is live: WebKit can ignore framebuffer resizing
+    // after synthetic context loss, retaining the full-size drawing buffers.
+    this.canvas.width = this.canvas.height = 0;
     if (this.gl && !this.gl.isContextLost()) {
       for (const mesh of [this.mesh, this.plane])
         if (mesh) {

@@ -70,6 +70,22 @@ function pdfChapterTitle(chapter) {
 }
 
 export function install(ctx) {
+  const read = ctx.hook("read", async (reader) => {
+    const { doc, scope } = reader;
+    if (!doc.chapter || doc.pdf) return;
+    const book = await api(`/library/books/${doc.chapter.book_id}`, { signal: scope.signal });
+    if (scope.signal.aborted) return;
+    reader.book = book;
+    const chapter = `第 ${doc.chapter.idx + 1} / ${doc.chapters.length} 章`;
+    const label = `${book.title} · ${chapter} · ${doc.title}`;
+    const root = ctx.root.querySelector(".reader");
+    root.dataset.bookId = String(book.id);
+    root.dataset.bookTitle = book.title;
+    for (const element of root.querySelectorAll(".banner-title, .caption-title")) {
+      element.textContent = label;
+      element.title = label;
+    }
+  });
   const home = ctx.hook("home", async (view) => {
     const [bookResponse, recycleResponse] = await Promise.allSettled([
       api("/library/books", { signal: view.scope.signal }),
@@ -158,12 +174,14 @@ export function install(ctx) {
       }
       const chapter =
         b.chapters.find((ch) => ch.doc_id === remembered) || b.chapters[0];
+      const continued = chapter?.doc_id === remembered;
       return {
         ...b,
         coverLabel: "WISE READER / " + b.source.toUpperCase(),
         subtitle: `${b.chapter_count} 章 · ${b.author || "已导入"}`,
+        readingChapter: chapter ? `${continued ? "续读" : "从"}第 ${chapter.idx + 1} 章 · ${chapter.title}` : "",
         href: chapter ? `#/read/${chapter.doc_id}` : `#/book/${b.id}`,
-        action: remembered ? "继续阅读" : "打开阅读",
+        action: continued ? "继续阅读" : "打开阅读",
       };
     });
     view.chapterIds = new Set(
@@ -202,6 +220,7 @@ export function install(ctx) {
     ctx.root.innerHTML = `<div class="page"><div class="page-head"><div><div class="eyebrow">${e(b.source.toUpperCase())} · ${b.chapters.length} CHAPTERS</div><h1>${e(b.title)}</h1><p>${e(b.author || "我的书籍")}</p></div><a class="button" href="#/">← 书架</a></div><section class="card">${b.chapters.map((ch) => `<a class="list-item row between" href="#/read/${ch.doc_id}"><div><span class="meta">${String(ch.idx + 1).padStart(2, "0")}</span>　${e(ch.title)}</div><span class="meta">${ch.word_count.toLocaleString()} 词 →</span></a>`).join("") || '<p class="muted">这本书还没有章节。</p>'}</section></div>`;
   });
   return () => {
+    read();
     home();
     route();
   };

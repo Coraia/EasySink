@@ -31,6 +31,7 @@ export async function api(
           : "输入格式不正确，请检查后重试",
     );
     err.status = r.status;
+    err.code = typeof payload.detail?.code === "string" ? payload.detail.code : null;
     throw err;
   }
   return payload;
@@ -129,7 +130,9 @@ export function date(value) {
 export async function busy(button, fn, label = "保存中…") {
   if (button.disabled) return;
   const previous = button.textContent;
+  const previousBusy = button.getAttribute("aria-busy");
   button.disabled = true;
+  button.setAttribute("aria-busy", "true");
   button.textContent = label;
   try {
     return await fn();
@@ -138,6 +141,8 @@ export async function busy(button, fn, label = "保存中…") {
     throw err;
   } finally {
     button.disabled = false;
+    if (previousBusy === null) button.removeAttribute("aria-busy");
+    else button.setAttribute("aria-busy", previousBusy);
     button.textContent = previous;
   }
 }

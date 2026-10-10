@@ -1,4 +1,7 @@
+import { installSelectionHandles } from "./selection-handles.js";
+import { anchorSegments, linkedRanges } from "./source-selection.js";
 import { $, $$, e, api, toast } from "./core.js";
+import { offerAISetup } from "./ai-setup-guard.js";
 
 export function setupReadingInteractions(r) {
   r.events = new EventTarget();
@@ -43,15 +46,14 @@ export function setupReadingInteractions(r) {
   };
   r.paintSelection = () => {
     const anchor = r.selection;
+    const parts = anchorSegments(anchor);
     r.selectedTextRanges = [];
     $$("#article .source-unit").forEach((el) =>
       el.classList.toggle(
         "is-selected",
         Boolean(
-          anchor &&
-          el.dataset.sourceBlock === anchor.block_id &&
-          +el.dataset.sourceStart < anchor.end &&
-          +el.dataset.sourceEnd > anchor.start,
+          parts.some(part => el.dataset.sourceBlock === part.block_id &&
+          +el.dataset.sourceStart < part.end && +el.dataset.sourceEnd > part.start),
         ),
       ),
     );
@@ -63,19 +65,20 @@ export function setupReadingInteractions(r) {
     if (anchor.kind === "image") return;
     const ranges = [];
     $$("#article [data-block]").forEach((block) => {
-      if (block.dataset.block !== anchor.block_id) return;
+      const part = parts.find(p => p.block_id === block.dataset.block);
+      if (!part) return;
       const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
       let offset = +block.dataset.start,
         node;
       while ((node = walker.nextNode())) {
-        if (node.parentElement.closest(".gloss,.bookmark-marker")) continue;
+        if (node.parentElement.closest(".gloss,.bookmark-marker,.note-marker")) continue;
         const end = offset + node.textContent.length;
-        if (offset < anchor.end && end > anchor.start) {
+        if (offset < part.end && end > part.start) {
           const range = document.createRange();
-          range.setStart(node, Math.max(0, anchor.start - offset));
+          range.setStart(node, Math.max(0, part.start - offset));
           range.setEnd(
             node,
-            Math.min(node.textContent.length, anchor.end - offset),
+            Math.min(node.textContent.length, part.end - offset),
           );
           ranges.push(range);
           r.selectedTextRanges.push({ range, start: offset, end, block });
@@ -83,20 +86,20 @@ export function setupReadingInteractions(r) {
         offset = end;
       }
     });
-    if (globalThis.CSS?.highlights && globalThis.Highlight)
-      CSS.highlights.set("reader-selection", new Highlight(...ranges));
+    const precise = Boolean(globalThis.CSS?.highlights && globalThis.Highlight);
+    $(".reader").classList.toggle("precise-selection", precise);
+    if (precise) CSS.highlights.set("reader-selection", new Highlight(...ranges));
   };
   r.positionSelection = () => {
     const menu = $("#reading-selection");
+    r.positionSelectionHandles?.();
     if (!menu) return;
-    if (!r.selection || r.selecting || r.focus.isOpen() || r.panelId) {
+    if (!r.selection || r.selecting || r.adjustingSelection || r.aiSetupOpen || r.grammarInspecting || r.focus.isOpen() || r.panelId) {
       menu.hidden = true;
       return;
     }
-    const point =
-      r.selectionPlacement?.block_id === r.selection.block_id
-        ? r.selectionPlacement
-        : { offset: r.selection.end, trigger: "range" };
+    const last = anchorSegments(r.selection).at(-1);
+    const point = r.selectionPlacement || { block_id: last.block_id, offset: last.end, trigger: "range" };
     let target;
     const visible = (rect, leaf) =>
       rect.width &&
@@ -112,7 +115,7 @@ export function setupReadingInteractions(r) {
     if (point.trigger === "paragraph") {
       const fragment = $$("#article .source-fragment").find(
         (el) =>
-          el.dataset.fragment === r.selection.block_id &&
+          el.dataset.fragment === point.block_id &&
           +el.dataset.fragmentStart < point.offset &&
           +el.dataset.fragmentEnd >= point.offset,
       );
@@ -134,9 +137,20 @@ export function setupReadingInteractions(r) {
           leaf: leaf.getBoundingClientRect(),
         };
     }
+    if (!target && point.trigger === "range") {
+      const first = anchorSegments(r.selection)[0];
+      const atStart = point.block_id === first.block_id && point.offset === first.start;
+      const runs = (r.selectedTextRanges || []).filter(v =>
+        v.block.dataset.block === point.block_id && v.start <= point.offset && v.end >= point.offset);
+      for (const run of atStart ? runs : runs.toReversed()) {
+        const leaf = run.block.closest(".page-leaf").getBoundingClientRect();
+        const rects = [...run.range.getClientRects()].filter(rect => visible(rect, leaf));
+        if (rects.length) { target = { rect: atStart ? rects[0] : rects.at(-1), leaf }; break; }
+      }
+    }
     if (!target) {
       const candidates = (r.selectedTextRanges || []).filter(
-        (v) => v.start < point.offset,
+        (v) => v.block.dataset.block !== point.block_id || v.start < point.offset,
       );
       for (const v of candidates.reverse()) {
         const leaf = v.block.closest(".page-leaf").getBoundingClientRect();
@@ -159,7 +173,8 @@ export function setupReadingInteractions(r) {
       Math.max(120, Math.min(480, innerWidth - 24, leaf.width - 24)) + "px";
     const box = menu.getBoundingClientRect();
     const lower = Math.min(innerHeight - 12, leaf.bottom - 8);
-    const above = rect.bottom + 10 + box.height > lower;
+    const gap = 20; // Leave the endpoint knob accessible beside the menu.
+    const above = rect.bottom + gap + box.height > lower;
     menu.style.left =
       Math.max(
         Math.max(12, leaf.left + 12),
@@ -173,7 +188,7 @@ export function setupReadingInteractions(r) {
         12,
         Math.min(
           lower - box.height,
-          above ? rect.top - box.height - 10 : rect.bottom + 10,
+          above ? rect.top - box.height - gap : rect.bottom + gap,
         ),
       ) + "px";
     menu.dataset.placement = above ? "above" : "below";
@@ -193,17 +208,30 @@ export function setupReadingInteractions(r) {
   };
   r.choose = (anchor, origin) => {
     r.emit("before-selection");
+    for (const controller of r.pending.values()) controller.cancel();
+    r.pending.clear();
     r.selection = { ...anchor };
+    const last = anchorSegments(anchor).at(-1);
     r.selectionPlacement = {
-      block_id: anchor.block_id,
+      block_id: last.block_id,
       offset: origin
         ? +origin.closest(".source-fragment").dataset.fragmentEnd
-        : anchor.end,
+        : last.end,
       trigger: origin ? "paragraph" : "range",
     };
     r.closePop();
     r.renderSelection();
     r.ctx.run("selection", r).catch(console.error);
+  };
+  r.clearSelection = ({ native = true } = {}) => {
+    r.emit("before-selection");
+    for (const controller of r.pending.values()) controller.cancel();
+    r.pending.clear();
+    r.selection = null;
+    r.selectionPlacement = null;
+    if (native) getSelection()?.removeAllRanges();
+    r.renderSelection();
+    r.emit("assist-change");
   };
   r.assistController = (docId = r.doc.id) => {
     const controller = new AbortController();
@@ -245,7 +273,8 @@ export function setupReadingInteractions(r) {
       else r.assists[index] = result;
       return result;
     } catch (err) {
-      if (err.name !== "AbortError") r.status(err.message, { notice: true });
+      if (err.name !== "AbortError" && !offerAISetup(r, anchor, err, kind))
+        r.status(err.message, { notice: true });
       return null;
     } finally {
       if (r.pending.get(kind) === controller) r.pending.delete(kind);
@@ -256,12 +285,13 @@ export function setupReadingInteractions(r) {
     }
   };
   r.paintRanges = (anchor, ranges, kind = "translation") => {
+    ranges = linkedRanges(anchor, ranges);
     $$("#article .source-unit").forEach((el) =>
       el.classList.toggle(
         "linked-" + kind,
-        el.dataset.sourceBlock === anchor.block_id &&
-          ranges.some(
+        ranges.some(
             (v) =>
+              el.dataset.sourceBlock === v.block_id &&
               +el.dataset.sourceStart < v.end &&
               +el.dataset.sourceEnd > v.start,
           ),
@@ -272,13 +302,14 @@ export function setupReadingInteractions(r) {
     if (kind === "translation" && globalThis.CSS?.highlights && globalThis.Highlight) {
       const linked = [];
       $$("#article [data-block]").forEach((block) => {
-        if (block.dataset.block !== anchor.block_id) return;
+        const parts = ranges.filter(v => v.block_id === block.dataset.block);
+        if (!parts.length) return;
         const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
         let offset = +block.dataset.start, node;
         while ((node = walker.nextNode())) {
           if (node.parentElement.closest(".gloss,.bookmark-marker")) continue;
           const end = offset + node.textContent.length;
-          for (const part of ranges) {
+          for (const part of parts) {
             if (offset >= part.end || end <= part.start) continue;
             const range = document.createRange();
             range.setStart(node, Math.max(0, part.start - offset));
@@ -325,13 +356,7 @@ export function setupReadingInteractions(r) {
           ?.fn({ ...r.selection }),
       ).catch((err) => r.status(err.message));
     if (ev.target.closest("[data-selection-clear]")) {
-      r.emit("before-selection");
-      for (const controller of r.pending.values()) controller.cancel();
-      r.pending.clear();
-      r.selection = null;
-      getSelection()?.removeAllRanges();
-      r.renderSelection();
-      r.emit("assist-change");
+      r.clearSelection();
     }
   });
   r.scope.on($("#article"), "click", (ev) => {
@@ -362,13 +387,34 @@ export function setupReadingInteractions(r) {
     cancelAnimationFrame(positionFrame);
     positionFrame = requestAnimationFrame(() => r.positionSelection());
   };
-  r.scope.on($("#article"), "pointerdown", () => {
+  r.scope.on(document, "pointerdown", (ev) => {
+    r.selectionDismissedByPointer = false;
+    if (r.aiSetupOpen) return;
+    if (ev.button !== 0 || !r.selection) return;
+    // Keep the anchor while operating its menu/panels. A new source gesture or
+    // an outside click owns a fresh selection, including after native collapse.
+    if (ev.target.closest(".selection-handles,#reading-selection,#tool-panel,#reader-chrome,#show-tools,.annotation-pop,#translation-pane,.inline-grammar,#toast")) return;
+    r.selectionDismissedByPointer = true;
+    r.clearSelection();
+    if (ev.target.closest(".reading-edge-grip")) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+  }, { capture: true });
+  r.scope.on($("#article"), "pointerdown", (ev) => {
+    if (ev.button !== 0 || (ev.target.closest("button,a,input,textarea,select") && !ev.target.closest(".source-unit"))) return;
     r.selecting = true;
     r.positionSelection();
   });
+  let selectionFrame;
   const endSelectionGesture = () => {
+    if (!r.selecting) return;
     r.selecting = false;
-    schedulePosition();
+    cancelAnimationFrame(selectionFrame);
+    selectionFrame = requestAnimationFrame(() => {
+      r.captureSelection();
+      r.positionSelection();
+    });
   };
   r.scope.on(document, "pointerup", endSelectionGesture);
   r.scope.on(document, "pointercancel", endSelectionGesture);
@@ -384,6 +430,7 @@ export function setupReadingInteractions(r) {
   menuResize.observe($("#reading-selection"));
   r.scope.cleanup(() => {
     cancelAnimationFrame(positionFrame);
+    cancelAnimationFrame(selectionFrame);
     menuResize.disconnect();
     r.selectedTextRanges = [];
   });
@@ -403,6 +450,7 @@ export function setupReadingInteractions(r) {
     for (const controller of r.pending.values()) controller.cancel();
     r.pending.clear();
   });
+  installSelectionHandles(r);
   r.enhancePop = async (pop, item, anchor, scope) => {
     if (!anchor) return;
     const word = anchor.quote.normalize("NFKC");

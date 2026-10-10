@@ -569,10 +569,29 @@ class OmarchyAdapter:
             return self._fallback(page, 'ocr_empty')
         reason, bands = _ambiguous_regions(nonempty, width, height, page['rotation'])
         if reason and bands is None:
+            if reason in ('vertical_reading_order_unverified', 'nonmonotonic_reading_order_unverified',
+                          'overlapping_ocr_regions_unverified'):
+                recovery = omarchy_layout.recover_prose_regions(nonempty, width, height)
+                recovered = self._layout_blocks(recovery, page) if recovery else None
+                if recovered:
+                    page.update(blocks=recovered, quality_state='candidate_with_fallback',
+                                layout_policy=omarchy_layout.REGIONAL_POLICY)
+                    page['text'] = '\n\n'.join(block['text'] for block in recovered if block['text'])
+                    page['warnings'].append('Only isolated horizontal prose recovered; remaining full-width source bands retain images.')
+                    return self._preserve_source_artwork(page, nonempty)
             return self._fallback(page, reason)
         recovery = (omarchy_layout.recover_layout(nonempty, width, height)
                     if reason == 'multicolumn_or_table_unverified' else None)
         recovered_blocks = self._layout_blocks(recovery, page) if recovery else None
+        if reason == 'multicolumn_or_table_unverified' and not recovered_blocks:
+            recovery = omarchy_layout.recover_prose_regions(nonempty, width, height)
+            recovered_blocks = self._layout_blocks(recovery, page) if recovery else None
+            if recovered_blocks:
+                page.update(blocks=recovered_blocks, quality_state='candidate_with_fallback',
+                            layout_policy=omarchy_layout.REGIONAL_POLICY)
+                page['text'] = '\n\n'.join(block['text'] for block in recovered_blocks if block['text'])
+                page['warnings'].append('Only isolated horizontal prose recovered; surrounding diagrams retain full-width source images.')
+                return self._preserve_source_artwork(page, nonempty)
         if recovered_blocks:
             page['blocks'] = recovered_blocks
             page['layout_policy'] = omarchy_layout.POLICY
@@ -588,6 +607,50 @@ class OmarchyAdapter:
         page['text'] = '\n\n'.join(block['text'] for block in page['blocks'] if block['text'])
         if not page['text'] and any(block['type'] == 'image_fallback' for block in page['blocks']):
             page['quality_state'] = 'image_fallback'
+        return self._preserve_source_artwork(page, nonempty)
+
+    def _preserve_source_artwork(self, page, lines):
+        """OCR rows alone cannot establish that a scanned page has no artwork."""
+        if not page['text'] or not self.digital.pdf.pages[page['page_number'] - 1].images:
+            return page
+        covered = [b['source']['bbox'] for b in page['blocks'] if b.get('asset')]
+        original = self.digital.renderer[page['page_number'] - 1]
+        try:
+            bitmap = original.render(scale=min(640 / page['width'], 1100 / page['height']),
+                                     limit_image_cache=True)
+            try:
+                bands = omarchy_layout.uncovered_image_bands(bitmap.to_pil(), lines, covered,
+                                                            page['width'], page['height'])
+            finally:
+                bitmap.close()
+        finally:
+            original.close()
+        if not bands:
+            return page
+        number = page['page_number']
+        for index, box in enumerate(bands):
+            contained = [b for b in page['blocks'] if b.get('asset') and
+                         box[0] <= b['source']['bbox'][0] and box[1] <= b['source']['bbox'][1] and
+                         box[2] >= b['source']['bbox'][2] and box[3] >= b['source']['bbox'][3]]
+            page['blocks'] = [b for b in page['blocks'] if b not in contained]
+            page['blocks'].append({'type': 'image', 'text': '',
+                'source': {'page_number': number, 'bbox': box,
+                           'coordinate_space': 'rotated_crop_top_left',
+                           'ocr_line_ids': [lid for b in contained for lid in b['source'].get('ocr_line_ids', [])]},
+                'asset': self.digital.crop_asset(number, box, f'omarchy-artwork-{index + 1:03d}',
+                                                native_raster_limit=True),
+                'source_type': 'unclassified_source_pixels'})
+        # Insert images without changing the established order of any text
+        # blocks (especially already verified left/right column ordering).
+        pictures = [b for b in page['blocks'] if b.get('source_type') == 'unclassified_source_pixels']
+        page['blocks'] = [b for b in page['blocks'] if b not in pictures]
+        for picture in sorted(pictures, key=lambda b: b['source']['bbox'][1], reverse=True):
+            index = next((i for i, b in enumerate(page['blocks'])
+                          if b['source']['bbox'][1] >= picture['source']['bbox'][1]), len(page['blocks']))
+            page['blocks'].insert(index, picture)
+        for index, block in enumerate(page['blocks']):
+            block['id'] = f'p{number:06d}-b{index + 1:05d}'
+        page['warnings'].append('Unrepresented source artwork retained as original image; OCR text remains selectable.')
         return page
 
     def _layout_blocks(self, plan, page):
@@ -600,11 +663,19 @@ class OmarchyAdapter:
             if segment['kind'] == 'text':
                 part = _paragraphs(segment['lines'], number,
                     layout_recovered=True, around_sidebar=segment.get('role') == 'body_around_sidebar')
+                cap = segment.get('drop_cap')
+                if cap:
+                    first = part[0]
+                    first['text'] = cap['text'] + first['text']
+                    first['raw_text'] = cap['text'] + '\n' + first['raw_text']
+                    first['source']['bbox'] = union([first['source']['bbox'], cap['source']['bbox']])
+                    first['source']['lines'].insert(0, {'id': cap['id'], 'text': cap['text'],
+                        'bbox': list(cap['source']['bbox']), 'confidence': cap['confidence']})
                 for block in part:
                     block['layout_role'] = segment.get('role', 'body')
                 blocks.extend(part)
             else:
-                box = omarchy_layout.bounds(segment['lines'])
+                box = segment.get('bbox') or omarchy_layout.bounds(segment['lines'])
                 margin = min(2, (box[3] - box[1]) * .02)
                 box = [max(0, box[0] - margin), max(0, box[1] - margin),
                        min(page['width'], box[2] + margin), min(page['height'], box[3] + margin)]
@@ -698,6 +769,11 @@ def _ambiguous_regions(lines, width, height, rotation):
             other = boxes[other_index]
             overlap = min(box[3], other[3]) - max(box[1], other[1])
             line_height = min(box[3] - box[1], other[3] - other[1])
+            horizontal_overlap = min(box[2], other[2]) - max(box[0], other[0])
+            small_area = min((box[2] - box[0]) * (box[3] - box[1]),
+                             (other[2] - other[0]) * (other[3] - other[1]))
+            if overlap > line_height * .4 and horizontal_overlap > 0 and overlap * horizontal_overlap > small_area * .35:
+                return 'overlapping_ocr_regions_unverified', None
             gap = max(other[0] - box[2], box[0] - other[2])
             if overlap > line_height * .5 and gap > line_height * .75:
                 split_rows.add(index)

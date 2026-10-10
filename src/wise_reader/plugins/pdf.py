@@ -1,11 +1,13 @@
 """PDF import and source controls; retained reading survives processing disable."""
 
 import asyncio
+import json
+from typing import Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, FastAPI, File, Form, Request, Response, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from wise_reader.pdf import PDFModule
 from wise_reader.pdf.uploads import PDFUploadLimit, error
@@ -24,6 +26,27 @@ class Lifecycle(BaseModel):
     action: str
 
 
+class FormulaRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    formula_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+class EnhancementRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    page_number: int = Field(ge=1)
+    region: list[float] | None = Field(default=None, min_length=4, max_length=4)
+    service_id: str = Field(min_length=16, max_length=128)
+    intent_id: str = Field(min_length=16, max_length=128)
+
+
+class EnhancementAction(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    action: Literal["replay", "regenerate", "cancel"]
+    intent_id: str | None = Field(default=None, min_length=16, max_length=128)
+    service_id: str | None = Field(default=None, min_length=16, max_length=128)
+
+
 def register(app: FastAPI, ctx: PluginContext):
     module = PDFModule(ctx)
     app.state.pdf = module
@@ -32,8 +55,68 @@ def register(app: FastAPI, ctx: PluginContext):
 
     def local_operation(request):
         origin = request.headers.get("origin")
-        if origin and urlparse(origin).netloc != request.headers.get("host"):
+        expected = urlparse(str(request.base_url))
+        supplied = urlparse(origin) if origin else None
+        if (request.headers.get("sec-fetch-site") == "cross-site" or
+                (supplied and (supplied.scheme, supplied.netloc) != (expected.scheme, expected.netloc))):
             raise error(403, "origin_rejected", "Use the reader's origin for PDF operations.")
+
+    async def enhancement_body(request, schema=None):
+        local_operation(request)
+        # Validate here so framework errors cannot echo a submitted credential.
+        data = bytearray()
+        async for chunk in request.stream():
+            data.extend(chunk)
+            if len(data) > 16 * 1024:
+                raise error(413, "enhancement_request_too_large", "Enhancement settings or scope are too large.")
+        try:
+            value = json.loads(data)
+            if not isinstance(value, dict):
+                raise ValueError("object_required")
+            return schema.model_validate(value) if schema else value
+        except (ValueError, ValidationError):
+            raise error(422, "invalid_enhancement_request", "Check the selected service, original page and region.") from None
+
+    @router.get("/api/pdf/enhancement/config")
+    async def enhancement_config(response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        await module.enhancements.start()
+        return await asyncio.to_thread(module.enhancements.config)
+
+    @router.put("/api/pdf/enhancement/config")
+    async def save_enhancement_config(request: Request, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return await module.enhancements.update_config(await enhancement_body(request))
+
+    @router.post("/api/pdf/enhancement/test")
+    async def test_enhancement_config(request: Request, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return await module.enhancements.update_config(await enhancement_body(request), test=True)
+
+    @router.get("/api/pdf/books/{book_id}/enhancements")
+    async def enhancement_history(book_id: int, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return await asyncio.to_thread(module.enhancements.history, book_id)
+
+    @router.post("/api/pdf/books/{book_id}/enhancements", status_code=202)
+    async def enhance_page(book_id: int, request: Request, response: Response):
+        body = await enhancement_body(request, EnhancementRequest)
+        job = await module.enhancements.submit(book_id, **body.model_dump())
+        response.headers["Cache-Control"] = "no-store"
+        if job["status"] not in {"queued", "running"}:
+            response.status_code = 200
+        return job
+
+    @router.get("/api/pdf/books/{book_id}/enhancements/{job_id}")
+    async def enhancement_status(book_id: int, job_id: str, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return await asyncio.to_thread(module.enhancements.status, book_id, job_id)
+
+    @router.post("/api/pdf/books/{book_id}/enhancements/{job_id}/actions")
+    async def enhancement_action(book_id: int, job_id: str, request: Request, response: Response):
+        body = await enhancement_body(request, EnhancementAction)
+        response.headers["Cache-Control"] = "no-store"
+        return await module.enhancements.action(book_id, job_id, **body.model_dump())
 
     @router.get("/api/pdf/capabilities")
     async def capabilities():
@@ -81,6 +164,22 @@ def register(app: FastAPI, ctx: PluginContext):
     async def operation(book_id: int, body: Operation, request: Request):
         local_operation(request)
         return await module.operate(book_id, body.action, body.engine, body.start_page, body.end_page, body.region)
+
+    @router.post("/api/pdf/books/{book_id}/formulas", status_code=202)
+    async def recognize_formula(book_id: int, body: FormulaRequest, request: Request, response: Response):
+        local_operation(request)
+        job = await module.formulas.submit(book_id, body.task_id, body.formula_id)
+        if job["status"] == "completed":
+            response.status_code = 200
+        return job
+
+    @router.get("/api/pdf/books/{book_id}/formulas")
+    async def formula_cache(book_id: int, task_id: str, formula_id: str):
+        return {"job": await module.formulas.lookup(book_id, task_id, formula_id)}
+
+    @router.get("/api/pdf/books/{book_id}/formulas/{job_id}")
+    async def formula_status(book_id: int, job_id: str):
+        return await module.formulas.status(book_id, job_id)
 
     @router.post("/api/pdf/books/{book_id}/lifecycle")
     async def lifecycle(book_id: int, body: Lifecycle, request: Request):

@@ -1,3 +1,5 @@
+import { sameSelection } from "./source-selection.js";
+import { anchorFromDOMRange } from "./selection-range.js";
 import { $, $$, e, api, Scope, local, toast, errorBox } from "./core.js";
 import { sourceUrlRanges, overlapsSourceUrl } from "./source-urls.js";
 import { ReadingPages } from "./pagination.js?v=20261008-paper";
@@ -10,7 +12,7 @@ import {
   readerIcon,
 } from "./reader-chrome.js?v=20261006-grab1";
 export class Reader {
-  constructor(ctx, scope, doc) {
+  constructor(ctx, scope, doc, handoff = null) {
     this.ctx = ctx;
     this.scope = scope;
     this.doc = doc;
@@ -21,6 +23,7 @@ export class Reader {
     this.search = "";
     this.selection = null;
     this.restoring = true;
+    this.handoff = handoff;
   }
   async mount() {
     const d = this.doc;
@@ -153,12 +156,14 @@ export class Reader {
     if (s.signal.aborted) return;
     installReadingTraces(this);
     installCoreReaderTools(this);
-    const selector = local.get(`jump:${d.id}`);
+    // A physical boundary turn has an explicit first/last-spread landing.
+    // Old resume state must not replace it while optional tools are mounting.
+    const selector = this.handoff ? null : local.get(`jump:${d.id}`);
     if (selector) {
       local.remove(`jump:${d.id}`);
       await this.restore(selector, { automatic: selector.resume_position === true, mark: !selector.resume_position });
     }
-    const translationJump = local.get(`translation-jump:${d.id}`);
+    const translationJump = this.handoff ? null : local.get(`translation-jump:${d.id}`);
     if (translationJump) {
       local.remove(`translation-jump:${d.id}`);
       const saved = this.assists.find((a) => a.id === translationJump);
@@ -170,7 +175,8 @@ export class Reader {
         this.restoring = false;
         // Explicit directory/note jumps are a new reading position, not merely
         // resuming the old one. Persist after the initial restore guard lifts.
-        if (selector) this.emit("position");
+        if (selector || this.handoff) this.emit("position");
+        this.handoff = null;
         $(".reader")?.setAttribute("data-ready", "true");
         $(".reader").dataset.readyMs = (
           performance.now() - this.ctx.readStarted
@@ -230,6 +236,8 @@ export class Reader {
       b.setAttribute("aria-expanded", String(b.dataset.tool === id));
     });
     scope.on($(".panel-header button", el), "click", () => this.dismissPanel());
+    if (id === "outline")
+      this.mountBookmarkList?.($(".panel-content", el), scope);
     try {
       await mount?.($(".panel-content", el), scope);
     } catch (err) {
@@ -260,10 +268,13 @@ export class Reader {
   }
   outline() {
     if (this.pdfTools) return this.pdfTools.outline();
+    const bookHeader = this.book
+      ? `<p class="muted"><a href="#/book/${this.book.id}">${e(this.book.title)}</a> · ${this.doc.chapters.length} 章</p>`
+      : "";
     this.panel(
       "outline",
       "阅读目录",
-      this.doc.chapters.length
+      bookHeader + (this.doc.chapters.length
         ? this.doc.chapters
             .map(
               (ch) =>
@@ -277,7 +288,7 @@ export class Reader {
                 `<button class="toc-link" data-jump="${b.id}">${e(b.text)}</button>`,
             )
             .join("") ||
-            '<p class="muted">这是一篇短文，可以直接从头阅读。</p>',
+            '<p class="muted">这是一篇短文，可以直接从头阅读。</p>'),
       (el, s) =>
         s.on(el, "click", (ev) => {
           const b = ev.target.closest("[data-jump]");
@@ -298,7 +309,10 @@ export class Reader {
   }
   draw() {
     this.pages.indexSource();
-    const ready = this.pages.reflow(this.pages.position());
+    const prepared = this.handoff?.pages;
+    const ready = prepared && !this.handoff.adopted
+      ? (this.handoff.adopted = true, this.pages.adopt(prepared))
+      : this.pages.reflow(this.pages.position());
     $("#annotation-meta").textContent =
       `${this.doc.annotation_count} 处辅助理解`;
     $("#density-hint").textContent = this.doc.forced_count
@@ -369,6 +383,7 @@ export class Reader {
   }
   pdfAnchorBlock(anchor, doc = this.doc) {
     if (!doc.pdf || !anchor?.pdf_source) return doc.blocks.find(b => b.id === anchor?.block_id);
+    if (anchor.segments?.length) anchor = { ...anchor, ...anchor.segments[0], segments: [] };
     const source = anchor.pdf_source;
     if (source.source_sha256 && source.source_sha256 !== doc.pdf.source_sha256) return null;
     const matches = doc.blocks.filter(b => b.source?.page_number === source.page_number &&
@@ -379,6 +394,8 @@ export class Reader {
     return matches.find(b => b.id === anchor.block_id) || (matches.length === 1 ? matches[0] : null);
   }
   restore(anchor, {automatic = false, mark = true} = {}) {
+    if (automatic && this.handoff) return Promise.resolve(false);
+    if (anchor?.segments?.length) anchor = { ...anchor, ...anchor.segments[0], segments: [] };
     if (this.doc.pdf && anchor?.pdf_source && (anchor.pdf_historical || !this.pdfAnchorBlock(anchor))) {
       if (automatic) {
         // OCR may replace regions while keeping the source page. Resume there
@@ -406,74 +423,23 @@ export class Reader {
     return this.pages.restore(anchor || { ratio: 0 }, mark);
   }
   captureSelection() {
+    if (this.selecting || this.adjustingSelection || this.aiSetupOpen) return;
     const selection = window.getSelection();
     if (!selection?.rangeCount || selection.isCollapsed) return;
     const range = selection.getRangeAt(0);
-    const startEl = (
-      range.startContainer.nodeType === 1
-        ? range.startContainer
-        : range.startContainer.parentElement
-    )?.closest("[data-block]");
-    const endEl = (
-      range.endContainer.nodeType === 1
-        ? range.endContainer
-        : range.endContainer.parentElement
-    )?.closest("[data-block]");
-    if (!startEl || !endEl) return;
-    if (startEl.matches("[data-pdf-object]")) {
-      const block = this.doc.blocks.find(b => b.id === startEl.dataset.block);
-      if (block) this.choose(this.anchorFor(block.id, 0, block.text.length), startEl);
+    const element = node => node.nodeType === 1 ? node : node.parentElement;
+    const image = element(range.startContainer)?.closest("#article [data-pdf-object]");
+    if (image && image === element(range.endContainer)?.closest("[data-pdf-object]")) {
+      const block = this.doc.blocks.find(b => b.id === image.dataset.block);
+      if (block) this.choose(this.anchorFor(block.id, 0, block.text.length), image);
       return;
     }
-    if (startEl !== endEl) {
-      this.emit("before-selection");
-      for (const controller of this.pending.values()) controller.cancel();
-      this.pending.clear();
-      this.selection = null;
-      this.renderSelection();
-      this.status("请在同一段内选择原文；跨段选择未用于翻译或分析。");
-      return;
-    }
-    const strip = (fragment) => {
-      fragment
-        .querySelectorAll?.(".gloss,.bookmark-marker")
-        .forEach((el) => el.remove());
-      return fragment.textContent;
-    };
-    const before = document.createRange();
-    before.selectNodeContents(startEl);
-    before.setEnd(range.startContainer, range.startOffset);
-    const start = +startEl.dataset.start + strip(before.cloneContents()).length;
-    const quote = strip(range.cloneContents()).trim();
-    if (!quote) return;
-    const block = this.doc.blocks.find((b) => b.id === startEl.dataset.block);
-    const exact = block.text.indexOf(quote, Math.max(0, start - 2));
-    const offset = exact >= 0 ? exact : start;
-    this.emit("before-selection");
-    this.selection = {
-      version: this.doc.version,
-      block_id: block.id,
-      start: offset,
-      end: offset + quote.length,
-      quote: quote.slice(0, 10000),
-      prefix: block.text.slice(Math.max(0, offset - 40), offset),
-      suffix: block.text.slice(
-        offset + quote.length,
-        offset + quote.length + 40,
-      ),
-      ratio: this.position().ratio,
-      ...(block.source && this.doc.pdf ? {
-        kind: "text",
-        pdf_source: {...block.source, book_id: this.doc.pdf.book_id, source_sha256: this.doc.pdf.source_sha256},
-      } : {}),
-    };
-    this.selectionPlacement = {
-      block_id: block.id,
-      offset: offset + quote.length,
-      trigger: "range",
-    };
-    this.renderSelection();
-    this.ctx.run("selection", this).catch(console.error);
+    let anchor;
+    try { anchor = anchorFromDOMRange(this, range); }
+    catch (error) { this.clearSelection({native: false}); this.status(error.message); return; }
+    if (!anchor?.quote.trim()) return;
+    if (sameSelection(this.selection, anchor)) { this.positionSelection(); return; }
+    this.choose(anchor);
   }
   closePop() {
     this.popScope?.dispose();

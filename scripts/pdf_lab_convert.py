@@ -6,6 +6,7 @@ import argparse
 import contextlib
 import json
 import socket
+import signal
 import sys
 from pathlib import Path
 
@@ -20,7 +21,7 @@ def main():
     parser.add_argument('--local-capabilities',action='store_true',help='Probe local adapters without contacting Omarchy.')
     parser.add_argument('--source',type=Path)
     parser.add_argument('--output',type=Path)
-    parser.add_argument('--engine',default='auto',choices=['auto','digital','docling','omarchy'])
+    parser.add_argument('--engine',default='auto',choices=['auto','digital','docling','omarchy','mineru_source'])
     parser.add_argument('--start-page',type=int,default=1)
     parser.add_argument('--end-page',type=int)
     parser.add_argument('--sharded',action='store_true',help='Write bounded page files and a schema v2 index.')
@@ -33,6 +34,10 @@ def main():
         parser.error('--source and --output are required for conversion')
     if args.resume and not args.sharded:
         parser.error('--resume requires --sharded')
+    # SIGTERM uses the same finally cleanup as Ctrl-C, including owned model child.
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, interrupted)
     events=sys.stdout
     def emit(event):
         print(json.dumps(event,ensure_ascii=False),file=events,flush=True)

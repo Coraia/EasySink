@@ -1,3 +1,4 @@
+import { sameSelection } from "../source-selection.js";
 import { $, $$, api, local } from "../core.js";
 
 function chunks(text, limit = 1200) {
@@ -55,12 +56,7 @@ export function install(ctx) {
       cancelPlayback,
       mode = "idle",
       anchor = null;
-    const same = (a) =>
-      a &&
-      anchor &&
-      a.block_id === anchor.block_id &&
-      a.start === anchor.start &&
-      a.end === anchor.end;
+    const same = (a) => sameSelection(a, anchor);
     const active = () => ["loading", "playing"].includes(mode);
     const controls = () => {
       if (r.scope.signal.aborted) return;

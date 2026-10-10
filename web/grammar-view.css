@@ -1,0 +1,137 @@
+/* Inline grammar is a bounded reading aid. It never changes source pagination. */
+#article .inline-grammar {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: min(350px, 48dvh);
+  min-height: 180px;
+  overflow: hidden;
+  margin: 0 0 22px 24px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border);
+  color: var(--ink);
+  font: 13px/1.5 -apple-system, "PingFang SC", sans-serif;
+}
+#article .inline-grammar[aria-busy="true"] {
+  height: auto;
+  min-height: 0;
+  padding-bottom: 12px;
+}
+#article .inline-grammar .grammar-heading {
+  flex: 0 0 auto;
+  margin: 0 0 3px;
+  font-size: 13px;
+  font-weight: 600;
+}
+#article .grammar-scope {
+  flex: 0 0 auto;
+  margin: 0 0 8px;
+  color: var(--muted);
+  font: 11px/1.5 -apple-system, "PingFang SC", sans-serif;
+}
+#article .grammar-tree {
+  flex: 1 1 auto;
+  min-height: 44px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  margin: 0;
+  padding: 2px 4px 6px 0;
+}
+#article .grammar-node-row { gap: 3px; align-items: flex-start; }
+#article .grammar-node-row > button[data-grammar-branch],
+#article .grammar-spacer {
+  flex: 0 0 22px;
+  width: 22px;
+  min-width: 22px;
+}
+#article .grammar-node-row > button[data-grammar-branch] {
+  height: 28px;
+  padding: 2px;
+  font: 17px/1.3 sans-serif;
+}
+#article .grammar-node-row > button[data-grammar-node] {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 7px;
+  margin-bottom: 3px;
+  border-radius: 5px;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  line-height: 1.45;
+}
+#article .grammar-node-row > button[data-grammar-node].is-current {
+  border-color: var(--border);
+}
+#article .grammar-node-row > button[data-grammar-node].is-preview {
+  background: var(--surface);
+}
+#article .grammar-node-row > button[data-grammar-node][aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+#article .grammar-node-label { display: block; font-size: 12px; font-weight: 600; }
+#article .grammar-node-source {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin-top: 2px;
+  font: 14px/1.4 var(--reading-font);
+}
+#article .grammar-node-explanation {
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 2px;
+}
+#article .grammar-children { margin-left: 10px; padding-left: 5px; }
+#article .grammar-detail {
+  flex: 0 0 90px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 8px 2px 0;
+  border-top: 1px solid var(--border);
+}
+#article .grammar-detail-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  color: var(--muted);
+  font-size: 11px;
+}
+#article .grammar-detail-heading button {
+  padding: 2px 5px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+}
+#article .grammar-detail p { margin: 3px 0 8px; overflow-wrap: anywhere; font: inherit; }
+#article .grammar-page-open { overflow-y: auto; overscroll-behavior: contain; }
+#article .grammar-fragment-open > .paragraph-actions { visibility: hidden; pointer-events: none; }
+::highlight(reader-grammar) {
+  background-color: var(--linked-bg);
+  color: var(--linked-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--linked-edge);
+}
+@media (max-width: 650px) {
+  #article .inline-grammar { margin-left: 0; }
+  #article .grammar-children { margin-left: 5px; padding-left: 3px; }
+}
+@media (max-height: 500px) {
+  #article .inline-grammar { height: 210px; min-height: 0; }
+  #article .grammar-detail { flex-basis: 65px; }
+}

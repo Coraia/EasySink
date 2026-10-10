@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import shutil
 import uuid
@@ -15,6 +16,7 @@ from wise_reader.pdf_lab.worker import ROOT, LocalWorkers, local_environment, wo
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MIN_FREE_BYTES = 512 * 1024 * 1024
 MAX_PAGES = 10000
+log = logging.getLogger(__name__)
 
 
 def error(status, code, message):
@@ -49,19 +51,35 @@ class PDFUploadLimit:
         await self.app(scope, bounded_receive, send)
 
 
-async def receive_original(file: UploadFile, root: Path):
+async def receive_original(file: UploadFile, root: Path, *, reclaim=None):
     temporary = root / "incoming" / (uuid.uuid4().hex + ".upload")
     digest, size = hashlib.sha256(), 0
+    reclaimed = False
+
+    async def ensure_space(required, message):
+        nonlocal reclaimed
+        if shutil.disk_usage(root).free >= required:
+            return
+        if reclaim is not None and not reclaimed:
+            reclaimed = True
+            try:
+                await asyncio.to_thread(reclaim)
+            except Exception as exc:
+                log.warning("PDF safe cache reclaim failed (%s)", type(exc).__name__)
+                raise error(507, "cache_reclaim_failed", "Safe local cache cleanup failed; PDF was not received.") from None
+        # Deleted SQLite payload is reusable DB space, not guaranteed free disk.
+        if shutil.disk_usage(root).free < required:
+            raise error(507, "space_insufficient", message)
+
     try:
-        if shutil.disk_usage(root).free < MIN_FREE_BYTES + MAX_UPLOAD_BYTES:
-            raise error(507, "space_insufficient", "Not enough reserved local space to receive a PDF.")
+        await ensure_space(MIN_FREE_BYTES + MAX_UPLOAD_BYTES,
+                           "Not enough reserved local space to receive a PDF.")
         with temporary.open("xb") as stream:
             while chunk := await file.read(1024 * 1024):
                 size += len(chunk)
                 if size > MAX_UPLOAD_BYTES:
                     raise error(413, "upload_too_large", "PDF exceeds the 256 MiB limit.")
-                if shutil.disk_usage(root).free < MIN_FREE_BYTES + len(chunk):
-                    raise error(507, "space_insufficient", "Reserved local storage would be exhausted.")
+                await ensure_space(MIN_FREE_BYTES + len(chunk), "Reserved local storage would be exhausted.")
                 digest.update(chunk)
                 stream.write(chunk)
             stream.flush()

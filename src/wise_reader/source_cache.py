@@ -42,6 +42,23 @@ class SourceCache:
         key.update(row["l1_json"].encode())
         return key.hexdigest()
 
+    def reclaim(self):
+        """Discard only rebuildable analysis; removed payload is not freed disk.
+
+        SQLite may retain its pages for reuse. The caller must remeasure free
+        filesystem space; this does not VACUUM or touch paid responses or traces.
+        Storage failures propagate so an upload cannot proceed on a false claim.
+        """
+        with self.store.transaction():
+            counts = self.store.query_one(
+                "SELECT count(*) AS entries,coalesce(sum(length(payload)),0) AS bytes "
+                "FROM wr_source_analysis"
+            )
+            if counts["entries"]:
+                self.store.execute("DELETE FROM wr_source_analysis")
+        return {"entries_removed": counts["entries"],
+                "payload_bytes_removed": counts["bytes"], "filesystem_bytes_freed": None}
+
     def load(self, row, doc):
         try:
             cached = self.store.query_one(

@@ -86,6 +86,9 @@ button {
 }
 button:disabled {
   opacity: 0.55;
+  cursor: default;
+}
+button[aria-busy="true"] {
   cursor: wait;
 }
 button,
@@ -318,6 +321,8 @@ small,
   padding: 32px 22px;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .sidebar .eyebrow {
   padding: 0 15px;
@@ -491,6 +496,7 @@ small,
 }
 .shelf-tools {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 18px;
@@ -1181,6 +1187,10 @@ body.immersive .reading-sheet {
   text-decoration: underline;
   padding: 0;
   white-space: nowrap;
+}
+#toast [data-ai-setup-link] {
+  color: inherit;
+  text-decoration: underline;
 }
 dialog {
   border: 1px solid var(--border);
@@ -2330,7 +2340,7 @@ body.paged-reading #app {
   grid-auto-columns: minmax(0, 1fr);
   align-items: stretch;
   gap: 0;
-  padding: 0;
+  padding: 0 max(0px, calc((100vw - 1120px) / 2));
   background: var(--bg);
   border-top: 1px solid var(--border);
 }
@@ -2800,6 +2810,10 @@ body.paged-reading #app {
 .reader[data-page-turning="true"] #reading-stage { cursor: grabbing; }
 
 /* PDF objects use the existing prose, tools and notes; the source is a modal. */
+.reading-prose .pdf-inline-script {
+  font-size: .72em;
+  line-height: 0;
+}
 .pdf-object {
   position: relative;
   max-width: 100%;
@@ -3020,4 +3034,175 @@ body.paged-reading #app {
   .pdf-original-controls { gap: 8px; }
   .pdf-original-scroll { padding: 20px; }
   .pdf-object .note-marker { right: 0; }
+}
+
+/* Shelf/chrome scale independently of the measured reading paper. */
+@media (min-width: 1600px) {
+  .page:has(#article-grid) {
+    max-width: 1600px;
+  }
+  #article-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+  .reading-banner {
+    padding-inline: max(26px, calc((100vw - 1440px) / 2));
+  }
+}
+@media (max-height: 700px) and (min-width: 651px) {
+  .sidebar {
+    padding-block: 16px;
+  }
+  .sidebar nav a {
+    padding-block: 8px;
+  }
+  .sidebar-bottom > a {
+    padding-block: 7px;
+  }
+  .sidebar-bottom p {
+    padding-top: 12px;
+    margin-top: 12px;
+  }
+}
+
+/* Selection endpoints are characters, independent of dictionary word targets. */
+.precise-selection .source-unit.is-selected:not(.linked-translation):not(.linked-grammar):not(.linked-reference) {
+  background: transparent;
+  box-shadow: none;
+}
+.selection-handles { position: fixed; inset: 0; pointer-events: none; z-index: 71; }
+.selection-handle {
+  position: absolute; transform: translateX(-50%); width: 32px;
+  height: calc(var(--selection-line-height) + 24px); min-width: 0;
+  padding: 0; margin: 0; border: 0; border-radius: 0;
+  background: transparent; box-shadow: none; color: var(--accent);
+  pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none;
+  cursor: grab;
+}
+.selection-handle:hover, .selection-handle:active { background: transparent; box-shadow: none; }
+.selection-handle::before { content: ""; position: absolute; left: 15px; top: 12px; width: 2px; height: var(--selection-line-height); background: currentColor; }
+.selection-handle::after { content: ""; position: absolute; left: 10px; width: 12px; height: 12px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 2px var(--paper); }
+.selection-handle[data-selection-edge="start"]::after { top: 0; }
+.selection-handle[data-selection-edge="end"]::after { bottom: 0; }
+.selection-handles.is-dragging .selection-handle { cursor: grabbing; }
+.selection-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+
+/* In-reader configuration floats over intact paper; outside clicks only close. */
+dialog.ai-reading-dialog[open] {
+  position: fixed; inset: 0; margin: 0; width: 100%; height: 100dvh;
+  max-width: none; max-height: none; padding: 0; border: 0; border-radius: 0;
+  background: transparent; color: var(--ink); box-shadow: none; z-index: 160;
+  overflow: hidden; overscroll-behavior: contain;
+}
+.ai-reading-card {
+  position: absolute; top: 16px; width: min(430px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px); overflow: auto; overscroll-behavior: contain;
+  background: var(--paper); border: 1px solid var(--border); border-radius: 18px;
+  box-shadow: 0 12px 48px #0003; padding: 20px;
+  font: 14px/1.5 -apple-system, "PingFang SC", sans-serif;
+}
+.ai-reading-card header { display: flex; gap: 12px; align-items: start; justify-content: space-between; }
+.ai-reading-card header h2 { margin: 0; font-size: 19px; }
+.ai-reading-card header p { margin: 6px 0 16px; color: var(--muted); font-size: 12px; }
+.ai-reading-card header button { padding: 4px 10px; font-size: 20px; }
+.ai-reading-card .card { border: 0; padding: 0; background: transparent; box-shadow: none; }
+.ai-reading-card .setting-row h2, .ai-reading-card .setting-row p { display: none; }
+.ai-reading-card .setting-row { justify-content: flex-end; min-height: 24px; margin-bottom: 8px; }
+.ai-reading-card .setting-row > div::after { content: "文本 AI"; }
+.ai-reading-card input { font-size: 14px; padding: 9px 11px; }
+.ai-reading-card label { margin-top: 12px; font-size: 12px; }
+.ai-reading-card .muted, .ai-reading-card .save-state { font-size: 12px; }
+.ai-reading-card footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--border); padding-top: 14px; }
+.ai-reading-card footer span { font-size: 12px; color: var(--muted); }
+.ai-reading-card footer button { font-size: 13px; }
+
+/* Source-first formulas: identical inline geometry in measurement and paper. */
+.reading-prose .pdf-inline-formula {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: -.18em;
+  line-height: 0;
+  white-space: nowrap;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.reading-prose .pdf-inline-formula img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  margin: 0;
+  object-fit: contain;
+}
+.reading-prose .pdf-inline-anchor {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  font-size: 0;
+  line-height: 0;
+  color: transparent;
+}
+.reading-prose .pdf-inline-formula:focus-visible,
+.reading-prose .pdf-inline-formula.is-selected {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+.reading-prose .pdf-inline-missing {
+  min-height: 1em;
+  background: var(--accent-soft);
+}
+.reading-prose .pdf-inline-missing img { visibility: hidden; }
+.reading-prose .pdf-inline-missing::after {
+  content: "▧";
+  position: absolute;
+  inset: 0;
+  line-height: 1;
+  font-size: 1em;
+  color: var(--muted);
+  text-align: center;
+}
+.tool-panel.pdf-formula-panel {
+  width: min(390px, calc(100vw - 24px));
+  max-height: min(640px, calc(100dvh - 24px));
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.pdf-formula-panel .panel-content { min-width: 0; }
+.pdf-formula-details .pdf-formula-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60px;
+  max-height: 210px;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+}
+.pdf-formula-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 184px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+.pdf-formula-details .pdf-formula-status { overflow-wrap: anywhere; }
+.pdf-formula-details .pdf-formula-latex {
+  width: 100%;
+  min-height: 80px;
+  font: 12px/1.5 ui-monospace, monospace;
+  resize: vertical;
+}
+.pdf-formula-details .pdf-formula-result { margin: 12px 0; }
+.pdf-formula-details .pdf-formula-math {
+  overflow-x: auto;
+  padding: 8px 0;
+}
+.pdf-formula-panel .pdf-object-actions {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }

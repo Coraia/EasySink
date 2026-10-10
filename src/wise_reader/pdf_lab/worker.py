@@ -21,6 +21,8 @@ import time
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
+from .adapters.mineru import asset_holders, validate_formula_contract
+
 from .storage import ACTIVE_STATES, LabStore
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -71,7 +73,7 @@ def local_environment() -> dict:
     # personal provider credentials or arbitrary Python search-path overrides.
     environment = {name: os.environ[name] for name in (
         "PATH", "HOME", "USER", "TMPDIR", "LANG", "PYTHONDONTWRITEBYTECODE", "PYTHONNOUSERSITE",
-        "XDG_CACHE_HOME", "PDF_LAB_MODELS_DIR", "HF_HOME", "HF_HUB_CACHE",
+        "XDG_CACHE_HOME", "PDF_LAB_MODELS_DIR", "WISE_READER_MINERU_MANIFEST", "HF_HOME", "HF_HUB_CACHE",
         "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE", "TORCH_HOME",
     )
                    if name in os.environ}
@@ -184,13 +186,29 @@ def checked_page(page: dict, task: dict, book: dict, output: Path, number: int |
             safe_asset(output, block["asset"])
         elif block["type"] in {"image", "image_fallback"}:
             raise ValueError("Image block has no retained asset.")
+    validate_formula_contract(page)
+    for holder in asset_holders(page):
+        relative = holder.get("asset")
+        if relative is None:
+            continue
+        path = safe_asset(output, relative)
+        # Legacy results lack an assets map. New formula objects require one.
+        recorded = page.get("assets", {}).get(relative)
+        if page.get("extraction_method") == "mineru_source" or holder.get("formula_id"):
+            if not isinstance(recorded, dict) or recorded != holder.get("asset_metadata"):
+                raise ValueError("Formula asset is not declared with matching metadata.")
+            if (recorded.get("bytes") != path.stat().st_size
+                    or not isinstance(recorded.get("sha256"), str)
+                    or len(recorded["sha256"]) != 64
+                    or any(type(recorded.get(k)) is not int or recorded[k] <= 0 for k in ("width_px", "height_px"))):
+                raise ValueError("Formula asset metadata is invalid.")
     return page
 
 
 def retain_assets(output: Path, page: dict):
     """Keep snapshots independent of damaged checkpoints later repaired on resume."""
     retained = {}
-    for block in page["blocks"]:
+    for block in asset_holders(page):
         relative = block.get("asset")
         if not relative:
             continue
@@ -349,10 +367,10 @@ class LocalWorkers:
         self.capability_lock = asyncio.Lock()
         self.closing = False
 
-    async def capabilities(self, *, include_remote=True):
+    async def capabilities(self, *, include_remote=True, fresh=False):
         async with self.capability_lock:
             cached = self.cached_capabilities.get(include_remote)
-            if cached and time.monotonic() - self.capability_time[include_remote] < 10:
+            if not fresh and cached and time.monotonic() - self.capability_time[include_remote] < 10:
                 return copy.deepcopy(cached)
             reason = "Conversion entry point is not ready."
             result = None
@@ -370,7 +388,10 @@ class LocalWorkers:
                             start_new_session=True)
                         self.probes.add(process)
                     try:
-                        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=20)
+                        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=7)
+                    except asyncio.CancelledError:
+                        await self.terminate(process)
+                        raise
                     except asyncio.TimeoutError:
                         await self.terminate(process)
                         raise ValueError("Capability probe timed out.")
@@ -405,14 +426,19 @@ class LocalWorkers:
             self.capability_time[include_remote] = time.monotonic()
             return copy.deepcopy(result)
 
-    async def engine_error(self, engine: str):
-        capabilities = await self.capabilities(include_remote=engine == "omarchy")
+    async def engine_error(self, engine: str, *, fresh=True):
+        capabilities = await self.capabilities(include_remote=engine == "omarchy", fresh=fresh)
         available = {a["id"] for a in capabilities["adapters"] if a["available"]}
-        known = {a["id"] for a in capabilities["adapters"]} | {"auto"}
+        known = {"auto", "digital", "docling", "omarchy", "mineru_source"}
         if engine not in known:
             return {"code": "unsupported_engine", "message": "Unknown local adapter."}
         if engine not in available and not (engine == "auto" and "digital" in available):
-            return {"code": "model_not_ready", "message": "Selected local adapter is unavailable."}
+            adapter = next((a for a in capabilities["adapters"] if a["id"] == engine), {})
+            readiness = adapter.get("readiness", {})
+            return {"code": readiness.get("code", "model_not_ready"),
+                    "message": adapter.get("missing_reason") or (
+                        "暂时无法确认 Omarchy 是否就绪，请重新检查或改用当前电脑。" if engine == "omarchy"
+                        else "本机 PDF 处理组件尚未就绪，请准备好后重试。")}
         return None
 
     async def recover(self):
@@ -467,6 +493,11 @@ class LocalWorkers:
         error = await self.engine_error(engine)
         if error:
             return None, error
+        configuration_identity = None
+        if engine == 'mineru_source':
+            caps = await self.capabilities(include_remote=False)
+            configuration_identity = next((a.get('configuration_identity') for a in caps['adapters']
+                                           if a['id'] == engine), None)
         async with self.lock:
             if self.closing:
                 return None, {"code": "service_stopping", "message": "PDF service is stopping."}
@@ -477,6 +508,13 @@ class LocalWorkers:
                         return old, None
                     return None, {"code": "task_conflict", "message": "This book already has an active local task."}
                 if same and not force and old["state"] in {"paused", "cancelled", "completed"}:
+                    if engine == 'mineru_source':
+                        try:
+                            previous_config = load_json(self.store.output(old) / 'result.json').get('configuration_identity')
+                        except (ValueError, OSError):
+                            previous_config = None
+                        if not configuration_identity or previous_config != configuration_identity:
+                            continue  # Keep the old edition; explicit conversion gets matching current settings.
                     if old["state"] == "completed":
                         try:
                             self._restore_counts(old, book)
@@ -589,7 +627,7 @@ class LocalWorkers:
                     db.execute("INSERT INTO pages VALUES (?, ?, ?, ?, ?)",
                         (number, retained, page_ready, digest, time.time()))
                     db.executemany("INSERT OR IGNORE INTO assets VALUES (?, ?)",
-                        [(b["asset"], number) for b in page["blocks"] if b.get("asset")])
+                        [(b["asset"], number) for b in asset_holders(page) if b.get("asset")])
                     done += 1
                     ready += page_ready
                 if expected_page is None:
@@ -636,6 +674,18 @@ class LocalWorkers:
             task = self.store.task(task_id)
             if task["state"] != "queued" or self.closing:
                 return
+            # Queue admission is not execution admission. A different GPU
+            # workload may have started while this task waited for capacity.
+            readiness_error = await self.engine_error(task["engine"], fresh=True)
+            async with self.lock:
+                task = self.store.task(task_id)
+                if task["state"] != "queued" or self.closing:
+                    return
+                if readiness_error:
+                    self.store.update(task_id, state="paused", pid=None, error={**readiness_error,
+                        "message": readiness_error["message"] + " 原件和已完成内容保留；恢复服务后可继续转换。"})
+                    self.dispatch_notification(task_id)
+                    return
             book = self.store.book(task["book_id"])
             output = self.store.output(task)
             command = [str(worker_python()), str(CONVERTER), "--source", str(self.store.source(book)),
@@ -919,7 +969,7 @@ class LocalWorkers:
                 raise ValueError("Asset is not registered in a published page.")
         else:
             result = checked_result(output / "published.json", task, book)
-            if not any(b.get("asset") == asset for p in result["pages"] for b in p["blocks"]):
+            if not any(b.get("asset") == asset for p in result["pages"] for b in asset_holders(p)):
                 raise ValueError("Asset is not registered in a published page.")
         return path
 
@@ -942,7 +992,7 @@ class LocalWorkers:
                 engines.append(result.get("engine", task["engine"]))
                 warnings.extend(result.get("warnings", []))
                 for page in result["pages"]:
-                    for block in page["blocks"]:
+                    for block in asset_holders(page):
                         if block.get("asset") is not None:
                             block["asset_url"] = (f"{self.asset_prefix}/books/{book['id']}/assets/{task['id']}/"
                                                   + quote(block["asset"], safe="/"))

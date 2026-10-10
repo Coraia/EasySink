@@ -302,15 +302,20 @@ class DigitalAdapter:
         return markers
 
     def convert_page(self, page_number):
+        from .digital_layout import (BAD_GLYPH, formula_regions, glyph_lines,
+                                     owned_regions, prose_words, protect_side_text,
+                                     visual_regions)
         page = self.pdf.pages[page_number - 1]
         width, height, crop, raw_crop, media = self.geometry(page_number)
         clipped = page.crop(crop,strict=False)
         tables = clipped.find_tables()
         # Include outer stroke thickness once in the table, rather than making
         # independent top/bottom "figure" strips around a complete table crop.
-        table_boxes = [clamp([t.bbox[0]-crop[0]-2,t.bbox[1]-crop[1]-2,
-                             t.bbox[2]-crop[0]+2,t.bbox[3]-crop[1]+2],width,height) for t in tables]
-        clipped, lines = self._chars(page,width,height,crop,table_boxes)
+        table_objects=[clamp([t.bbox[0]-crop[0],t.bbox[1]-crop[1],
+                              t.bbox[2]-crop[0],t.bbox[3]-crop[1]],width,height) for t in tables]
+        clipped, lines = self._chars(page,width,height,crop)
+        table_boxes=[clamp(protect_side_text(b,[b[0]-2,b[1]-2,b[2]+2,b[3]+2],lines),width,height)
+                     if page.rotation==0 else clamp([b[0]-2,b[1]-2,b[2]+2,b[3]+2],width,height) for b in table_objects]
         result = {'page_number': page_number, 'width': width, 'height': height, 'text': '', 'blocks': [],
                   'rotation': page.rotation, 'crop_box': raw_crop, 'media_box': media,
                   'coordinate_space': 'rotated_crop_top_left', 'extraction_method': 'digital_text',
@@ -343,18 +348,49 @@ class DigitalAdapter:
             result['warnings'].append('Dominant original scan image: existing text/OCR overlay is withheld for actual OCR or faithful fallback.')
             page.close()
             return result
-        vector_regions=self.vector_regions(page_number,table_boxes+image_boxes,result['non_content_objects'])
+        # Keep the legacy vector_regions contract used by OCR adapters. Native
+        # text can distinguish empty text frames and use final region ownership.
+        vector_candidates=(visual_regions(clipped,crop,width,height,page_number,result['non_content_objects'],lines)
+                           if page.rotation==0 else [{'bbox':b,'reason':'vector_not_structurally_verified'}
+                           for b in self.vector_regions(page_number,table_boxes+image_boxes,result['non_content_objects'])])
+        vector_regions=[r['bbox'] for r in vector_candidates]
         if any((b[2]-b[0])*(b[3]-b[1]) > width*height*.65 for b in vector_regions):
             fallback([0,0,width,height],'complex_vector_layout')
             result['quality_state']='image_fallback'
             result['warnings'].append('Large unclassified vector layout: faithful whole original retained; native fragments withheld.')
             page.close()
             return result
-        if vector_regions:
-            clipped,lines=self._chars(page,width,height,crop,table_boxes+vector_regions)
+        all_chars=list({id(c):c for line in lines for c in line['chars']}.values())
+        marginal=[c for c in all_chars if page.rotation==0 and
+                  abs(c.get('matrix',(1,0))[0]) < abs(c.get('matrix',(1,0))[1]) and
+                  (c['x1']<width*.08 or c['x0']>width*.92)]
+        if marginal:
+            result['non_content_objects'].append({'type':'page_margin','role':'rotated_margin_annotation',
+                'text':normalized_text(''.join(c['text'] for c in marginal)),
+                'source':{'page_number':page_number,'bbox':union([c['_source_bbox'] for c in marginal])}})
+        raster_markers=self.raster_markers(page_number,clipped.images,lines,crop,width,height,table_boxes+vector_regions)
+        used_images={m['image_index'] for m in raster_markers.values() if 'image_index' in m}
+        regions=owned_regions(
+            vector_candidates+
+            [{'bbox':b,'object_bbox':original,'reason':'table_not_structurally_verified'} for b,original in zip(table_boxes,table_objects)]+
+            [{'bbox':b,'reason':'original_image'} for i,b in enumerate(image_boxes) if i not in used_images],
+            all_chars,width,height)
+        def remaining_lines(excluded):
+            _, fresh=self._chars(page,width,height,crop,excluded+[c['_source_bbox'] for c in marginal])
+            return fresh
+        lines=remaining_lines([r['bbox'] for r in regions])
         sizes = [c['size'] for line in lines for c in line['chars'] if c['text'].strip()]
         base_size = median(sizes) if sizes else 12
-        from pdfplumber.utils import chars_to_textmap
+        lines=glyph_lines(lines,base_size)
+        formulas=formula_regions(lines,base_size,width,height)
+        # A literal cid is an unmapped glyph, not printable reading text. Display
+        # equations have already claimed their scripts; remaining unknown glyphs
+        # get a local faithful crop without guessing their Unicode identity.
+        unknown=[{'bbox':clamp([c['_source_bbox'][0]-1,c['_source_bbox'][1]-1,
+                               c['_source_bbox'][2]+1,c['_source_bbox'][3]+1],width,height),
+                  'reason':'formula_unmapped_glyph'} for line in lines for c in line['chars'] if BAD_GLYPH.search(c['text'])]
+        regions=owned_regions(regions+formulas+unknown,all_chars,width,height)
+        lines=glyph_lines(remaining_lines([r['bbox'] for r in regions]),base_size)
         ambiguous = []
         split_lines = []
         normalized_height = width if page.rotation in [90,270] else height
@@ -366,11 +402,13 @@ class DigitalAdapter:
                 if groups[-1] and c['x0']-groups[-1][-1]['x1'] > max(48,base_size*4):
                     groups.append([])
                 groups[-1].append(c)
-            if len(groups)>1 and chars and min(c['top'] for c in chars) < normalized_height*.88:
+            # Repeated gaps are evidence of columns only when both sides carry
+            # prose, not equation numbers, summation limits or script rows.
+            if len(groups)>1 and sum(len(prose_words({'chars':g}))>=3 for g in groups)>=2 and chars and min(c['top'] for c in chars) < normalized_height*.88:
                 ambiguous.append(line)
             if len(groups)>1:
                 for group in groups:
-                    split_lines.extend(chars_to_textmap(group,layout=False,x_tolerance_ratio=.2).extract_text_lines(return_chars=True))
+                    split_lines.extend(glyph_lines([{'chars':group}],base_size))
             else:
                 split_lines.append(line)
         if len(ambiguous) >= 3:
@@ -380,8 +418,23 @@ class DigitalAdapter:
             page.close()
             return result
         lines = split_lines
-        raster_markers=self.raster_markers(page_number,clipped.images,lines,crop,width,height,table_boxes+vector_regions)
-        used_images=set()
+        def baseline(line):
+            main=[c for c in line['chars'] if not c.get('_script')]
+            return median(c['bottom'] for c in main or line['chars'])
+        # Script descenders change bounding-box gaps. Infer normal leading from
+        # actual body baselines, then preserve larger paragraph breaks.
+        body_leading=[]
+        for before,after in zip(lines,lines[1:]):
+            size_before=median(c['size'] for c in before['chars'])
+            size_after=median(c['size'] for c in after['chars'])
+            delta=baseline(after)-baseline(before)
+            if (.8*base_size<=size_before<=1.2*base_size and .8*base_size<=size_after<=1.2*base_size
+                and base_size*.8<delta<base_size*3
+                and abs(min(c['x0'] for c in before['chars'])-min(c['x0'] for c in after['chars']))<base_size*1.5):
+                body_leading.append(delta)
+        join_leading=(median(body_leading) if body_leading else base_size*1.2)*1.22
+        previous_baseline=None
+        raster_markers=self.raster_markers(page_number,clipped.images,lines,crop,width,height,[r['bbox'] for r in regions])
         for line_index,line in enumerate(lines):
             # TextMap repeats the same glyph object when expanding a ligature.
             # Keep one original glyph/box; reading text remains expanded.
@@ -391,6 +444,7 @@ class DigitalAdapter:
             bbox = union([c['_source_bbox'] for c in chars])
             raw = line['text']
             content = normalized_text(raw)
+            inline_styles=line.get('inline_styles',[])
             fonts = ' '.join(c['fontname'].lower() for c in chars)
             native_marker=bool(content.lstrip()[:1] and content.lstrip()[0] in BULLET_CHARS)
             marker=raster_markers.get(line_index)
@@ -399,22 +453,15 @@ class DigitalAdapter:
                 marker={'kind':'bullet','glyph':'•','original_glyph':first['text'],
                         'bbox':first['_source_bbox'],'asset':None,'classification':'native_bullet_glyph'}
                 content=re.sub('^['+BULLET_CHARS+']\\s*','',content.lstrip())
-            link_glyphs=sum(any((a.get('uri') or getattr(a.get('data',{}).get('Subtype'),'name',None)=='Link')
-                and a['x0']-2 <= c['_source_bbox'][0]+crop[0] <= a['x1']+2
-                and a['top']-2 <= c['_source_bbox'][1]+crop[1] <= a['bottom']+2
-                for a in clipped.annots or []) for c in chars)
-            url_text=bool(re.search(r'https?://|www\.|\w+\?\S*=\S*&',content)) or (link_glyphs >= len(chars)*.7 and bool(re.search(r'[?&/]',content)))
-            if not url_text and (re.search(r'[=∑∫√≤≥]',content) or any(f in fonts for f in ['cmmi','cmsy','math'])):
-                # Expand slightly to retain ascenders/subscripts in the local crop.
-                bbox = clamp([bbox[0]-2,bbox[1]-3,bbox[2]+2,bbox[3]+3],width,height)
-                fallback(bbox,'formula_not_structurally_verified')
-                continue
+                removed=len(raw)-len(content)
+                inline_styles=[{**s,'start':s['start']-removed,'end':s['end']-removed} for s in inline_styles if s['start']>=removed]
             size = median(c['size'] for c in chars)
             if marker:
                 kind='list'
             elif re.fullmatch(r'(?:\*\s*){3,}',content):
                 kind='separator'
-            elif size > base_size*1.25:
+            elif size > base_size*1.25 or (re.match(r'^\d+(?:\.\d+)*\s+[A-Za-z]',content)
+                and sum('bold' in c['fontname'].lower() or 'bx' in c['fontname'].lower() for c in chars)>len(chars)*.65):
                 kind='heading'
             elif re.match(r'^(?:\d+[.)]|[*-])\s',content):
                 kind='list'
@@ -426,7 +473,12 @@ class DigitalAdapter:
             # Join nearby prose lines; preserve raw line/glyph source mapping.
             previous = blocks[-1] if blocks else None
             previous_text_box=previous.get('text_bbox',previous['source']['bbox']) if previous else None
-            if kind == 'paragraph' and previous and previous['type'] in ['paragraph','list'] and page.rotation == 0 and 0 <= bbox[1]-previous_text_box[3] <= base_size*.8 and abs(bbox[0]-previous_text_box[0]) <= base_size*1.5:
+            if (kind == 'paragraph' and previous and previous['type'] in ['paragraph','list'] and page.rotation == 0
+                and previous_baseline is not None and 0<baseline(line)-previous_baseline<=join_leading
+                and -base_size*.3 <= bbox[1]-previous_text_box[3] and abs(bbox[0]-previous_text_box[0]) <= base_size*1.5):
+                offset=len(previous['text'])+1
+                if inline_styles:
+                    previous.setdefault('inline_styles',[]).extend({**s,'start':s['start']+offset,'end':s['end']+offset} for s in inline_styles)
                 previous['text'] += ' '+content
                 previous['raw_text'] += '\n'+raw
                 previous['raw_glyph_text'] += '\n'+''.join(c['text'] for c in chars)
@@ -436,6 +488,8 @@ class DigitalAdapter:
             else:
                 append(kind,content,bbox,raw_text=raw,raw_glyph_text=''.join(c['text'] for c in chars))
                 blocks[-1]['source']['glyphs']=glyphs
+                if inline_styles:
+                    blocks[-1]['inline_styles']=inline_styles
                 blocks[-1]['text_bbox']=bbox
                 if marker:
                     blocks[-1]['source']['bbox']=union([bbox,marker['bbox']])
@@ -446,16 +500,11 @@ class DigitalAdapter:
                                   'coordinate_space':'rotated_crop_top_left'}}
                     if 'image_index' in marker:
                         used_images.add(marker['image_index'])
-        for bbox in vector_regions:
-            fallback(bbox,'vector_not_structurally_verified')
-        for bbox in table_boxes:
-            fallback(bbox,'table_not_structurally_verified')
-        for image_index,image in enumerate(clipped.images):
-            if image_index in used_images:
-                continue
-            bbox=[image['x0']-crop[0],image['top']-crop[1],image['x1']-crop[0],image['bottom']-crop[1]]
-            if bbox[2]>bbox[0] and bbox[3]>bbox[1]:
-                fallback(clamp(bbox,width,height),'original_image',kind='image')
+            previous_baseline=baseline(line)
+        for region in regions:
+            fallback(region['bbox'],region['reason'],kind='image' if region['reason']=='original_image' else 'image_fallback')
+            if region.get('regions'):
+                blocks[-1]['source_regions']=region['regions']
         # Rotation is reversed for order but source boxes always refer to displayed PDF.
         def unrotated_order(block):
             x0,y0,x1,y1=block['source']['bbox']
@@ -473,13 +522,14 @@ class DigitalAdapter:
                 box=unrotated_box(b['source']['bbox'],width,height,page.rotation)
                 if b['text'].lower().startswith(title) and box[1]>normalized_height*.89:
                     title_footer.append(b)
-        if title_footer:
-            for b in list(blocks):
-                box=unrotated_box(b['source']['bbox'],width,height,page.rotation)
-                if b in title_footer or (box[1]>normalized_height*.89 and re.fullmatch(r'\d{1,4}|[ivxlcdmIVXLCDM]{1,8}',b['text'])):
-                    result['non_content_objects'].append({'type':'page_footer','role':'running_title' if b in title_footer else 'printed_page_label',
-                        'text':b['text'],'source':b['source']})
-                    blocks.remove(b)
+        for b in list(blocks):
+            box=unrotated_box(b['source']['bbox'],width,height,page.rotation)
+            label=box[1]>normalized_height*.89 and re.fullmatch(r'\d{1,4}|[ivxlcdmIVXLCDM]{1,8}',b['text'])
+            isolated=not any(other is not b and 0<=box[1]-unrotated_box(other['source']['bbox'],width,height,page.rotation)[3]<base_size for other in blocks)
+            if b in title_footer or (label and isolated):
+                result['non_content_objects'].append({'type':'page_footer','role':'running_title' if b in title_footer else 'printed_page_label',
+                    'text':b['text'],'source':b['source']})
+                blocks.remove(b)
         result['text']='\n\n'.join(b['text'] for b in blocks if b['text'])
         result['warnings'].append('Lightweight layout/structure heuristics; complex layouts and text-layer correctness need independent review.')
         if any(b['type']=='image_fallback' for b in blocks):

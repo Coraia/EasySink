@@ -1,0 +1,129 @@
+{
+  "schema": 1,
+  "product_version": "1.0.0",
+  "git_tag": "v1.0.0",
+  "date": "2026-10-10",
+  "status": "user-authorized-v1-baseline",
+  "scope": "Current macOS personal-use baseline and shared Web reading core; not a claim of general-distribution or all-matrix acceptance.",
+  "authorization": "User requested commit and submission of V1 after the latest walkthrough fixes, and separately accepted deferring two known quality/performance issues.",
+  "included": [
+    "EPUB, PDF, TXT and Markdown import and reading",
+    "Progressive PDF reading edition, original-source location, visible preparation progress and service readiness",
+    "Original-first formulas with on-demand recognition and persistent reuse",
+    "Explicit page/region enhancement, replay, scope and quota guards",
+    "Focus reading, bound-paper page turns, native trackpad gestures and layout anchors",
+    "Cross-paragraph and partial-word selection, draggable selection endpoints",
+    "In-reader AI configuration and contextual translation/grammar tools",
+    "Notes, image notes, bookmarks and within-book return history",
+    "macOS client lifecycle and optional registered OCR runtime",
+    "Latest disabled-boundary cursor, cross-book return, repeated-open graphics memory and original-dialog dismissal fixes"
+  ],
+  "accepted_deferrals": [
+    {
+      "id": "V1-D01",
+      "issue": "Occasional slow page-turn frames under conversion CPU load",
+      "evidence": "One candidate turn P95 36.2 ms exceeded the 34 ms gate; retained as failure, not relabelled pass."
+    },
+    {
+      "id": "V1-D02",
+      "issue": "Academic translation terminology and qualification scope",
+      "evidence": "Actual self-hosted-model samples retained semantic ambiguity; unsuccessful prompt candidate was reverted."
+    }
+  ],
+  "unverified_or_limited": [
+    "Clean-machine installation, signing/notarization and broad distribution",
+    "Complete physical sleep/wake and final native input-speed/device matrix",
+    "Full final UI coverage for same-name distinct PDFs, native pause/reopen/resume and local-access-lock lifecycle",
+    "OCR accuracy is independently sampled ordinary text, not a guarantee for every page, formula or language",
+    "Long-duration memory stability and every performance gate are not established by the targeted memory repair"
+  ],
+  "validation": {
+    "method": "Inherited direct walkthrough evidence plus targeted actual Web/native re-walkthroughs of affected flows; no new unit tests or full E2E rerun for this source-freeze operation.",
+    "release_checks": {
+      "runtime_sources_match_accepted_build": true,
+      "runtime_source_count": 336,
+      "changed_python_js_syntax_checks": 60,
+      "credential_pattern_scan": "No high-confidence credential patterns found in candidate files; not a full security audit"
+    },
+    "scan_import": {
+      "pages": 196,
+      "registration_to_full_publication_seconds": 65.526745,
+      "first_api_observed_readable_seconds": 7.228934,
+      "environment": "Actual native client with own Omarchy GPU; OS file cache not purged; not screen-first-paint timing"
+    },
+    "scan_text_quality": {
+      "paragraphs": 35,
+      "scored_characters": 8840,
+      "edits": 26,
+      "accuracy_percent": 99.70588,
+      "boundary": "Fixed independent body-text sample; worst individual paragraph 97.345 percent"
+    },
+    "native_memory": {
+      "unit": "MiB physical footprint of responsible process group",
+      "repeated_open_samples": [
+        513.9,
+        556.3,
+        572.4
+      ],
+      "shelf_samples": [
+        267.6,
+        268.1
+      ],
+      "after_6_turns": 657.0,
+      "after_16_turns": 664.3,
+      "boundary": "Same large display, no forced GC; removed repeated 210.125 MiB graphics allocation retention without lowering resolution"
+    },
+    "latest_dialog_walkthrough": [
+      "Outside click closes without turning the reading page",
+      "Inside click and inside-to-outside drag keep original view open",
+      "Close X still works after reopening",
+      "Native position stayed 14–15/20; Web position stayed 36–37/40",
+      "Protected profile, notes, bookmarks and translation table digests unchanged"
+    ]
+  },
+  "installed_artifact": {
+    "manifest_sha256": "c58ae1d835e969686f2adcb921144f0ec99a9aba64de8c3b78087d4ba6cb74f9",
+    "local_release": "outputs/pdf-original-dismiss-20261010/client",
+    "tag_tracks": "Product/source baseline; internal historical package and bundle version labels preserved to keep the installed tested artifact unchanged."
+  },
+  "evidence": [
+    {
+      "local_path": "outputs/v1-final-closeout-20261010/FINAL.md",
+      "sha256": "96944dc9184e2f4659b505579d896dfbe0bfcc9498f1f718306186f07bb23217",
+      "purpose": "Historical closeout, original failures and unverified scenarios"
+    },
+    {
+      "local_path": "outputs/v1-final-closeout-20261010/CONTROL.md",
+      "sha256": "a74e58f41c13ca0cb32ffe914fe8bd535b98daac10820c93899c32c6a1b00ed2",
+      "purpose": "User deferrals and subsequent fixes"
+    },
+    {
+      "local_path": "outputs/reader-hotfix-20261010/REPORT.md",
+      "sha256": "d0857052f59e8d7b107773e3f9966a6447da40b0c3b8ba98da6b5a52c2549708",
+      "purpose": "Actual native cursor, within-book return and memory walkthrough"
+    },
+    {
+      "local_path": "outputs/pdf-original-dismiss-20261010/verification.json",
+      "sha256": "6da0bf96cd0924b7253fa2924007edafb9eb8546a9eb504aec540c8b3e9699ce",
+      "purpose": "Latest Web and native backdrop-dismiss walkthrough and protected data"
+    },
+    {
+      "local_path": "outputs/pdf-original-dismiss-20261010/client/desktop-manifest.json",
+      "sha256": "c58ae1d835e969686f2adcb921144f0ec99a9aba64de8c3b78087d4ba6cb74f9",
+      "purpose": "Accepted client source and artifact identity"
+    }
+  ],
+  "privacy": "Original books, user databases, API credentials, model weights, private raw responses and local evidence archives are not published with this Git tag.",
+  "v1_1_next": {
+    "map": "https://github.com/Coraia/EasySink/issues/23",
+    "first_alignment": "https://github.com/Coraia/EasySink/issues/27",
+    "dictionary_policy": "https://github.com/Coraia/EasySink/issues/28",
+    "prototype": "https://github.com/Coraia/EasySink/issues/31",
+    "sequence": [
+      "Align collection/mastery/retained-annotation semantics and definition policy",
+      "Review collection, rediscovery and return-to-source prototype",
+      "Write spec and implementation tickets for approved scope"
+    ],
+    "boundary": "V1.1 discussion may begin now; V2 adaptive-assistance decisions are not all prerequisites for V1.1."
+  }
+}

@@ -11,7 +11,6 @@ import platform
 import queue
 import re
 import resource
-import shlex
 import shutil
 import socket
 import subprocess
@@ -22,6 +21,11 @@ import time
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+from .adapters.mineru import asset_holders, validate_formula_contract
+from .adapters.mineru_runtime import mineru_runtime_status, discover_mineru_runtime, MinerURuntimeUnavailable
+
+from .readiness import omarchy_capability as _omarchy_capability
+
 ROOT = Path(__file__).resolve().parents[3]
 PROCESSING_VERSION = 3
 MAX_PAGE_JSON_BYTES = 32 * 1024 * 1024
@@ -31,25 +35,6 @@ MAX_ASSET_PIXELS = 16_000_000
 ASSET_SCALE = 4.0
 PAGE_ATTEMPTS = 2
 PAGE_TIMEOUT_SECONDS = 60.0
-OMARCHY_HEALTH_TIMEOUT_SECONDS = 5
-
-# A capability refresh must not hash/load models, inspect documents or start
-# inference. Full configuration identity is obtained only for explicit jobs.
-_OMARCHY_HEALTH = '''
-import importlib.metadata, json
-from pathlib import Path
-root = Path.home() / 'apps' / 'wise-reader-ocr'
-versions = {name: importlib.metadata.version(name)
-            for name in ('rapidocr', 'onnxruntime-gpu', 'pypdfium2')}
-for name in ('omarchy_ocr_probe.py', 'omarchy_ocr_parallel.py', 'omarchy_ocr_bench.py'):
-    if not (root / name).is_file():
-        raise RuntimeError('Dedicated OCR script is missing: ' + name)
-model_dir = Path(importlib.metadata.distribution('rapidocr').locate_file('rapidocr/models'))
-models = [path for path in model_dir.glob('*.onnx') if path.is_file()]
-if not models or any(path.stat().st_size <= 0 for path in models):
-    raise RuntimeError('Installed OCR model files are missing or empty.')
-print(json.dumps({'versions': versions, 'model_files': len(models)}))
-'''
 
 
 def model_directory() -> Path:
@@ -61,33 +46,6 @@ def _version(name):
         return version(name)
     except PackageNotFoundError:
         return None
-
-
-def _omarchy_capability(digital_ready):
-    value = {'id': 'omarchy', 'label': 'Omarchy OCR (your remote computer)',
-             'available': False, 'missing_reason': None, 'supports_ocr': True,
-             'supports_ranges': False, 'external_to_current_computer': True,
-             'requires_explicit_selection': True, 'host': 'omarchy', 'paid': False,
-             'probe_scope': 'SSH/package metadata/file stat only; CUDA verified by actual worker',
-             'probe_timeout_seconds': OMARCHY_HEALTH_TIMEOUT_SECONDS}
-    if not digital_ready:
-        value['missing_reason'] = 'Local PDF renderer dependencies are unavailable.'
-        return value
-    try:
-        from .adapters.omarchy import HOST, REMOTE_ROOT
-
-        command = ('"$HOME/' + REMOTE_ROOT + '/.venv/bin/python" -c ' + shlex.quote(_OMARCHY_HEALTH))
-        probe = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', HOST, command],
-                               stdin=subprocess.DEVNULL, capture_output=True,
-                               timeout=OMARCHY_HEALTH_TIMEOUT_SECONDS, check=False)
-        if probe.returncode or len(probe.stdout) > 16 * 1024:
-            raise RuntimeError('Omarchy health check failed: ' + probe.stderr.decode('utf8', 'replace')[-500:])
-        health = json.loads(probe.stdout)
-        value.update(available=True, version=health['versions']['rapidocr'])
-    except (OSError, ImportError, ValueError, KeyError, TypeError, RuntimeError, subprocess.TimeoutExpired) as error:
-        value['missing_reason'] = ('Omarchy health check timed out.' if isinstance(error, subprocess.TimeoutExpired)
-                                   else str(error)[:700])
-    return value
 
 
 def get_capabilities(*, include_remote=True):
@@ -114,6 +72,14 @@ def get_capabilities(*, include_remote=True):
         'processing_version': PROCESSING_VERSION,
         'asset_policy': {'target_scale': ASSET_SCALE, 'max_pixels': MAX_ASSET_PIXELS,
                          'max_bytes': MAX_ASSET_BYTES}}
+    mineru = mineru_runtime_status()
+    if mineru['available'] and (not digital or importlib.util.find_spec('psutil') is None):
+        mineru.update(available=False, missing_reason='Local PDF renderer/resource monitor dependencies are missing.')
+    if mineru['available']:
+        mineru['configuration_identity'] = hashlib.sha256(json.dumps(
+            processing_config('mineru_source', False), sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    result['adapters'].append({'id': 'mineru_source', 'label': '公式与复杂排版（原式优先）',
+                               'supports_ocr': True, **mineru})
     if include_remote:
         result['adapters'].append(_omarchy_capability(digital))
     return result
@@ -150,6 +116,7 @@ def atomic_json(path: Path, value, max_bytes=None):
 
 def classify_error(error):
     if isinstance(error, PageAttemptError): return error.category
+    if isinstance(error, MinerURuntimeUnavailable): return 'runtime_not_ready'
     message = str(error).lower()
     if isinstance(error, ModuleNotFoundError): return 'dependency_not_ready'
     if isinstance(error, OSError) and error.errno == 28: return 'space_insufficient'
@@ -354,9 +321,11 @@ def page_summary(page):
         block['type'] == 'image_fallback' and block.get('source', {}).get('bbox') ==
         [0, 0, page.get('width'), page.get('height')] for block in page['blocks'])
     return {'digital_pages': int(page['extraction_method'] == 'digital_text' and bool(page['text'])),
-            'ocr_pages': int(page['extraction_method'] in ['docling_ocr', 'omarchy_ocr'] and
+            'ocr_pages': int(page['extraction_method'] in ['docling_ocr', 'omarchy_ocr', 'mineru_source'] and
                              bool(page['text'].strip()) and not whole_page_fallback),
             'fallback_pages': int(any(b['type'] == 'image_fallback' for b in page['blocks'])),
+            'whole_image_pages': int(whole_page_fallback and not page['text'].strip()),
+            'selectable_text_pages': int(bool(page['text'].strip())),
             'failed_pages': int(bool(resilience.get('fallback'))),
             'retried_pages': int(attempt_count > 1), 'retry_attempts': max(0, attempt_count - 1),
             'failed_attempts': failed_attempts,
@@ -426,6 +395,20 @@ def file_sha256(path):
 
 def processing_config(engine, ocr_ready):
     packages = ['pdfplumber', 'pdfminer-six', 'pypdfium2', 'pillow']
+    digital_code = {p.name: file_sha256(p) for p in sorted(
+        (Path(__file__).parent / 'adapters').glob('digital*.py'))}
+    if engine == 'mineru_source':
+        runtime = discover_mineru_runtime()
+        return {'processing_version': PROCESSING_VERSION, 'engine': engine,
+                'pipeline_code_sha256': file_sha256(Path(__file__)),
+                'adapter_versions': {name: _version(name) for name in packages},
+                'adapter_code': {**digital_code, **{p.name: file_sha256(p) for p in sorted(
+                    (Path(__file__).parent / 'adapters').glob('mineru*.py'))}},
+                'runtime_identity': runtime.identity, 'runtime_settings': runtime.settings,
+                'page_resilience': {'attempts': PAGE_ATTEMPTS, 'timeout_seconds': runtime.settings['page_timeout_seconds'],
+                                    'isolation': 'pinned_python_subprocess', 'fallback': 'original_page_once'},
+                'remote_services': False, 'asset_scale': ASSET_SCALE,
+                'max_asset_pixels': MAX_ASSET_PIXELS, 'max_asset_bytes': MAX_ASSET_BYTES}
     if engine == 'omarchy':
         from .adapters.omarchy import omarchy_configuration
 
@@ -434,8 +417,7 @@ def processing_config(engine, ocr_ready):
         return {'processing_version': PROCESSING_VERSION, 'engine': engine,
                 'pipeline_code_sha256': file_sha256(Path(__file__)),
                 'adapter_versions': {name: _version(name) for name in packages},
-                'adapter_code': {name: file_sha256(Path(__file__).parent / 'adapters' / name)
-                                 for name in ['digital.py', 'omarchy.py']},
+                'adapter_code': {**digital_code, 'omarchy.py': file_sha256(Path(__file__).parent / 'adapters' / 'omarchy.py')},
                 'ocr': omarchy_configuration(),
                 'driver': 'persistent_remote_batch', 'scope_policy': 'full_document_only',
                 'remote_services': True, 'asset_scale': ASSET_SCALE,
@@ -455,8 +437,7 @@ def processing_config(engine, ocr_ready):
             'page_resilience': {'attempts': PAGE_ATTEMPTS, 'timeout_seconds': PAGE_TIMEOUT_SECONDS,
                                 'isolation': 'warm_spawn_process', 'fallback': 'original_page_once'},
             'adapter_versions': {name: _version(name) for name in packages},
-            'adapter_code': {name: file_sha256(Path(__file__).parent / 'adapters' / name)
-                             for name in ['digital.py', 'docling.py']},
+            'adapter_code': {**digital_code, 'docling.py': file_sha256(Path(__file__).parent / 'adapters' / 'docling.py')},
             'models': models, 'ocr_ready': ocr_ready if engine != 'digital' else False,
             'ocr': {'backend': 'ocrmac', 'language': ['en-US'], 'recognition': 'accurate',
                     'force_full_page': True, 'layout_table_device': 'cpu', 'threads': 2,
@@ -494,31 +475,32 @@ def _asset_path(output, relative):
 def finalize_page(page, digital, source_sha256, identity=None):
     from PIL import Image
 
+    validate_formula_contract(page)
     assets = {}
-    for block in page['blocks'] + page.get('non_content_objects', []):
-        block['source'].update(width=page['width'], height=page['height'],
-                               coordinate_space=page['coordinate_space'],
-                               rotation=page.get('rotation', 0), crop_box=page.get('crop_box'),
-                               source_sha256=source_sha256)
-        holders=[block]
-        if block.get('marker'):
-            holders.append(block['marker'])
-        for holder in holders:
-            if not holder.get('asset'):
-                continue
-            path = _asset_path(digital.output, holder['asset'])
-            with Image.open(path) as image:
-                width, height = image.size
-                image.verify()
-            if width * height > MAX_ASSET_PIXELS or path.stat().st_size > MAX_ASSET_BYTES:
-                raise ValueError('Asset exceeds the independent raster budget.')
-            info = dict(digital.asset_metadata.get(holder['asset'], {}))
-            info.update(width_px=width, height_px=height, bytes=path.stat().st_size,
-                        sha256=file_sha256(path))
-            holder['asset_metadata'] = info
-            assets[holder['asset']] = info
-            if info.get('budget_limited'):
-                page['warnings'].append('Original image scale is budget limited; actual scale is recorded.')
+    for holder in asset_holders(page):
+        if holder.get('source'):
+            holder['source'].update(width=page['width'], height=page['height'],
+                                    coordinate_space=page['coordinate_space'],
+                                    rotation=page.get('rotation', 0), crop_box=page.get('crop_box'),
+                                    source_sha256=source_sha256)
+        if not holder.get('asset'):
+            continue
+        path = _asset_path(digital.output, holder['asset'])
+        if holder['asset'] in assets:
+            holder['asset_metadata'] = assets[holder['asset']]
+            continue
+        with Image.open(path) as image:
+            width, height = image.size
+            image.verify()
+        if width * height > MAX_ASSET_PIXELS or path.stat().st_size > MAX_ASSET_BYTES:
+            raise ValueError('Asset exceeds the independent raster budget.')
+        info = dict(digital.asset_metadata.get(holder['asset'], {}))
+        info.update(width_px=width, height_px=height, bytes=path.stat().st_size,
+                    sha256=file_sha256(path))
+        holder['asset_metadata'] = info
+        assets[holder['asset']] = info
+        if info.get('budget_limited'):
+            page['warnings'].append('Original image scale is budget limited; actual scale is recorded.')
     normalized=page.get('normalization')
     if normalized:
         relative=normalized['asset']
@@ -555,8 +537,12 @@ def validated_checkpoint(output, page_number, identity, source_sha256, expected=
         raise ValueError('Invalid checkpoint page geometry.')
     if not isinstance(page.get('blocks'), list) or (not page['blocks'] and page.get('quality_state')!='blank') or not isinstance(page.get('text'), str):
         raise ValueError('Invalid checkpoint content.')
-    if page.get('coordinate_space') != 'rotated_crop_top_left' or page.get('extraction_method') not in ['digital_text', 'docling_ocr', 'omarchy_ocr', 'original_fallback']:
+    if page.get('coordinate_space') != 'rotated_crop_top_left' or page.get('extraction_method') not in ['digital_text', 'docling_ocr', 'omarchy_ocr', 'mineru_source', 'original_fallback']:
         raise ValueError('Invalid checkpoint extraction/source geometry.')
+    validate_formula_contract(page)
+    for holder in asset_holders(page):
+        if holder.get('asset') and holder['asset'] not in page.get('assets', {}):
+            raise ValueError('Checkpoint object asset is undeclared.')
     ids = set()
     for block in page['blocks']:
         if not isinstance(block.get('id'), str) or not isinstance(block.get('text'), str) or not isinstance(block.get('type'), str):
@@ -607,7 +593,7 @@ def convert_pdf(source, output, engine='auto', start_page=1, end_page=None, emit
     source, output = Path(source).resolve(), Path(output).resolve()
     if resume and not sharded:
         raise ValueError('--resume requires --sharded.')
-    if engine not in ['auto', 'digital', 'docling', 'omarchy']:
+    if engine not in ['auto', 'digital', 'docling', 'omarchy', 'mineru_source']:
         raise ValueError(f'Unsupported engine: {engine}')
     if not source.is_file():
         raise FileNotFoundError('Source PDF is unavailable.')
@@ -630,7 +616,7 @@ def _convert_locked(source, output, engine, start_page, end_page, emit, sharded,
     from .adapters.digital import DigitalAdapter
 
     started = time.perf_counter()
-    ocr_ready = get_capabilities(include_remote=False)['adapters'][1]['available']
+    ocr_ready = False if engine == 'digital' else get_capabilities(include_remote=False)['adapters'][1]['available']
     if engine == 'docling' and not ocr_ready:
         raise RuntimeError('Local Docling model/dependencies are not ready; see --capabilities.')
     if not sharded and (output / 'result.json').is_file():
@@ -641,13 +627,22 @@ def _convert_locked(source, output, engine, start_page, end_page, emit, sharded,
     if sharded and not resume and ((output / 'result.json').exists() or list(output.glob('pages/p*.json'))):
         raise ValueError('Output already contains conversion data; use a new directory or --resume.')
     digital = DigitalAdapter(source, output)
-    worker = None if engine == 'omarchy' else PageProcess(source, output, engine, ocr_ready)
+    if engine == 'mineru_source':
+        from .adapters.mineru import MinerUSourceProcess
+        try:
+            worker = MinerUSourceProcess(source, output, digital)
+        except Exception:
+            digital.close()
+            raise
+    else:
+        worker = None if engine == 'omarchy' else PageProcess(source, output, engine, ocr_ready)
     remote = None
     run_id = str(time.time_ns())
     result = {'schema_version': 2 if sharded else 1, 'engine': engine,
               'page_count': digital.page_count, 'pages': [],
               'metrics': {'start_page': start_page, 'end_page': end_page, 'digital_pages': 0,
-                          'ocr_pages': 0, 'fallback_pages': 0, 'structure_recognized_blocks': 0,
+                          'ocr_pages': 0, 'fallback_pages': 0, 'whole_image_pages': 0,
+                          'selectable_text_pages': 0, 'structure_recognized_blocks': 0,
                           'failed_pages': 0, 'retried_pages': 0, 'retry_attempts': 0,
                           'failed_attempts': 0, 'timeout_attempts': 0, 'page_worker_peak_rss_bytes': 0,
                           'peak_rss_scope': 'supervisor_only; model worker is page_worker_peak_rss_bytes',
@@ -673,6 +668,7 @@ def _convert_locked(source, output, engine, start_page, end_page, emit, sharded,
                           'start_page': start_page, 'end_page': stop, 'config': config}
         identity = hashlib.sha256(json.dumps(identity_input, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         result.update(source_sha256=source_sha256, processing_identity=identity,
+                      configuration_identity=hashlib.sha256(json.dumps(config, sort_keys=True, separators=(',', ':')).encode()).hexdigest(),
                       processing_config=config, source=source_information(source, digital, source_sha256),
                       range={'start_page': start_page, 'end_page': stop})
         result['metrics']['source_inspection_ms'] = round((time.perf_counter()-started)*1000, 3)

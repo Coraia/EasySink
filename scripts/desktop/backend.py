@@ -59,6 +59,9 @@ def isolate(data: Path) -> None:
     tempfile.tempdir = str(data / "tmp")
     os.chdir(data)
     sys.path.insert(0, str(APP / "src"))
+    sys.path.insert(0, str(APP / "scripts/desktop"))
+    from runtime import configured_manifest
+    os.environ["WISE_READER_MINERU_MANIFEST"] = str(configured_manifest(data))
 
 
 class SessionGuard:

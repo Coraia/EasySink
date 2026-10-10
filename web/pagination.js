@@ -1,5 +1,6 @@
-import { $, e, local } from "./core.js";
+import { $, e, api, local } from "./core.js";
 import { sourceUrlRanges, overlapsSourceUrl, sourceUrlParts } from "./source-urls.js";
+import { pdfInlineStyles, pdfInlineObjects, renderPdfInline } from "./pdf-inline.js";
 
 import { PageCurlRenderer } from "./page-curl-renderer.js?v=20261008-paper";
 
@@ -16,17 +17,23 @@ export class ReadingPages {
     this.height = 0;
     this.count = 1;
     this.animating = false;
-    this.painter = new PageCurlRenderer(this);
+    this.painter = reader.handoff?.painter || new PageCurlRenderer(this);
+    if (reader.handoff?.painter) this.painter.rebind(this);
     this.generation = 0;
     this.navigation = 0;
     this.waiters = [];
     this.complete = true;
+    this.ranges = new Map();
     this.edge = installReadingEdgeDrag(this);
     this.measure = document.createElement("article");
     this.measure.className = "reading-prose reading-page-measure";
     this.measure.setAttribute("aria-hidden", "true");
     document.querySelector(".reader").append(this.measure);
     const scope = reader.scope;
+    scope.on($("#article"), "pointerdown", () => {
+      // A slow boundary load must not steal a new word lookup or text selection.
+      if (this.preview?.boundary) this.finishAnimation("range-interrupted");
+    }, {capture: true});
     let pixelRatio = devicePixelRatio || 1;
     scope.on(window, "resize", () => {
       if (pixelRatio === (devicePixelRatio || 1)) return;
@@ -35,6 +42,7 @@ export class ReadingPages {
     });
     scope.cleanup(() => {
       this.finishAnimation("route-leave");
+      this.clearRanges();
       ++this.generation;
       ++this.navigation;
       clearTimeout(this.timer);
@@ -128,7 +136,9 @@ export class ReadingPages {
       cancelAnimationFrame(preview.raf);
       clearTimeout(preview.timeout);
       clearTimeout(preview.confirmTimer);
-      this.painter.record(false, reason, preview.requested);
+      clearTimeout(preview.loadingTimer);
+      this.painter.record(false, reason, preview.requested, undefined, preview.setup);
+      if (preview.boundary) this.recordBoundary(preview, false, reason);
     }
     delete $(".reader")?.dataset.pageTurning;
     clearTimeout(this.animationTimeout);
@@ -140,23 +150,159 @@ export class ReadingPages {
     if (this.r.focus.isOpen() || this.animating || this.displayPending) return;
     const target = this.index + direction * this.count;
     if (target < 0 || (this.complete && target >= this.pages.length)) {
-      const chapter = this.r.doc.chapter,
-        chapters = this.r.doc.chapters;
-      const current = chapters.findIndex(ch => ch.doc_id === this.r.doc.id);
-      const next = chapter && chapters[current + direction];
-      if (next && this.r.doc.pdf?.ranges) {
-        const range = this.r.doc.pdf.ranges.find(v => v.doc_id === next.doc_id);
-        if (range && ((direction > 0 && range.start_page > this.r.doc.pdf.end_page + 1) ||
-          (direction < 0 && range.end_page < this.r.doc.pdf.start_page - 1))) {
-          this.r.status("相邻原页范围尚未准备，可从目录选择已准备内容或核对原版。");
-          return;
-        }
-      }
-      if (next) this.r.ctx.navigate("#/read/" + next.doc_id);
-      else this.r.status(direction > 0 ? "已到本篇末尾" : "已到本篇开头");
+      const next = this.neighbor(direction);
+      if (next) {
+        const rect = $("#article").getBoundingClientRect();
+        this.beginTurn(direction, rect.top + rect.height * 0.68, true)?.release(true, "tap");
+      } else this.r.status(this.r.doc.chapter
+        ? direction > 0 ? "已到全书末尾" : "已到全书开头"
+        : direction > 0 ? "已到本篇末尾" : "已到本篇开头");
       return;
     }
     return this.turn(Math.max(0, target), true);
+  }
+  neighbor(direction) {
+    const chapters = this.r.doc.chapters || [];
+    const current = chapters.findIndex(ch => ch.doc_id === this.r.doc.id);
+    return this.r.doc.chapter && current >= 0 ? chapters[current + direction] : null;
+  }
+  rangeNeighbor(direction, report = false) {
+    const doc = this.r.doc, next = this.neighbor(direction);
+    if (!next) return null;
+    // EPUB chapters use the same prepared-paper handoff. A plain route would
+    // restore the destination's old resume position and drop the turn animation.
+    if (!doc.pdf) return next;
+    const range = doc.pdf.ranges?.find(v => v.doc_id === next.doc_id);
+    if (!range || (direction > 0 ? range.start_page !== doc.pdf.end_page + 1
+      : range.end_page !== doc.pdf.start_page - 1)) {
+      if (report) this.r.status("相邻原页范围尚未准备，可从目录选择已准备内容或核对原版。", {notice: true});
+      return null;
+    }
+    return next;
+  }
+  clearRanges() {
+    clearTimeout(this.rangeWarmTimer);
+    for (const entry of this.ranges.values()) entry.controller.abort();
+    this.ranges.clear();
+  }
+  warmRanges() {
+    clearTimeout(this.rangeWarmTimer);
+    if (!this.r.doc.chapter || !this.complete || this.displayPending) return;
+    const directions = [];
+    if (this.index < this.count * 2) directions.push(-1);
+    if (this.index + this.count * 2 >= this.pages.length) directions.push(1);
+    this.rangeWarmTimer = setTimeout(async () => {
+      for (const direction of directions) {
+        if (this.r.scope.signal.aborted || this.animating) return;
+        if (this.rangeNeighbor(direction)) {
+          try {
+            const source = await this.prepareRange(direction);
+            if (!this.animating && !this.r.scope.signal.aborted)
+              await this.painter.prepare(source.index + (direction < 0 ? this.count - 1 : 0), source);
+          } catch { /* Retry on the actual turn. */ }
+        }
+      }
+    }, 160);
+  }
+  prepareRange(direction) {
+    const next = this.rangeNeighbor(direction);
+    if (!next) return Promise.reject(new Error("相邻阅读内容尚未准备"));
+    if (this.ranges.has(next.doc_id)) return this.ranges.get(next.doc_id).promise;
+    const controller = new AbortController(), generation = this.generation;
+    const entry = {controller, packet: null};
+    this.ranges.set(next.doc_id, entry);
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    entry.promise = (async () => {
+      let measure;
+      try {
+        const doc = await api(`/documents/${next.doc_id}?compact=true&density=${this.r.doc.density}`, {signal: controller.signal});
+        if (this.r.doc.pdf ? (!doc.pdf || doc.pdf.book_id !== this.r.doc.pdf.book_id ||
+            doc.pdf.source_sha256 !== this.r.doc.pdf.source_sha256 ||
+            (direction > 0 ? doc.pdf.start_page !== this.r.doc.pdf.end_page + 1
+              : doc.pdf.end_page !== this.r.doc.pdf.start_page - 1))
+            : (!doc.chapter || doc.pdf || doc.chapter.book_id !== this.r.doc.chapter.book_id ||
+              doc.chapter.idx !== this.r.doc.chapter.idx + direction || doc.id !== next.doc_id))
+          throw new Error("相邻阅读内容已更新，请从目录重新核对阅读位置");
+        // A bounded neighboring range, not a second mounted reader or a whole book.
+        const reader = Object.create(Object.getPrototypeOf(this.r));
+        Object.assign(reader, {ctx: this.r.ctx, scope: this.r.scope, doc, search: ""});
+        const pages = Object.create(ReadingPages.prototype);
+        measure = this.measure.cloneNode(false);
+        this.measure.parentElement.append(measure);
+        Object.assign(pages, {r: reader, measure, pages: [], index: 0,
+          width: this.width, height: this.height, count: this.count, generation});
+        reader.pages = pages;
+        pages.indexSource();
+        const builder = pages.buildPages();
+        let done = false;
+        while (!done) {
+          controller.signal.throwIfAborted();
+          if (this.r.scope.signal.aborted || generation !== this.generation)
+            throw new DOMException("Reading layout changed", "AbortError");
+          // Measurement must not compete with an already moving paper sheet.
+          if (this.preview?.ready) {
+            await new Promise(resolve => setTimeout(resolve, 30));
+            continue;
+          }
+          const deadline = performance.now() + 4;
+          do {
+            const part = builder.next();
+            done = part.done;
+            if (!done && part.value === null) break;
+            if (!done) pages.pages.push(part.value);
+          } while (!done && performance.now() < deadline);
+          if (!done) await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        if (!pages.pages.length) throw new Error("相邻范围暂时没有可读内容");
+        pages.index = direction > 0 ? 0 : Math.floor((pages.pages.length - 1) / pages.count) * pages.count;
+        entry.packet = pages;
+        return pages;
+      } finally {
+        clearTimeout(timeout);
+        measure?.remove();
+      }
+    })().catch(error => {
+      if (this.ranges.get(next.doc_id) === entry) this.ranges.delete(next.doc_id);
+      throw error;
+    });
+    return entry.promise;
+  }
+  recordBoundary(preview, completed, reason) {
+    if (preview.recorded) return;
+    preview.recorded = true;
+    const metric = {
+      from: this.r.doc.id, to: preview.boundary.doc_id, direction: preview.direction,
+      completed, reason, warm: preview.boundaryWarm,
+      error: preview.failure || null,
+      preparationMs: preview.preparedAt ? +(preview.preparedAt - preview.requested).toFixed(1) : null,
+      totalMs: +(performance.now() - preview.requested).toFixed(1),
+      landingIndex: preview.destination?.index ?? null,
+      sourceStart: preview.destination?.r.doc.pdf?.start_page ?? null,
+      sourceEnd: preview.destination?.r.doc.pdf?.end_page ?? null,
+      paper: this.painter.scene ? this.painter.metrics?.at(-1) || null : null,
+    };
+    this.r.ctx.rangeTurns ??= [];
+    this.r.ctx.rangeTurns.push(metric);
+    this.r.ctx.rangeTurns = this.r.ctx.rangeTurns.slice(-20);
+    $(".reader").dataset.rangeTurns = JSON.stringify(this.r.ctx.rangeTurns);
+  }
+  adopt(pages) {
+    this.layout();
+    // A comparison pane or a viewport change can alter the landing geometry.
+    // Preserve the target source, never reuse pagination measured at another width.
+    const fragment = pages.pages[pages.index]?.[0];
+    if (this.count !== pages.count || Math.abs(this.width - pages.width) > 1 ||
+        Math.abs(this.height - pages.height) > 1) {
+      return this.reflow(fragment ? this.r.anchorFor(fragment.id, fragment.start, fragment.start) : null);
+    }
+    this.generation = pages.generation;
+    this.pages = pages.pages;
+    this.complete = true;
+    this.index = pages.index;
+    this.anchor = this.firstAnchor();
+    $(".reader").dataset.paginationReady = "true";
+    this.render();
+    return Promise.resolve();
   }
   async seek(ratio) {
     this.r.emit("before-navigation");
@@ -179,11 +325,16 @@ export class ReadingPages {
     this.r.annotations = [];
     this.fragments = new Map();
     this.urlRanges = new Map();
+    this.inlineStyles = new Map();
+    this.inlineObjects = new Map();
     this.blocks = new Map();
     this.offsets = new Map();
     this.length = 0;
     for (const block of this.r.doc.blocks) {
       this.blocks.set(block.id, block);
+      this.inlineStyles.set(block.id, pdfInlineStyles(block));
+      this.inlineObjects.set(block.id, this.r.doc.pdf
+        ? pdfInlineObjects(block, this.r.doc.pdf.book_id) : []);
       this.offsets.set(block.id, this.length);
       this.length += block.text.length;
       const urls = sourceUrlRanges(block.text || "");
@@ -258,11 +409,13 @@ export class ReadingPages {
         const a = Math.max(start, f.start),
           z = Math.min(end, f.end),
           source = b.text.slice(a, z);
-        const rendered = measure
-          ? e(source)
-          : b.type === "code"
-            ? this.r.highlight(source)
-            : this.words(source, a, b.id);
+        const render = (value, offset) => measure ? e(value)
+          : b.type === "code" ? this.r.highlight(value) : this.words(value, offset, b.id);
+        const styles = this.inlineStyles.get(b.id) || [];
+        const objects = this.inlineObjects.get(b.id) || [];
+        const rendered = styles.length || objects.length
+          ? renderPdfInline(source, a, styles, render, objects)
+          : render(source, a);
         if (f.type === "plain") return rendered;
         return `<span class="annotation" role="button" tabindex="0" data-target="${e(f.target)}" data-kind="${e(f.kind)}" data-annotation="${f.annotation}" aria-label="${e(source)}：${e(f.note)}"><span class="source-text">${rendered}</span>${z === f.end ? `<span class="gloss" aria-hidden="true">${e(f.note)}</span>` : ""}</span>`;
       })
@@ -289,6 +442,7 @@ export class ReadingPages {
   reflow(anchor = this.position()) {
     if (this.r.scope.signal.aborted) return Promise.resolve();
     const generation = ++this.generation;
+    this.clearRanges();
     clearTimeout(this.timer);
     this.wake();
     this.finishAnimation();
@@ -324,11 +478,13 @@ export class ReadingPages {
             performance.now() - this.flowStarted
           ).toFixed(1);
           this.painter.warm();
+          this.warmRanges();
           break;
         }
+        if (next.value === null) break;
         this.pages.push(next.value);
       } while (performance.now() < deadline);
-      if (!this.displayPending && this.painted !== generation) {
+      if (this.pages.length && !this.displayPending && this.painted !== generation) {
         this.painted = generation;
         this.anchor = this.firstAnchor();
         this.render();
@@ -343,21 +499,30 @@ export class ReadingPages {
     const height = this.height;
     let page = [],
       used = 0;
-    const measure = (part) => {
+    let sliceStarted = performance.now();
+    const measure = function* (part) {
       this.measure.innerHTML = this.markup(part, true);
       const el = this.measure.firstElementChild,
         css = getComputedStyle(el);
-      return (
+      const measured = (
         el.getBoundingClientRect().height +
         parseFloat(css.marginTop) +
         parseFloat(css.marginBottom) +
         2
       );
-    };
+      // A page can require many forced layouts. Yield inside its binary search,
+      // preserving the measured value and all fragment state across the pause.
+      // null is a scheduling checkpoint, never a completed reading page.
+      if (performance.now() - sliceStarted >= 4) {
+        yield null;
+        sliceStarted = performance.now();
+      }
+      return measured;
+    }.bind(this);
     for (const b of this.r.doc.blocks) {
       if (this.visualBlock(b)) {
         const part = {id: b.id, start: 0, end: b.text.length, object: true};
-        const objectHeight = measure(part);
+        const objectHeight = yield* measure(part);
         if (page.length && used + objectHeight > height) {
           yield page;
           page = [];
@@ -380,7 +545,7 @@ export class ReadingPages {
           best = i,
           bestHeight = 0;
         // Most book blocks fit whole: avoid a binary search for every paragraph.
-        const wholeHeight = measure({ id: b.id, start, end: ends[hi - 1] });
+        const wholeHeight = yield* measure({ id: b.id, start, end: ends[hi - 1] });
         if (wholeHeight <= height - used) {
           best = hi;
           bestHeight = wholeHeight;
@@ -388,7 +553,7 @@ export class ReadingPages {
           hi--;
           while (lo <= hi) {
             const mid = Math.floor((lo + hi) / 2);
-            const h = measure({ id: b.id, start, end: ends[mid - 1] });
+            const h = yield* measure({ id: b.id, start, end: ends[mid - 1] });
             if (h <= height - used) {
               best = mid;
               bestHeight = h;
@@ -495,7 +660,7 @@ export class ReadingPages {
     const total = this.pages.length,
       last = Math.min(total, this.index + this.count);
     $("#reading-page-total").textContent =
-      `${this.index + 1}${last > this.index + 1 ? "–" + last : ""} / ${total}${this.complete ? "" : "+"}`;
+      `${this.r.doc.chapter && !this.r.doc.pdf ? "本章 " : ""}${this.index + 1}${last > this.index + 1 ? "–" + last : ""} / ${total}${this.complete ? "" : "+"}`;
     const root = $(".reader");
     this.updateEdges();
     root.dataset.pageIndex = String(this.index);
@@ -513,6 +678,7 @@ export class ReadingPages {
     this.r.ctx.run("draw", this.r).catch(console.error);
     this.r.emit("draw");
     this.painter.warm();
+    this.warmRanges();
     if (!$(".reader").dataset.firstSourceMs)
       $(".reader").dataset.firstSourceMs = (
         performance.now() - this.r.ctx.readStarted
@@ -525,6 +691,8 @@ export class ReadingPages {
     return (
       !this.r.scope.signal.aborted &&
       !this.r.focus.isOpen() &&
+      !this.r.aiSetupOpen &&
+      !this.r.grammarInspecting &&
       !this.r.panelId &&
       !this.r.popElement &&
       !this.r.selection &&
@@ -575,10 +743,13 @@ export class ReadingPages {
     this.r.emit("position");
   }
   beginTurn(direction, clientY, force = false) {
+    const setup = this.painter.collectPerformance ? { enteredAt: performance.now() } : null;
     if ((!force && !this.canGrab()) || this.animating || this.displayPending)
       return null;
     const target = this.index + direction * this.count;
-    if (target < 0 || target >= this.pages.length) return null;
+    const outside = target < 0 || target >= this.pages.length;
+    const boundary = outside && this.complete ? this.rangeNeighbor(direction, true) : null;
+    if (outside && !boundary) return null;
     this.r.emit("before-navigation");
     document
       .querySelectorAll("#article .actions-visible")
@@ -590,18 +761,25 @@ export class ReadingPages {
       leaf = element.getBoundingClientRect(),
       generation = this.generation,
       token = ++this.navigation,
-      frontIndex = this.index + (direction > 0 ? this.count - 1 : 0),
-      backIndex = target + (direction < 0 ? this.count - 1 : 0);
+      frontIndex = this.index + (direction > 0 ? this.count - 1 : 0);
     const preview = (this.preview = {
       requested: performance.now(),
+      setup,
       progress: 0.008,
       dy: 0,
       grab: Math.max(0.02, Math.min(0.98, (clientY - leaf.top) / leaf.height)),
       ready: false,
       cancelled: false,
       raf: 0,
+      boundary,
+      direction,
+      boundaryWarm: Boolean(boundary && this.ranges.get(boundary.doc_id)?.packet),
     });
     this.animating = true;
+    if (setup) {
+      setup.previewCreatedAt = performance.now();
+      this.painter.attachSetup = null;
+    }
     $(".reader").dataset.pageTurning = "true";
     const valid = () =>
       this.preview === preview &&
@@ -611,10 +789,14 @@ export class ReadingPages {
       !this.r.scope.signal.aborted;
     const done = (complete, reason) => {
       if (!valid()) return;
-      this.painter.record(complete, reason, preview.requested, preview.settle);
+      this.painter.record(complete, reason, preview.requested, preview.settle, preview.setup);
+      clearTimeout(preview.timeout);
+      clearTimeout(preview.loadingTimer);
+      if (boundary) this.recordBoundary(preview, complete, reason);
       this.preview = null;
       this.finishAnimation("settled");
-      if (complete) this.commitPage(target);
+      if (complete && boundary) this.r.ctx.commitReadingRange(this.r, preview.destination);
+      else if (complete) this.commitPage(target);
       else this.painter.warm();
     };
     const draw = () => {
@@ -644,6 +826,10 @@ export class ReadingPages {
     };
     const settle = (complete, reason, options) => {
       if (!valid()) return;
+      if (boundary && !complete && !preview.ready) {
+        done(false, reason);
+        return;
+      }
       preview.release = {
         complete,
         reason,
@@ -740,16 +926,12 @@ export class ReadingPages {
         if (valid()) this.finishAnimation(reason);
       },
     };
-    if (
-      local.get("page-motion", "curl") === "off" ||
-      matchMedia("(prefers-reduced-motion: reduce)").matches ||
-      this.painter.failed
-    ) {
-      preview.ready = true;
-      return session;
-    }
+    const motionOff = local.get("page-motion", "curl") === "off" ||
+      matchMedia("(prefers-reduced-motion: reduce)").matches || this.painter.failed;
+    if (!boundary && motionOff) { preview.ready = true; return session; }
     const before = article.cloneNode(true),
       incoming = article.cloneNode(false);
+    if (setup) setup.clonedAt = performance.now();
     before.removeAttribute("id");
     incoming.removeAttribute("id");
     before
@@ -764,19 +946,12 @@ export class ReadingPages {
         (before.children[i].dataset.leafX =
           el.getBoundingClientRect().left - rect.left),
     );
-    incoming.innerHTML = Array.from({ length: this.count }, (_, i) =>
-      this.leafMarkup(target + i),
-    ).join("");
-    incoming
-      .querySelectorAll(".paragraph-actions")
-      .forEach((el) => el.remove());
-    this.painter.wasWarm =
-      this.painter.cache.has(this.painter.key(frontIndex)) &&
-      this.painter.cache.has(this.painter.key(backIndex));
     const ready = (front, back) => {
       if (!valid() || preview.ready) return;
+      if (setup) setup.readyEnteredAt = performance.now();
       clearTimeout(preview.timeout);
-      this.painter.attach(
+      clearTimeout(preview.loadingTimer);
+      if (!motionOff) this.painter.attach(
         before,
         incoming,
         direction,
@@ -784,8 +959,10 @@ export class ReadingPages {
         back,
         preview.grab,
       );
+      if (setup) setup.attachReturnedAt = performance.now();
       preview.ready = true;
       draw();
+      if (setup) setup.initialDrawReturnedAt = performance.now();
       if (preview.release && !preview.following && !preview.raf)
         settle(
           preview.release.complete,
@@ -793,14 +970,50 @@ export class ReadingPages {
           preview.release.options,
         );
     };
-    preview.timeout = setTimeout(() => {
-      $(".reader").dataset.curlFallback = "texture-timeout";
-      ready(null, null);
-    }, 1200);
-    Promise.all([
-      this.painter.prepare(frontIndex),
-      this.painter.prepare(backIndex),
-    ]).then(([front, back]) => ready(front, back));
+    const prepare = async (source, index) => {
+      if (!valid()) return;
+      if (setup) setup.incomingStartedAt = performance.now();
+      const backIndex = index + (direction < 0 ? this.count - 1 : 0);
+      incoming.innerHTML = Array.from({ length: this.count }, (_, i) => source.leafMarkup(index + i)).join("");
+      incoming.querySelectorAll(".paragraph-actions").forEach(el => el.remove());
+      if (setup) setup.incomingReadyAt = performance.now();
+      this.painter.wasWarm = this.painter.cache.has(this.painter.key(frontIndex)) &&
+        this.painter.cache.has(this.painter.key(backIndex, source));
+      if (motionOff) { ready(null, null); return; }
+      if (!boundary) preview.timeout = setTimeout(() => {
+        $(".reader").dataset.curlFallback = "texture-timeout";
+        ready(null, null);
+      }, 1200);
+      const [front, back] = await Promise.all([
+        this.painter.prepare(frontIndex), this.painter.prepare(backIndex, source),
+      ]);
+      if (setup) setup.texturesReadyAt = performance.now();
+      if (!valid()) return;
+      if (boundary && (!front || !back) && !this.painter.failed)
+        throw new Error("相邻页面图像尚未准备");
+      ready(front, back);
+    };
+    if (boundary) {
+      preview.loadingTimer = setTimeout(() => {
+        if (valid() && !preview.ready) this.r.status("正在准备相邻页面，当前阅读位置保留…", {notice: true});
+      }, 700);
+      preview.timeout = setTimeout(() => {
+        if (!valid()) return;
+        done(false, "range-timeout");
+        this.r.status("相邻页面暂未准备好，当前页面已保留。再次翻页可重试。", {notice: true});
+      }, 15000);
+      this.prepareRange(direction).then(source => {
+        if (!valid()) return;
+        preview.destination = source;
+        preview.preparedAt = performance.now();
+        return prepare(source, source.index);
+      }).catch(error => {
+        if (!valid()) return;
+        preview.failure = error.name === "AbortError" ? "请求已中止或超时" : error.message;
+        done(false, "range-error");
+        this.r.status(`相邻页面未能加载，当前页面已保留；再次翻页可重试。${error.name === "AbortError" ? "" : " " + error.message}`, {notice: true});
+      });
+    } else prepare(this, target);
     return session;
   }
   async turn(index, animate = false) {
@@ -868,8 +1081,8 @@ export class ReadingPages {
       );
     while (
       !this.complete &&
-      !hasPage() &&
-      (anchor?.block_id || anchor?.quote || anchor?.ratio > 0)
+      (!this.pages.length || (!hasPage() &&
+        (anchor?.block_id || anchor?.quote || anchor?.ratio > 0)))
     ) {
       await new Promise((resolve) => this.waiters.push(resolve));
       if (
