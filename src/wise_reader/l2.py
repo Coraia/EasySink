@@ -29,12 +29,13 @@ def filter_candidates(l0, l1, profile, word_count, density=None, verdicts=None):
         else:
             if not profile.l1_enabled and a.source != "dictionary-phrase" and not forced:
                 continue
-            if a.kind == Kind.CULTURE and a.domain in profile.domains and not forced:
-                continue
         eligible.append(replace(a, forced=forced))
-    # Resolve overlap only when actually selecting; expressions precede ordinary word glosses.
+    # Focus reorders eligible candidates within the existing budget; it neither
+    # forces annotations nor overrides mastery, density or disabled assistance.
+    # Legacy familiarity (domains) intentionally has no selection effect.
     eligible.sort(key=lambda a: (
-        a.forced, a.kind != Kind.WORD, a.last_token - a.first_token, a.rarity,
+        a.forced, a.domain in profile.focus_domains,
+        a.kind != Kind.WORD, a.last_token - a.first_token, a.rarity,
     ), reverse=True)
     chosen = []
     occupied = set()

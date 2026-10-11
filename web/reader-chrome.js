@@ -37,7 +37,7 @@ export function readerShell(d, progressEnabled) {
     <button id="panel-dismiss" class="panel-backdrop" aria-label="关闭阅读面板" hidden></button>
     <aside class="tool-panel" id="tool-panel" hidden></aside>
     <div id="reader-extra-tools" hidden></div>
-    <div id="reader-book-actions" hidden><div class="density-control"><span>辅助</span>${[
+    <div id="reader-book-actions" hidden><div id="reader-density-actions"><div class="density-control" role="group" aria-label="辅助密度"><span>辅助密度</span>${[
       [0, "原文"],
       [2, "轻"],
       [4, "适中"],
@@ -49,7 +49,7 @@ export function readerShell(d, progressEnabled) {
       )
       .join(
         "",
-      )}</div><p id="density-hint" class="muted"></p><div class="row wrap"><button id="archive-reading" class="text-button">${d.archived ? "移回书架" : "归档"}</button><button id="finish-reading" class="text-button">读完了 ✓</button></div><div id="chapter-nav"></div></div>
+      )}</div><p id="density-hint" class="muted"></p></div><div class="row wrap"><button id="archive-reading" class="text-button">${d.archived ? "移回书架" : "归档"}</button><button id="finish-reading" class="text-button">读完了 ✓</button></div><div id="chapter-nav"></div></div>
     <div class="read-progress" hidden><div></div></div>
   </div>`;
 }
@@ -341,7 +341,7 @@ export function installCoreReaderTools(r) {
     r.panel(
       "appearance",
       "阅读样式",
-      `<div class="chips">${[
+      `<div id="appearance-assistance"></div><div class="chips">${[
         ["paper", "自然纸色"],
         ["sepia", "暖色书页"],
         ["night", "夜间阅读"],
@@ -365,6 +365,9 @@ export function installCoreReaderTools(r) {
           "",
         )}</select><label for="reader-motion">翻页效果</label><select id="reader-motion"><option value="curl">仿真卷页</option><option value="off">无动画</option></select><label class="row"><input id="reader-light" type="checkbox">纸页光影</label><p class="save-state">调整后自动保存</p>`,
       (el, scope) => {
+        const assistance = $("#reader-density-actions");
+        $("#appearance-assistance", el).append(assistance);
+        scope.cleanup(() => $("#reader-book-actions").prepend(assistance));
         $("#reader-motion", el).value = local.get("page-motion", "curl");
         $("#reader-light", el).checked = local.get("page-light", true);
         scope.on($("#reader-light", el), "change", (ev) => {

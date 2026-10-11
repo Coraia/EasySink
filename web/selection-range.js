@@ -73,6 +73,14 @@ function caretAt(x, y) {
   return p ? { node: p.startContainer, offset: p.startOffset } : null;
 }
 
+// Keep native text nodes for drag recovery; never snap an endpoint to a word.
+export function sourceCaretAt(x, y) {
+  const point = caretAt(x, y);
+  const element = point?.node.nodeType === 1 ? point.node : point?.node.parentElement;
+  return element?.closest("#article [data-block]:not([data-pdf-object])") &&
+    !element.closest(nonSource) ? point : null;
+}
+
 export function sourcePointAt(x, y) {
   let point = caretAt(x, y);
   let element = point?.node.nodeType === 1 ? point.node : point?.node.parentElement;

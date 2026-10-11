@@ -1,4 +1,5 @@
 import { installSelectionHandles } from "./selection-handles.js";
+import { installSelectionDragRecovery } from "./selection-drag.js";
 import { anchorSegments, linkedRanges } from "./source-selection.js";
 import { $, $$, e, api, toast } from "./core.js";
 import { offerAISetup } from "./ai-setup-guard.js";
@@ -429,6 +430,7 @@ export function setupReadingInteractions(r) {
     r.positionSelection();
   });
   let selectionFrame;
+  installSelectionDragRecovery(r);
   const endSelectionGesture = () => {
     if (!r.selecting) return;
     r.selecting = false;

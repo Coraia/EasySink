@@ -8,7 +8,7 @@ from bisect import bisect_left, bisect_right
 
 from fastapi import HTTPException
 
-PROTOCOL = "context-meaning-v7"
+PROTOCOL = "context-meaning-v22"
 LIMIT = 6000
 
 
@@ -133,7 +133,8 @@ def build_context(blocks, target, previous=False, following=False):
 def cache_identity(doc_id, target, source, context):
     value = [PROTOCOL, doc_id, target.version, source,
              [[s.block_id, s.start, s.end] for s in (target.segments or [target])],
-             [[r["block_id"], r["start"], r["end"], r["text"]] for r in context["ranges"]]]
+             [[r["block_id"], r["start"], r["end"], r["text"]] for r in context["ranges"]],
+             context.get("dictionary_candidates")]
     return hashlib.sha256(json.dumps(value, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -177,3 +178,21 @@ def guard_error(row):
                                "上次解释没有可用结果。不会自动重发；可明确重新解释，可能再次计费。")
     return HTTPException(row["http_status"] or 409,
                          {"code": "context_" + state, "message": message, "attempt": public_attempt(row)})
+
+
+def public_payload(payload):
+    """Expose source-backed fields without promoting model working diagnostics.
+
+    Copy the response only: historic database rows and raw stage journals stay
+    untouched. Collection adoption can reuse this boundary for older caches.
+    """
+    from copy import deepcopy
+    result = deepcopy(payload)
+    if isinstance(result, dict):
+        grounding = result.get("grounding")
+        diagnostics = grounding.get("diagnostics") if isinstance(grounding, dict) else None
+        if isinstance(diagnostics, dict) and "target_usage" in diagnostics:
+            usage = diagnostics["target_usage"]
+            diagnostics["target_usage"] = ({"quote": usage["quote"]}
+                if isinstance(usage, dict) and isinstance(usage.get("quote"), str) else {})
+    return result

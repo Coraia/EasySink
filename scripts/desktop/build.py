@@ -252,7 +252,7 @@ def main():
         "CFBundleExecutable": "WiseReader", "CFBundleIdentifier": "com.coraia.wisereader.candidate",
         "CFBundleName": "Wise Reader", "CFBundleDisplayName": "Wise Reader",
         "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.1.0",
-        "CFBundleVersion": "2", "LSMinimumSystemVersion": "13.0",
+        "CFBundleVersion": "8", "LSMinimumSystemVersion": "13.0",
         "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication",
         "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
     }, sort_keys=True))

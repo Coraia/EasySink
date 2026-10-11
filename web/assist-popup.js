@@ -2,17 +2,22 @@ import { $, e, api } from "./core.js";
 import { anchorSegments } from "./source-selection.js";
 import { offerAISetup } from "./ai-setup-guard.js";
 
-const roles = { current: "当前原文段", previous: "前一段", next: "后一段" };
+// Keep the server's bounded current-passage default for every preview/request.
+// Removing the scope UI must never expand what is sent to the model.
+const defaultContext = Object.freeze({ context_previous: false, context_next: false });
 
-function contextHTML(context, source, title) {
-  if (!context) return '<p class="meta">旧版记录未保存实际发送的上下文，不能据此确认当时的语境范围。</p>';
-  return `<details class="assist-context-scope"><summary>${e(title)} · ${context.utf16_length}/6000${context.truncated ? " · 已截取" : ""}</summary>
-    <p class="meta">长度按 UTF-16 计，包含段落之间的空行。${context.selection_context_truncated ? "选区较长，上下文仅含部分选区；单独发送的所选原文仍完整。" : ""}</p>
-    <p>所选原文</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:12em;overflow:auto">${e(source)}</pre>
-    <p>实际上下文${context.truncated ? "（已按上限截取）" : ""}</p>
-    <pre data-context-text style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:16em;overflow:auto">${e(context.text)}</pre>
-    <ul>${context.ranges.map(range => `<li data-context-block="${e(range.block_id)}">${e(roles[range.role])} · 字符 ${range.start}–${range.end}${range.truncated ? "（段落已截取）" : ""}</li>`).join("")}
-      ${context.omitted.map(range => `<li>${e(roles[range.role])}：上下文已达上限，未包含。</li>`).join("")}</ul></details>`;
+function attemptMessage(attempt) {
+  if (attempt.state === "pending") return "正在解释，可稍后查看结果。";
+  if (attempt.state === "unknown") return "暂时无法确认解释结果，不会自动重试。可稍后查看结果。";
+  return attempt.http_status === 429 ? "解释服务额度不足或繁忙，不会自动重试。" :
+    "这次未能取得可用解释，不会自动重试。";
+}
+
+function failureMessage(error) {
+  if (error.code === "context_pending") return attemptMessage({ state: "pending" });
+  if (!error.status || error.code === "context_unknown") return attemptMessage({ state: "unknown" });
+  if ([400, 404, 410, 422].includes(error.status)) return "这处原文暂不可用，请重新打开词卡。";
+  return attemptMessage({ state: "failed", http_status: error.status });
 }
 
 function sameSelection(value, anchor) {
@@ -22,12 +27,13 @@ function sameSelection(value, anchor) {
     a.every((part, i) => part.block_id === b[i].block_id && part.start === b[i].start && part.end === b[i].end);
 }
 
-function validLocalRecord(r, value, anchor, neighbors) {
+function validLocalRecord(r, value, anchor) {
   const context = value.payload?.context;
   if (!sameSelection(value, anchor) || value.doc_id !== r.doc.id ||
-      value.version !== r.doc.version || !context || context.protocol !== "context-meaning-v7" ||
-      context.requested_neighbors.previous !== neighbors.context_previous ||
-      context.requested_neighbors.next !== neighbors.context_next) return false;
+      value.version !== r.doc.version || !context ||
+      !["context-meaning-v7", "context-meaning-v9", "context-meaning-v22"].includes(context.protocol) ||
+      context.requested_neighbors.previous !== defaultContext.context_previous ||
+      context.requested_neighbors.next !== defaultContext.context_next) return false;
   const blocks = new Map(r.doc.blocks.map(block => [block.id, block]));
   return anchorSegments(anchor).every(part => blocks.get(part.block_id)?.text.slice(part.start, part.end) === part.quote) &&
     context.ranges.every(part => blocks.get(part.block_id)?.text.slice(part.start, part.end) === part.text);
@@ -38,14 +44,10 @@ export function installContextPopup(r, pop, anchor, scope) {
   section.className = "word-context";
   section.innerHTML = `<h4>语境解释</h4>
     <div data-context-result class="context-result"></div>
-    <div data-context-plan></div>
-    <div class="context-neighbors"><label><input type="checkbox" data-context-previous disabled>需要前一段</label>
-      <label><input type="checkbox" data-context-next disabled>需要后一段</label></div>
-    <p class="meta" data-context-provider></p>
     <button type="button" class="context-action" data-context-generate disabled>解释这里的意思</button>
-    <button type="button" class="context-action" data-context-regenerate hidden>重新解释 · 使用当前模型</button>
-    <p class="meta" data-context-fee hidden>重新解释会发出新请求，可能再次计费；已有解释仍保留。</p>
-    <p role="status" aria-live="polite" data-context-status>正在读取已有解释与原文范围…</p>
+    <button type="button" class="context-action" data-context-regenerate hidden>重新解释</button>
+    <p class="meta" data-context-fee hidden>重新解释可能再次计费；已有解释仍保留。</p>
+    <p role="status" aria-live="polite" data-context-status>正在读取解释…</p>
     <button type="button" data-context-refresh hidden>重新查看已保存结果</button>
     <div data-context-history></div>`;
   pop.append(section);
@@ -53,9 +55,6 @@ export function installContextPopup(r, pop, anchor, scope) {
   const regenerate = $("[data-context-regenerate]", section);
   const result = $("[data-context-result]", section);
   const status = $("[data-context-status]", section);
-  const previous = $("[data-context-previous]", section);
-  const next = $("[data-context-next]", section);
-  const neighbors = () => ({ context_previous: previous.checked, context_next: next.checked });
   let plan = null, controller = null, previewSequence = 0, selectedRecord = null;
   pop.contextRecord = null;
   // The word hook runs before enhancePop. Subscribers can read this property
@@ -74,9 +73,8 @@ export function installContextPopup(r, pop, anchor, scope) {
   }
   function show(value, historical = false) {
     expose(value);
-    result.innerHTML = value ? `<p class="meta">${historical ? "此前上下文的已保存解释" : "已保存的语境解释"} · ${e(value.source)}</p>
-      <p>${e(value.payload.meaning)}</p><p>${e(value.payload.explanation)}</p>
-      ${contextHTML(value.payload.context, value.anchor.quote, "查看这条解释实际使用的上下文")}` : "";
+    result.innerHTML = value ? `<p class="meta">${historical ? "此前保存的解释" : "已保存的语境解释"} · ${e(value.source)}</p>
+      <p>${e(value.payload.meaning)}</p><p>${e(value.payload.explanation)}</p>` : "";
   }
   function buttons() {
     const busy = Boolean(controller);
@@ -88,8 +86,6 @@ export function installContextPopup(r, pop, anchor, scope) {
     regenerate.disabled = !plan || plan.attempt?.state === "pending";
     $("[data-context-refresh]", section).hidden = busy || Boolean(plan && !guarded);
     $("[data-context-fee]", section).hidden = regenerate.hidden;
-    previous.disabled = busy || !plan?.context.available_neighbors.previous;
-    next.disabled = busy || !plan?.context.available_neighbors.next;
   }
   async function preview({ preserveStatus = false } = {}) {
     const sequence = ++previewSequence;
@@ -97,32 +93,30 @@ export function installContextPopup(r, pop, anchor, scope) {
     buttons();
     try {
       const value = await api(`/documents/${r.doc.id}/context/preview`, {
-        method: "POST", body: { anchor, ...neighbors() }, signal: scope.signal,
+        method: "POST", body: { anchor, ...defaultContext }, signal: scope.signal,
       });
       if (scope.signal.aborted || sequence !== previewSequence) return;
       plan = value;
-      $("[data-context-plan]", section).innerHTML = contextHTML(value.context, value.source, "查看将使用的原文语境");
-      $("[data-context-provider]", section).textContent = value.provider.available ?
-        `新解释使用当前模型：${value.provider.model}` : "文本 AI 尚未启用；已有解释仍可查看。";
       for (const item of value.history) remember(item);
       const saved = value.cached || value.history[0] || null;
       show(saved, Boolean(saved && !value.cached));
       $("[data-context-history]", section).innerHTML = value.history.length > 1 ?
         `<details><summary>解释历史（${value.history.length}${value.history.length === 20 ? " 条最近记录" : " 条"}）</summary>${value.history.map(item =>
           `<article data-context-history-id="${item.id}"><p class="meta">${e(item.source)} · ${e(item.created_at)}</p><p>${e(item.payload.meaning)}</p>
-          <p>${e(item.payload.explanation)}</p>${contextHTML(item.payload.context, item.anchor.quote, "查看历史上下文")}</article>`).join("")}</details>` : "";
+          <p>${e(item.payload.explanation)}</p></article>`).join("")}</details>` : "";
       if (!preserveStatus) status.textContent = value.attempt && value.attempt.state !== "succeeded" ?
-        value.attempt.error || "这处解释仍在处理中，可稍后重新打开查看；不会再发一次请求。" :
-        value.cached ? "已读取保存的结果，没有请求模型。" : saved ? "保留此前解释。使用当前上下文需要明确重新解释。" :
-        "默认只使用当前原文段；需要时可包含紧邻的前一段或后一段。";
+        attemptMessage(value.attempt) : "";
     } catch (err) {
       if (err.name === "AbortError" || scope.signal.aborted || sequence !== previewSequence) return;
       // This only exposes already-loaded successful records whose exact source
       // still matches. A disconnected server is never a reason to retransmit.
-      const saved = [...r.assists].reverse().find(item => validLocalRecord(r, item, anchor, neighbors()));
-      show(saved || null);
-      $("[data-context-plan]", section).textContent = "";
-      status.textContent = saved ? "连接不可用，显示本次阅读已载入的有效解释。" : err.message;
+      const saved = [...r.assists].reverse().find(item => validLocalRecord(r, item, anchor));
+      // Without a server preview, preserve the record as history rather than
+      // claiming that it matches the currently deployed generation protocol.
+      show(saved || null, true);
+      if (!preserveStatus) status.textContent = saved ? "连接暂不可用，先显示已保存的解释。" :
+        [400, 404, 409, 410, 422].includes(err.status) ? "这处原文暂不可用，请重新打开词卡。" :
+        "暂时无法读取解释，请稍后查看。";
     } finally {
       if (!scope.signal.aborted && sequence === previewSequence) buttons();
     }
@@ -132,7 +126,7 @@ export function installContextPopup(r, pop, anchor, scope) {
       const current = controller;
       controller = null;
       current.cancel();
-      status.textContent = "已取消等待。服务可能已处理，不会自动重发；已有解释保留。";
+      status.textContent = "已取消等待。解释可能已经完成，不会自动重试。";
       // The server may still be finishing cancellation. Only a read-only refresh
       // is allowed; it can report pending/unknown without triggering a model.
       await preview({ preserveStatus: true });
@@ -141,24 +135,24 @@ export function installContextPopup(r, pop, anchor, scope) {
     if (!plan) return;
     const current = r.assistController();
     controller = current;
-    status.textContent = "正在结合显示的原文语境解释…";
+    status.textContent = "正在解释…";
     buttons();
     try {
       const value = await api(`/documents/${r.doc.id}/context`, {
-        method: "POST", body: { anchor, ...neighbors(), regenerate: regenerateRequest, request_id: current.requestId },
+        method: "POST", body: { anchor, ...defaultContext, regenerate: regenerateRequest, request_id: current.requestId },
         signal: current.signal,
       });
       if (scope.signal.aborted || controller !== current) return;
       remember(value);
       show(value);
-      status.textContent = value.cached ? "已读取保存的结果，没有请求模型。" : "已保留新解释；可在收藏中预览后采用。";
+      status.textContent = value.cached ? "已显示保存的解释。" : "已保留新解释；可在收藏中预览后采用。";
       r.emit("assist-change");
       await preview({ preserveStatus: true });
     } catch (err) {
       if (err.name !== "AbortError" && !scope.signal.aborted &&
           offerAISetup(r, anchor, err, "context")) return;
       if (err.name !== "AbortError" && !scope.signal.aborted && controller === current) {
-        status.textContent = err.message + (err.status ? "" : "。无法确认这次结果，不会自动重发。");
+        status.textContent = failureMessage(err);
         await preview({ preserveStatus: true });
       }
     } finally {
@@ -168,8 +162,6 @@ export function installContextPopup(r, pop, anchor, scope) {
   }
   scope.on(generate, "click", () => explain(false));
   scope.on(regenerate, "click", () => explain(true));
-  scope.on(previous, "change", () => preview());
-  scope.on(next, "change", () => preview());
   scope.on($("[data-context-refresh]", section), "click", () => preview());
   scope.cleanup(() => {
     previewSequence++;

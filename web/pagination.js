@@ -197,8 +197,19 @@ export class ReadingPages {
         if (this.rangeNeighbor(direction)) {
           try {
             const source = await this.prepareRange(direction);
-            if (!this.animating && !this.r.scope.signal.aborted)
-              await this.painter.prepare(source.index + (direction < 0 ? this.count - 1 : 0), source);
+            // Six leaves cover the current and both adjacent spreads. Only a
+            // boundary spread needs raster faces from another source range;
+            // warming them earlier evicts the current page before a reverse turn.
+            const index = this.index, generation = this.generation;
+            const target = index + direction * this.count;
+            if (!this.animating && !this.r.scope.signal.aborted &&
+                (target < 0 || target >= this.pages.length)) {
+              for (let offset = 0; offset < this.count; offset++) {
+                if (this.animating || this.r.scope.signal.aborted ||
+                    this.index !== index || this.generation !== generation) break;
+                await this.painter.prepare(source.index + offset, source);
+              }
+            }
           } catch { /* Retry on the actual turn. */ }
         }
       }
@@ -232,7 +243,7 @@ export class ReadingPages {
         const pages = Object.create(ReadingPages.prototype);
         measure = this.measure.cloneNode(false);
         this.measure.parentElement.append(measure);
-        Object.assign(pages, {r: reader, measure, pages: [], index: 0,
+        Object.assign(pages, {r: reader, measure, pages: [], index: 0, complete: false,
           width: this.width, height: this.height, count: this.count, generation});
         reader.pages = pages;
         pages.indexSource();
@@ -257,6 +268,7 @@ export class ReadingPages {
           if (!done) await new Promise(resolve => setTimeout(resolve, 0));
         }
         if (!pages.pages.length) throw new Error("相邻范围暂时没有可读内容");
+        pages.complete = true;
         pages.index = direction > 0 ? 0 : Math.floor((pages.pages.length - 1) / pages.count) * pages.count;
         entry.packet = pages;
         return pages;
@@ -747,7 +759,7 @@ export class ReadingPages {
     this.r.emit("position");
   }
   beginTurn(direction, clientY, force = false) {
-    const setup = this.painter.collectPerformance ? { enteredAt: performance.now() } : null;
+    const setup = this.painter.collectPerformance ? { enteredAt: performance.now(), inputEvents: [] } : null;
     if ((!force && !this.canGrab()) || this.animating || this.displayPending)
       return null;
     const target = this.index + direction * this.count;
@@ -830,6 +842,8 @@ export class ReadingPages {
     };
     const settle = (complete, reason, options) => {
       if (!valid()) return;
+      if (setup && setup.inputEvents.length < 128)
+        setup.inputEvents.push({ kind: "release", handledAt: performance.now(), complete, reason });
       if (boundary && !complete && !preview.ready) {
         done(false, reason);
         return;
@@ -888,7 +902,10 @@ export class ReadingPages {
             Math.sign(delta) * Math.min(native ? 0.08 : 0.065, Math.abs(delta))
           : desired;
         preview.dy = dy * (1 - ease);
-        this.painter.draw(preview.progress, preview.grab, preview.dy);
+        // A release may cancel a queued input frame. Preserve that input's
+        // latency evidence on the first settling draw instead of losing it.
+        this.painter.draw(preview.progress, preview.grab, preview.dy, preview.inputAt, "settling");
+        preview.inputAt = 0;
         if (t < 1 || !confirmed || Math.abs(to - preview.progress) > 0.00001)
           preview.raf = requestAnimationFrame(frame);
         else done(complete, reason);
@@ -905,6 +922,8 @@ export class ReadingPages {
       height: leaf.height,
       update: (p, dy, inputAt, catchUp = false) => {
         if (!valid() || preview.release) return;
+        if (setup && setup.inputEvents.length < 128)
+          setup.inputEvents.push({ kind: "update", handledAt: performance.now(), inputAt, progress: p });
         if (catchUp || preview.following) {
           preview.target = p;
           preview.following = true;
@@ -933,70 +952,67 @@ export class ReadingPages {
     const motionOff = local.get("page-motion", "curl") === "off" ||
       matchMedia("(prefers-reduced-motion: reduce)").matches || this.painter.failed;
     if (!boundary && motionOff) { preview.ready = true; return session; }
-    const before = article.cloneNode(true),
-      incoming = article.cloneNode(false);
-    if (setup) setup.clonedAt = performance.now();
-    before.removeAttribute("id");
-    incoming.removeAttribute("id");
-    before
-      .querySelectorAll("[id],.paragraph-actions")
-      .forEach((el) =>
-        el.matches(".paragraph-actions")
-          ? el.remove()
-          : el.removeAttribute("id"),
-      );
-    elements.forEach(
-      (el, i) =>
-        (before.children[i].dataset.leafX =
-          el.getBoundingClientRect().left - rect.left),
-    );
-    const ready = (front, back) => {
+    const leaves = elements.map(el => {
+      const box = el.getBoundingClientRect();
+      return { x: box.left - rect.left, y: 0, width: box.width, height: box.height };
+    });
+    if (setup) setup.layoutCapturedAt = performance.now();
+    const ready = (front, back, stationary = []) => {
       if (!valid() || preview.ready) return;
       if (setup) setup.readyEnteredAt = performance.now();
       clearTimeout(preview.timeout);
       clearTimeout(preview.loadingTimer);
       if (!motionOff) this.painter.attach(
-        before,
-        incoming,
+        leaves,
         direction,
         front,
         back,
         preview.grab,
+        stationary,
       );
       if (setup) setup.attachReturnedAt = performance.now();
       preview.ready = true;
-      draw();
-      if (setup) setup.initialDrawReturnedAt = performance.now();
-      if (preview.release && !preview.following && !preview.raf)
+      // Submit at most one paper frame per refresh. An eager draw followed by
+      // an immediate rAF used to submit two Retina spreads before presentation.
+      if (preview.release && !preview.following)
         settle(
           preview.release.complete,
           preview.release.reason,
           preview.release.options,
         );
+      else if (!preview.raf) preview.raf = requestAnimationFrame(draw);
     };
     const prepare = async (source, index) => {
       if (!valid()) return;
       if (setup) setup.incomingStartedAt = performance.now();
       const backIndex = index + (direction < 0 ? this.count - 1 : 0);
-      incoming.innerHTML = Array.from({ length: this.count }, (_, i) => source.leafMarkup(index + i)).join("");
-      source.r.collectionsController?.paint(incoming);
-      incoming.querySelectorAll(".paragraph-actions").forEach(el => el.remove());
+      const faces = this.count === 1
+        ? [{ source, index, x: leaves[0].x }]
+        : direction > 0
+          ? [{ source: this, index: this.index, x: leaves[0].x },
+             { source, index: index + 1, x: leaves[1].x }]
+          : [{ source, index, x: leaves[0].x },
+             { source: this, index: this.index + 1, x: leaves[1].x }];
       if (setup) setup.incomingReadyAt = performance.now();
-      this.painter.wasWarm = this.painter.cache.has(this.painter.key(frontIndex)) &&
-        this.painter.cache.has(this.painter.key(backIndex, source));
       if (motionOff) { ready(null, null); return; }
+      this.painter.pendingTextures = [...new Set([
+        this.painter.key(frontIndex), this.painter.key(backIndex, source),
+        ...faces.map(face => this.painter.key(face.index, face.source)),
+      ])];
+      this.painter.wasWarm = this.painter.pendingTextures.every(key => this.painter.cache.has(key));
       if (!boundary) preview.timeout = setTimeout(() => {
         $(".reader").dataset.curlFallback = "texture-timeout";
         ready(null, null);
       }, 1200);
-      const [front, back] = await Promise.all([
+      const [front, back, ...staticTextures] = await Promise.all([
         this.painter.prepare(frontIndex), this.painter.prepare(backIndex, source),
+        ...faces.map(face => this.painter.prepare(face.index, face.source)),
       ]);
       if (setup) setup.texturesReadyAt = performance.now();
       if (!valid()) return;
-      if (boundary && (!front || !back) && !this.painter.failed)
+      if (boundary && (!front || !back || staticTextures.some(texture => !texture)) && !this.painter.failed)
         throw new Error("相邻页面图像尚未准备");
-      ready(front, back);
+      ready(front, back, faces.map((face, i) => ({ x: face.x, texture: staticTextures[i] })));
     };
     if (boundary) {
       preview.loadingTimer = setTimeout(() => {

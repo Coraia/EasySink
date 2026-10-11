@@ -284,9 +284,11 @@ function importText() {
 }
 async function renderProfile(scope) {
   const p = ctx.profile;
-  let domains = new Set(p.domains);
+  const focusDomains = new Set(p.focus_domains || []);
   let queue = Promise.resolve();
   let latest = 0;
+  let pending = {};
+  const domainSummary = (count) => count ? `已选择 ${count} 个领域` : "未选择 · 使用默认辅助";
   ctx.root.innerHTML = `<div class="settings-layout"><div class="page-head"><div><div class="eyebrow">MAKE IT YOURS</div><h1>刚刚好的帮助。</h1><p>所有选择都会自动保存。读得越多，越懂你的需要。</p></div><span class="save-state" id="profile-save" role="status">已同步</span></div><section class="card"><h2>阅读辅助</h2><div class="setting-row"><div><strong>从熟悉的程度开始</strong><p>这是词频门槛的起点，可以随时调整，不需要先做测试。</p></div><select id="vocab-level" aria-label="英语熟悉程度">${[
     [3500, "基础阅读"],
     [4500, "大学四级左右"],
@@ -312,35 +314,39 @@ async function renderProfile(scope) {
     )
     .join(
       "",
-    )}${![0, 2, 4, 8].includes(p.density) ? `<option selected value="${p.density}">${p.density} 处</option>` : ""}</select></div><div class="setting-row"><div><strong>重复解释</strong><p>同一个词在一篇文章中再次出现时，仍显示解释。</p></div><input class="switch" type="checkbox" id="repeat" aria-label="重复解释" ${p.repeat ? "checked" : ""}></div><div class="setting-row"><div><strong>表达与文化注释</strong><p>${p.l1_available ? "已连接 AI，在阅读时主动请求上下文解释与语法分析。" : "常用表达可离线解释；上下文解释与语法分析需配置 AI 后主动请求。"}</p></div><input class="switch" type="checkbox" id="l1-enabled" aria-label="表达与文化注释" ${p.l1_enabled ? "checked" : ""}></div></section><section class="card"><h2>我熟悉的领域</h2><p class="muted">选择你已有背景知识的领域，减少相关背景解释。</p><div class="chips" id="domains">${Object.entries(
+    )}${![0, 2, 4, 8].includes(p.density) ? `<option selected value="${p.density}">${p.density} 处</option>` : ""}</select></div><div class="setting-row"><div><strong>重复解释</strong><p>同一个词在一篇文章中再次出现时，仍显示解释。</p></div><input class="switch" type="checkbox" id="repeat" aria-label="重复解释" ${p.repeat ? "checked" : ""}></div><div class="setting-row"><div><strong>表达与文化注释</strong><p>${p.l1_available ? "已连接 AI，在阅读时主动请求上下文解释与语法分析。" : "常用表达可离线解释；上下文解释与语法分析需配置 AI 后主动请求。"}</p></div><input class="switch" type="checkbox" id="l1-enabled" aria-label="表达与文化注释" ${p.l1_enabled ? "checked" : ""}></div></section><section class="card"><div class="row between"><h2>需要加强的领域</h2><button class="text-button" id="clear-focus-domains" ${focusDomains.size ? "" : "disabled"}>清空选择</button></div><p class="muted">选择你希望加强理解的领域，在当前辅助密度内优先显示相关解释。未选择时使用默认辅助；取消或清空即可恢复。</p><div class="chips" id="domains">${Object.entries(
     p.domain_catalog,
   )
     .map(
       ([id, label]) =>
-        `<button class="chip" data-domain="${id}" aria-pressed="${domains.has(id)}">${e(label)}</button>`,
+        `<button class="chip" data-domain="${id}" aria-pressed="${focusDomains.has(id)}">${e(label)}</button>`,
     )
     .join(
       "",
-    )}</div><p class="save-state" id="domain-state">已选择 ${domains.size} 个领域 · 自动保存</p></section><section class="card"><div class="row between"><div><h2>了解我的阅读起点</h2><p class="muted" style="margin:0;font-size:14px">可选的短测试，给出词频熟悉度范围。</p></div><button id="vocab-test">试一试 →</button></div><div id="vocab-test-area"></div></section><section class="card row between"><div><h3>AI 与语音</h3><p class="muted">配置按需解释、选区翻译、语法分析和朗读。</p></div><a class="button" href="#/ai">配置服务 →</a></section><div id="profile-extensions" class="stack"></div><section class="card row between"><div><h3>让功能保持轻盈</h3><span class="muted">按需开关各项功能，已有数据会保留。</span></div><a class="button" href="#/labs">功能管理 →</a></section></div>`;
+    )}</div><p class="save-state" id="domain-state" role="status">${domainSummary(focusDomains.size)} · 已保存</p></section><section class="card"><div class="row between"><div><h2>了解我的阅读起点</h2><p class="muted" style="margin:0;font-size:14px">可选的短测试，给出词频熟悉度范围。</p></div><button id="vocab-test">试一试 →</button></div><div id="vocab-test-area"></div></section><section class="card row between"><div><h3>AI 与语音</h3><p class="muted">配置按需解释、选区翻译、语法分析和朗读。</p></div><a class="button" href="#/ai">配置服务 →</a></section><div id="profile-extensions" class="stack"></div><section class="card row between"><div><h3>让功能保持轻盈</h3><span class="muted">按需开关各项功能，已有数据会保留。</span></div><a class="button" href="#/labs">功能管理 →</a></section></div>`;
   const save = (fields) => {
+    pending = { ...pending, ...fields };
+    const snapshot = { ...pending };
     const version = ++latest;
     $("#profile-save").textContent = "保存中…";
     queue = queue
       .catch(() => {})
-      .then(() => api("/profile", { method: "PATCH", body: fields }))
+      .then(() => api("/profile", { method: "PATCH", body: snapshot }))
       .then((saved) => {
         ctx.profile = saved;
+        if (version === latest) pending = {};
         if (!scope.signal.aborted && version === latest) {
           $("#profile-save").textContent = "已自动保存 ✓";
           $("#domain-state").textContent =
-            `已选择 ${saved.domains.length} 个领域 · 已保存`;
+            `${domainSummary(saved.focus_domains.length)} · 已保存`;
         }
       })
       .catch((err) => {
-        if (!scope.signal.aborted) {
+        if (!scope.signal.aborted && version === latest) {
+          $("#domain-state").textContent = `${domainSummary(focusDomains.size)} · 保存失败，等待重试`;
           $("#profile-save").innerHTML =
             '<button class="text-button" id="retry-save">保存失败 · 重试</button>';
-          $("#retry-save").onclick = () => save(fields);
+          $("#retry-save").onclick = () => save({});
         }
         toast(err.message);
       });
@@ -355,14 +361,24 @@ async function renderProfile(scope) {
   scope.on($("#l1-enabled"), "change", (ev) =>
     save({ l1_enabled: ev.target.checked }),
   );
+  const saveDomains = () => {
+    $$("[data-domain]", $("#domains")).forEach((btn) =>
+      btn.setAttribute("aria-pressed", focusDomains.has(btn.dataset.domain)),
+    );
+    $("#clear-focus-domains").disabled = focusDomains.size === 0;
+    $("#domain-state").textContent = `${domainSummary(focusDomains.size)} · 保存中…`;
+    save({ focus_domains: [...focusDomains] });
+  };
+  scope.on($("#clear-focus-domains"), "click", () => {
+    focusDomains.clear();
+    saveDomains();
+  });
   scope.on($("#domains"), "click", (ev) => {
     const btn = ev.target.closest("[data-domain]");
     if (!btn) return;
     const id = btn.dataset.domain;
-    domains.has(id) ? domains.delete(id) : domains.add(id);
-    btn.setAttribute("aria-pressed", domains.has(id));
-    $("#domain-state").textContent = `已选择 ${domains.size} 个领域 · 保存中…`;
-    save({ domains: [...domains] });
+    focusDomains.has(id) ? focusDomains.delete(id) : focusDomains.add(id);
+    saveDomains();
   });
   scope.on($("#vocab-test"), "click", () => vocabTest(scope));
   await ctx.run("profile", { scope });

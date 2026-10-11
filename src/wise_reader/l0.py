@@ -52,11 +52,12 @@ def candidates(doc: Document, lexicon: Lexicon) -> list[Annotation]:
             entry.gloss() if entry else "",
             entry.rank if entry else 0,
             entry.full_gloss() if entry else "",
+            entry.focus_domain if entry else None,
         )
     for token, key in zip(doc.tokens, keys):
         suppressed = _is_acronym(token)
 
-        entry, lemma, gloss, rank, detail = entries[key]
+        entry, lemma, gloss, rank, detail, domain = entries[key]
 
         if key in _FUNCTION or lemma in _FUNCTION:
             suppressed = True
@@ -90,6 +91,7 @@ def candidates(doc: Document, lexicon: Lexicon) -> list[Annotation]:
                 rarity=rarity,
                 suppressed=suppressed,
                 lemma=lemma,
+                domain=domain,
                 detail=detail,
             )
         )

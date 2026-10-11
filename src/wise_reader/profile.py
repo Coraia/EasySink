@@ -35,10 +35,12 @@ class ReaderProfile:
     vocab_size: int = 8000
     known: set[str] = field(default_factory=set)
     unknown: set[str] = field(default_factory=set)
-    domains: set[str] = field(default_factory=set)
+    domains: set[str] = field(default_factory=set)  # Legacy familiarity; retained, not reinterpreted.
     density: float = 4.0
     repeat: bool = False
     l1_enabled: bool = True
+    # Append to preserve legacy positional constructors (including CLI callers).
+    focus_domains: set[str] = field(default_factory=set)
 
     def rank_threshold(self) -> int:
         return max(500, self.vocab_size)

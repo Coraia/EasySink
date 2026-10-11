@@ -1,5 +1,5 @@
 import { $, toast } from "../core.js";
-import { sameSelection } from "../source-selection.js";
+import { sameSelection, containsSelection } from "../source-selection.js";
 import { childScope, createCollectionsStore } from "../collections-store.js";
 import {
   createMarkPainter,
@@ -357,7 +357,7 @@ export function install(ctx) {
     let writing = false;
     const matching = (anchor) =>
       controller.state.items.find(
-        (item) => item.kind === "excerpt" && sameSelection(item.anchor, anchor),
+        (item) => item.kind === "excerpt" && containsSelection(item.anchor, anchor),
       );
     const updateAction = () => {
       if (scope.signal.aborted) return;

@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
+from wise_reader.assist_context import public_payload
 from wise_reader.collections_source import anchor_key, digest, exists, index, packed, resolve, union_anchor, validate
 from wise_reader.content import Anchor
 
@@ -175,7 +176,7 @@ class Collections:
             return [(p["block_id"], p["start"], p["end"]) for p in (value.get("segments") or [value])]
         if range_key(anchor) != range_key(snapshot["anchor"]) or anchor.get("quote") != snapshot["quote"]:
             raise HTTPException(409, "解释与收藏的子范围不一致")
-        payload = json.loads(row["payload"])
+        payload = public_payload(json.loads(row["payload"]))
         meaning, explanation = payload.get("meaning"), payload.get("explanation")
         if not isinstance(meaning, str) or not isinstance(explanation, str) or not meaning.strip():
             raise HTTPException(409, "解释没有有效结果")

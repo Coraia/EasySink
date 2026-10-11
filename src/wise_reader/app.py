@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -41,6 +41,7 @@ class ProfilePatch(BaseModel):
     vocab_size: int | None = Field(default=None, ge=500, le=50000)
     density: float | None = Field(default=None, ge=0, le=15)
     domains: list[str] | None = None
+    focus_domains: list[str] | None = None
     repeat: bool | None = None
     l1_enabled: bool | None = None
     exam: str | None = None
@@ -112,7 +113,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"ok": True, "version": "0.2.0", "product_version": "1.1.0", "web_revision": "20261011-reading-loop"}
+        return {"ok": True, "version": "0.2.0", "product_version": "1.1.0", "web_revision": "20261011-reading-closeout"}
 
     @app.get("/api/jobs")
     def job_list():
@@ -151,6 +152,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "vocab_size": p.vocab_size,
             "density": p.density,
             "domains": sorted(p.domains),
+            "focus_domains": sorted(p.focus_domains),
             "repeat": p.repeat,
             "l1_enabled": p.l1_enabled,
             "known_count": len(p.known),
@@ -174,6 +176,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             fields["density"] = body.density
         if body.domains is not None:
             fields["domains"] = [d for d in body.domains if d in DOMAINS]
+        if body.focus_domains is not None:
+            fields["focus_domains"] = sorted({d for d in body.focus_domains if d in DOMAINS})
         if body.repeat is not None:
             fields["repeat"] = body.repeat
         if body.l1_enabled is not None:
@@ -208,7 +212,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 metadata = pdf.document_metadata(doc_id)
                 if metadata is not None:
                     result["pdf"] = metadata
-            return result
+            # Engine output and PDF metadata are already JSON values. Avoid a
+            # second recursive conversion of every block in a long chapter.
+            return JSONResponse(result)
         except KeyError:
             raise HTTPException(404, "not found")
 

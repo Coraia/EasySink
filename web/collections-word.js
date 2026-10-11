@@ -21,7 +21,7 @@ export function mountCollectionWord(
   const section = document.createElement("section");
   section.className = "collections-word";
   section.innerHTML =
-    '<div class="collections-independent" role="group" aria-label="此处的独立阅读记录"><button type="button" data-collection-word>收藏词语</button><button type="button" data-understood>已懂这里</button><button type="button" data-retained>保留注释</button></div><p class="collections-help">只记录这一次用法；收藏、理解和保留注释各自独立。</p><p class="collections-status" role="status"></p><div class="collections-actions"><button type="button" data-word-edit hidden>我的释义 / 已存解释</button><button type="button" data-word-adopt hidden>预览并采用解释</button><button type="button" data-state-retry hidden>重新加载记录</button></div>';
+    '<div class="collections-independent" role="group" aria-label="此处的独立阅读记录"><button type="button" data-collection-word>收藏词语</button><button type="button" data-understood>已掌握</button><button type="button" data-retained>保留注释</button></div><p class="collections-help">只记录这一次用法；收藏、掌握反馈和保留注释各自独立。</p><p class="collections-status" role="status"></p><div class="collections-actions"><button type="button" data-word-edit hidden>我的释义 / 已存解释</button><button type="button" data-word-adopt hidden>预览并采用解释</button><button type="button" data-state-retry hidden>重新加载记录</button></div>';
   const dictionary = document.createElement("section");
   dictionary.className = "collections-dictionary";
   const meaning = $(".meaning", pop),
@@ -121,7 +121,7 @@ export function mountCollectionWord(
       [
         "[data-understood]",
         feedback?.understood === true,
-        feedback?.understood === true ? "已懂这里 ✓" : "已懂这里",
+        feedback?.understood === true ? "已掌握 ✓" : "已掌握",
       ],
       [
         "[data-retained]",
@@ -216,7 +216,7 @@ export function mountCollectionWord(
         if (button.hasAttribute("data-understood")) {
           const understood = feedback?.understood === true ? null : true;
           fields = { understood };
-          message = understood ? "已记录：懂得这里的用法" : "已回到未反馈状态";
+          message = understood ? "已记录：已掌握这里的用法" : "已回到未反馈状态";
         } else {
           const retained = !feedback?.retained;
           const note =

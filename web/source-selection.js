@@ -19,6 +19,18 @@ export function sameSelection(a, b) {
     p.block_id === right[i].block_id && p.start === right[i].start && p.end === right[i].end);
 }
 
+// A saved highlight is one record: a selection wholly inside it addresses the
+// whole record. Compare source blocks and versions, never matching quote text.
+export function containsSelection(outer, inner) {
+  if (!outer || !inner || outer.kind === "image" || inner.kind === "image" ||
+      outer.version !== inner.version) return false;
+  const saved = anchorSegments(outer), selected = anchorSegments(inner);
+  return selected.length > 0 && selected.every(part =>
+    Number.isInteger(part.start) && Number.isInteger(part.end) && part.end > part.start &&
+    saved.some(range => range.block_id === part.block_id &&
+      range.start <= part.start && range.end >= part.end));
+}
+
 export const linkedRanges = (anchor, ranges) => ranges.flatMap(range =>
   (range.ranges || [range]).map(part => ({ ...part, block_id: part.block_id || anchor.block_id })));
 

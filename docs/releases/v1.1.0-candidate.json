@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "product_version": "1.1.0",
-  "build": "2",
+  "build": "8",
   "date": "2026-10-11",
-  "status": "installed-candidate-awaiting-human-acceptance",
+  "status": "installed-engineering-candidate-verified-awaiting-human-acceptance",
   "git_tag": null,
   "baseline": "023936a1d9df72715fc6794dbe64e3c38352eacb",
   "spec": "https://github.com/Coraia/EasySink/issues/39",
@@ -20,103 +20,168 @@
     "Bounded collection readiness and overlapping preparation"
   ],
   "installed_artifact": {
-    "manifest_sha256": "fcf13e56842c8879d199a38baaf7918007470c895f14b6685be5fcded3385bbc",
-    "frozen_source_manifest_sha256": "b2323057bf1e815c1f8d333a49360f2750e1d634209bcb50c7195d9087d2176b",
-    "archive_sha256": "94d903f86abac15c531119c9c124f854a75df1bf47148db23143f94aece76a87",
+    "manifest_sha256": "60518bf24842749670e492eafd384ad2914082f240e4535b945240ac0c1a67e4",
+    "frozen_source_manifest_sha256": "78a4c3f1676d35e063088d93408a49d0b3e916c73f9d9225c49e8ec09425108d",
+    "archive_sha256": "5656cd9af4607d07e6f16c714df076748ed3438bb3b03e1fccd18219563c277a",
     "version": "1.1.0",
-    "build": "2"
+    "build": "8"
   },
   "validation": {
-    "method": "Actual Web/native UI plus bounded temporary-DB production API evidence and matched V1 performance; no new unit tests",
-    "opening": [
-      {
-        "doc": 10,
-        "n_per_version": 10,
-        "same_source_anchor": true,
-        "firstSourceMs": {
-          "B": 227.8,
-          "C": 214.1,
-          "frozen_noise": 33.80000000000001,
-          "within_paired_noise": true
-        },
-        "readyMs": {
-          "B": 301.2,
-          "C": 288.3,
-          "frozen_noise": 31.700000000000017,
-          "within_paired_noise": true
-        }
+    "method": "Actual installed native UI and real provider fixed corpus; raw native JS draw traces; separate local API replay/fault injection; no new unit tests",
+    "measurement_build": "AI fixed38 and native18 measured build6; same response code opening measured build7; final legal-tail and installed UI measured build8",
+    "ai_visible_fixed_corpus": {
+      "acceptable": 38,
+      "total": 38,
+      "protocol": "context-meaning-v22",
+      "unseen_holdout": false,
+      "independent_review": true,
+      "whole_model_json_accuracy_claim": false
+    },
+    "ai_native_ui": {
+      "cases": 1,
+      "provider_calls": 2,
+      "reopen_extra_attempts": 0,
+      "source": "ai/build6-ui-verification.json"
+    },
+    "native_turns": {
+      "status": "PASS_DEFINED_NATIVE_JS_FRAME_GATE",
+      "sample_count": 18,
+      "taps": 15,
+      "cancel": 2,
+      "completed_drag": 1,
+      "threshold_ms": 34,
+      "tap_p95_range_ms": [
+        18,
+        20
+      ],
+      "cancel_release_p95_ms": [
+        19,
+        17
+      ],
+      "completed_drag_release_p95_ms": [
+        18
+      ],
+      "tap_isolated_max_ms": 99,
+      "legacy_all_pass_count": 17,
+      "legacy_all_interval_max_ms": 124,
+      "source": "performance/build6-native-single-cancel-check.json",
+      "viewport": {
+        "dpr": 2,
+        "height": 1295,
+        "width": 1883
       },
-      {
-        "doc": 23,
-        "n_per_version": 10,
-        "same_source_anchor": true,
-        "firstSourceMs": {
-          "B": 27.2,
-          "C": 32.0,
-          "frozen_noise": 59,
-          "within_paired_noise": true
-        },
-        "readyMs": {
-          "B": 103.0,
-          "C": 108.8,
-          "frozen_noise": 45.20000000000002,
-          "within_paired_noise": true
-        }
-      },
-      {
-        "doc": 51,
-        "n_per_version": 10,
-        "same_source_anchor": true,
-        "firstSourceMs": {
-          "B": 21.4,
-          "C": 19.2,
-          "frozen_noise": 5.200000000000003,
-          "within_paired_noise": true
-        },
-        "readyMs": {
-          "B": 68.4,
-          "C": 67.1,
-          "frozen_noise": 13.400000000000006,
-          "within_paired_noise": true
-        }
-      },
-      {
-        "doc": 137,
-        "n_per_version": 10,
-        "same_source_anchor": true,
-        "firstSourceMs": {
-          "B": 24.5,
-          "C": 23.9,
-          "frozen_noise": 10.699999999999996,
-          "within_paired_noise": true
-        },
-        "readyMs": {
-          "B": 96.7,
-          "C": 99.8,
-          "frozen_noise": 12.099999999999994,
-          "within_paired_noise": true
-        }
-      }
-    ],
-    "turn_frame_p95_ms": [
-      17.1,
-      17.6
-    ],
-    "turns_per_version": 6,
-    "over34ms_frames": 0,
-    "real_provider_transports": 41,
-    "provider_auto_retries": 0,
+      "native_delivery_error": null,
+      "scope": "Actual installed WKWebView keyboard/mouse actions. JS draw submissions, not presented pixels or physical trackpad latency.",
+      "incomplete_attempts": "Earlier single-page drag attempts did not produce metrics and are retained as unmeasured; a subsequent outer-edge drag produced sequence18 spring-back with unchanged page17. No outcome was inferred for missing records.",
+      "repro_steps": "pastoring men source145-152: double8 alternating/boundary taps, short right-edge cancel, full right-edge drag, Left return; single6 alternating taps and short right-edge cancel. Wait900ms after action before AX. Restore auto wide-screen double.",
+      "geometry_dpi_lighting_duration_unchanged": true,
+      "physical_trackpad_acceptance": "pending human; no physical events generated in this walkthrough"
+    },
     "old_user_records_preserved": true,
     "runtime_identity": {
-      "served_assets": 61,
-      "installed_runtime_files": 145
+      "installed_entries_match": 2863,
+      "working_production_inputs_match_frozen": 357,
+      "formal_web_and_native_served_assets_match": true
+    },
+    "cost_boundary": {
+      "final_fixed38_provider_calls": 76,
+      "total_experiment_and_native_ui_calls_this_turn": 458,
+      "automatic_retries": 0,
+      "monetary_cost": "unknown",
+      "new_calls_during_completion_audit": 0
+    },
+    "native_build8_targeted": {
+      "status": "PASS_SIX_TARGETED_NATIVE_TAPS",
+      "build": "8",
+      "rows": [
+        {
+          "sequence": 1,
+          "source": 30,
+          "page_index": 19,
+          "completed": true,
+          "p95_ms": 18.00000000000182,
+          "max_ms": 27.00000000000182,
+          "visible": true,
+          "cached_leaves": 6
+        },
+        {
+          "sequence": 2,
+          "source": 31,
+          "page_index": 0,
+          "completed": true,
+          "p95_ms": 18.000000000003638,
+          "max_ms": 39,
+          "visible": true,
+          "cached_leaves": 6
+        },
+        {
+          "sequence": 3,
+          "source": 30,
+          "page_index": 18,
+          "completed": true,
+          "p95_ms": 18.000000000007276,
+          "max_ms": 27,
+          "visible": true,
+          "cached_leaves": 6
+        },
+        {
+          "sequence": 4,
+          "source": 30,
+          "page_index": 16,
+          "completed": true,
+          "p95_ms": 18,
+          "max_ms": 42,
+          "visible": true,
+          "cached_leaves": 6
+        },
+        {
+          "sequence": 5,
+          "source": 30,
+          "page_index": 18,
+          "completed": true,
+          "p95_ms": 18.000000000007276,
+          "max_ms": 38,
+          "visible": true,
+          "cached_leaves": 6
+        },
+        {
+          "sequence": 6,
+          "source": 31,
+          "page_index": 0,
+          "completed": true,
+          "p95_ms": 17.999999999985448,
+          "max_ms": 42.000000000007276,
+          "visible": true,
+          "cached_leaves": 6
+        }
+      ],
+      "scope": "JS draw submissions; actual keyboard actions, not physical trackpad or presented-pixel timing",
+      "boundary_forward_and_return_AX": true,
+      "normal_pair_AX": true,
+      "cached_context": "priorities=优先事项; reopen after app update; no regeneration clicked",
+      "prior_failure": "../../v11-build7-20261011/ui/boundary-first-failure.json",
+      "prior_build6_18_action_evidence": "retained separately; not relabeled as build8",
+      "unchanged_resource_limits": "six leaves/96MB",
+      "physical_trackpad_acceptance": "pending human"
+    },
+    "completion_audit": "outputs/v11-final-repair-20261011/completion/final-closeout.json",
+    "warm_reopen_pairs": 40,
+    "reload_pairs": 20,
+    "native_resource_observation": {
+      "measured_build": "6",
+      "seconds": 1800.508008083,
+      "samples": 181,
+      "scope": "mixed active/idle/background; final shelf531.567 to501.910MiB; not no-leak/absolute-limit guarantee",
+      "source": "outputs/v11-final-repair-20261011/completion/m3-recovery/native-soak2-summary.json"
     }
   },
   "known_limits": [
-    "technical-01 thread context meaning still expands to nearby phrase; not all30 samples rerun under finalv7",
-    "Inherited V1-D01 conversion-load frame and V1-D02 academic semantic ambiguity",
-    "No final full physical trackpad speed/device matrix, quantitative selection latency or30-minute memory soak",
-    "No new actual OCR revision/import benchmark, clean-machine signing/notarization or every UI recovery permutation"
+    "Fixed38 visible outputs passed; repeatedly reused corpus is not unseen accuracy. Two wrong intermediate target_usage diagnostics are retained privately and excluded from public/cached/adopted payloads.",
+    "Installed native taps P95 18-20ms; isolated first interval99ms remains. Drag release P95 passes while legacy held-drag124ms remains. JS submission timing does not prove screen presentation or zero long frames.",
+    "Physical trackpad speed/device matrix remains human acceptance; this final walkthrough used native keyboard/mouse.",
+    "Inherited V1-D01 conversion-load frame and V1-D02 academic semantic ambiguity; no new OCR/import benchmark in this narrow repair.",
+    "No clean-machine signing/notarization or full device matrix; domain priorities not V2 vocabulary F1.",
+    "Build7 post-install odd-aligned blank boundary failed and was repaired in build8. Final6 taps P9518ms, isolated max42ms; old immediate-AX36ms sample retained. Warm/reload opening does not erase first upgrade cache-rebuild cost."
   ],
   "evidence": [
     {
@@ -142,7 +207,448 @@
     {
       "local_path": "outputs/v11-delivery-20261011/v11-client/BUILD-COMPLETE.json",
       "sha256": "377ce97d90132a7bb6c838498ffdfd0413375225a2172674598df8c7ca8183cb"
+    },
+    {
+      "local_path": "docs/77-v11-repair-verification.md",
+      "sha256": "91b58f891825be2c9ff87ad4b6308ffddb6ae5ec1e4d0ab3bbb25d8170d771c4"
+    },
+    {
+      "local_path": "outputs/v11-repair-20261011/client/BUILD-COMPLETE.json",
+      "sha256": "9a88fea3fd110afe24d2f622c0eec4338565abe84e770f3915c55f18cfca75d2"
+    },
+    {
+      "local_path": "outputs/v11-repair-20261011/deployment/final-runtime-identity.json",
+      "sha256": "2ab2f183e7701bb5e66f928d352230cda08428d3e2b8ef78f170354f200b365e"
+    },
+    {
+      "local_path": "outputs/v11-repair-20261011/deployment/protection-reviewed.json",
+      "sha256": "7e798709c1937f1318810643eea5d906e1044f3b25327bab3e96977b03f59a41"
+    },
+    {
+      "local_path": "docs/78-v11-context-and-turn-repair.md",
+      "sha256": "f3b032ddad7044d1f4eb08c3040a4d2e213a6c70aae9ce49e3810b488c98a434"
+    },
+    {
+      "local_path": "outputs/v11-final-repair-20261011/client/BUILD-COMPLETE.json",
+      "sha256": "fa93024fb977b47e116ebea4bbb28f6b7fb4c3f2d34b008d923e595a1d7eff6c"
+    },
+    {
+      "local_path": "outputs/v11-final-repair-20261011/deployment/final-runtime-identity.json",
+      "sha256": "4eb4cd14d34d85d7974b1a2b74aab0628924a7665b6cf0863e3905ee53cb0e09"
+    },
+    {
+      "local_path": "outputs/v11-final-repair-20261011/deployment/final-protection-reviewed.json",
+      "sha256": "21b7aa6bfa321e3ee1604504a0422bd0af47d6871344d0f891b59107a4922ce1"
+    },
+    {
+      "local_path": "outputs/v11-final-repair-20261011/performance/build6-final-summary.json",
+      "sha256": "1b17f1a19fa7f7636ed7144dbf726f2811cc44335bf035c1fd32ab8efbe51b63"
+    },
+    {
+      "local_path": "outputs/v11-final-repair-20261011/performance/build6-final-18.csv",
+      "sha256": "37966c7e7cef89e241a2ceb0789d44e2e45aaf27024a28ca8570a566fe341f8a"
+    },
+    {
+      "local_path": "outputs/v11-final-repair-20261011/ai/build6-ui-verification.json",
+      "sha256": "25bc668282415555356c9eb1901c5f6ce3f58bf4dd013580a7ade6301a94abe7"
+    },
+    {
+      "local_path": "outputs/v11-final-repair-20261011/ai/v22/provenance-containment/INTEGRATED.json",
+      "sha256": "844a2d6fad1d5d775c4b35fae1c52d3a89031a8ee0726247cb2eb3fdf3478b69"
+    },
+    {
+      "local_path": "outputs/v11-final-repair-20261011/completion/final-closeout.json",
+      "sha256": "02fc069d57a7512789b0bc556758a5108c56db8c4ccb3290bde1b5ae4a62af23"
+    },
+    {
+      "local_path": "outputs/v11-final-repair-20261011/completion/response-path/comparison.json",
+      "sha256": "daaaa49d24178f9c86803faaccd6803f4caf24cdb6fe1393a895dea9284ad303"
+    },
+    {
+      "local_path": "outputs/v11-final-repair-20261011/completion/response-path/reload-comparison.json",
+      "sha256": "e241c9f1771f1fba26bcbb371f7706892695083a5e0687bb0780c43e77500798"
+    },
+    {
+      "local_path": "outputs/v11-final-repair-20261011/completion/m3-recovery/native-soak2-summary.json",
+      "sha256": "992d284aad8b899402f41d477e628ae5853901bd6a39bea4a55e45567ac650b4"
+    },
+    {
+      "local_path": "outputs/v11-build8-20261011/client/BUILD-COMPLETE.json",
+      "sha256": "e62181e019fe84efabb31a60db944dd7fff9c6eaef895187752a77c71a77ef23"
+    },
+    {
+      "local_path": "outputs/v11-build8-20261011/ui/native-final-six.json",
+      "sha256": "917b313efb8eac618ee6e9ca879cc9b79a8aa4f973e13e9eca27275144b15378"
+    },
+    {
+      "local_path": "outputs/v11-build8-20261011/ui/final-summary.json",
+      "sha256": "e533f8121739486f0e43b055ca580ad5e262f657d3eed5d1ce1c48adbbffc785"
+    },
+    {
+      "local_path": "outputs/v11-build8-20261011/deployment/final-runtime-identity.json",
+      "sha256": "a639856f0158c1b7f9f8b447daa8dbce0c93720879f4fed06de8e7ce97696d62"
+    },
+    {
+      "local_path": "outputs/v11-build8-20261011/deployment/final-protection-reviewed.json",
+      "sha256": "ee1b169de58dc8ebc1b015e01ba4fca7fa1477dcea409bce763482a670de11a4"
     }
   ],
-  "privacy": "Private originals, databases, settings, backups and raw provider responses remain local and are not committed."
+  "privacy": "Private originals, databases, settings, backups and raw provider responses remain local and are not committed.",
+  "previous_artifact": {
+    "manifest_sha256": "fcf13e56842c8879d199a38baaf7918007470c895f14b6685be5fcded3385bbc",
+    "frozen_source_manifest_sha256": "b2323057bf1e815c1f8d333a49360f2750e1d634209bcb50c7195d9087d2176b",
+    "archive_sha256": "94d903f86abac15c531119c9c124f854a75df1bf47148db23143f94aece76a87",
+    "version": "1.1.0",
+    "build": "2"
+  },
+  "feedback_refinement": {
+    "build": "3",
+    "date": "2026-10-11",
+    "report": "docs/75-v11-feedback-refinements.md",
+    "changes": [
+      "One-click context explanation without range controls",
+      "Mastery label restored; occurrence semantics retained",
+      "Contained selection deletes whole highlight; extension unions",
+      "Assistance density accessible in reading appearance",
+      "Independent focus domains with bounded candidate priority"
+    ],
+    "walkthrough": "outputs/v11-feedback-20261011/walkthrough.json",
+    "runtime_identity": {
+      "installed_files_match": 351,
+      "served_web_files_match": 270,
+      "asset_prefix": "/assets/011361c228160f48",
+      "version": "1.1.0",
+      "build": "3",
+      "health": {
+        "ok": true,
+        "version": "0.2.0",
+        "product_version": "1.1.0",
+        "web_revision": "20261011-reading-feedback"
+      }
+    },
+    "new_paid_ai_calls": 0,
+    "data_preserved": true
+  },
+  "previous_artifacts": [
+    {
+      "manifest_sha256": "34fc581e5688259894826543c21e1f3c22b4659fc021c04b4cb6aad7ca98fcd4",
+      "frozen_source_manifest_sha256": "04352cfaa697901f8b31254a05669b4debd046ef62853b7f4cccf55627d7966d",
+      "archive_sha256": "0a247aa5f9320bd432b8a225c9755f7186eff597aa3ffa95bc46fe5998da7a6e",
+      "version": "1.1.0",
+      "build": "3"
+    },
+    {
+      "manifest_sha256": "ceb08773a6adccfacbdd9f9c076215697a042b1329bbce165d872bf7187c262c",
+      "frozen_source_manifest_sha256": "86a8729270258b3a24eecf4d08af07ad405b99a4676fb62c36a7f27c8bbe61e7",
+      "archive_sha256": "3f005691c4f6d561cd3e91b9ed25a9c4668aaa39ecd406ad65660c97b407c0e2",
+      "version": "1.1.0",
+      "build": "4"
+    },
+    {
+      "manifest_sha256": "f1799e94812c4cf4bff34f50a09a3ef00ceb1b9041d6b248eb7bf412e77945ae",
+      "frozen_source_manifest_sha256": "b0d6d7a74b8644ce5bb2a8b1ee545a6cf4babf222be4f226085231e7d869d464",
+      "archive_sha256": "7fd87f1a3561f561ac570f37f1be3ff95a9be3d8288061a44e8564d2a051b0b9",
+      "version": "1.1.0",
+      "build": "5"
+    },
+    {
+      "manifest_sha256": "37050b261e8a26b2d070db95fc66f76cae297a58bb162a34f732b873019ba2c7",
+      "frozen_source_manifest_sha256": "d9f5b36af7e8bf1517c7cc6ea0bb5a3d99d6b369b081017e8191acc45abb07a2",
+      "archive_sha256": "ea0d6a8794611de7b3dd91ac099398e2ac529fcda16a49c1f1c961571fb30c68",
+      "version": "1.1.0",
+      "build": "6"
+    },
+    {
+      "manifest_sha256": "f69de5675c88a4f3c2f0626bf22f77c1b89843e7ce6c27860eaf339ea74bebb1",
+      "frozen_source_manifest_sha256": "1b74e604f87170727438423511734cc4fb8c577f85b328d71e211e685d2951d7",
+      "archive_sha256": "ce19a7562e05909ed9590624e6e7393f577b36f82d8fed0aba363af364405273",
+      "version": "1.1.0",
+      "build": "7"
+    }
+  ],
+  "closeout": {
+    "report": "docs/78-v11-context-and-turn-repair.md",
+    "source": "outputs/v11-build8-20261011/source-manifest.json",
+    "ai_fixed38_visible_gate": "PASS_FIXED_CORPUS",
+    "native_frame_gate": "PASS_DEFINED_ACTION_P95_GATE_WITH_RETAINED_FIRST_FAILURES",
+    "completion_audit": "outputs/v11-final-repair-20261011/completion/final-closeout.json",
+    "formal_web_updated": true,
+    "user_acceptance_ready": true,
+    "human_acceptance": "pending",
+    "installed_files_match": 2863,
+    "data_protection": "outputs/v11-build8-20261011/deployment/final-protection-reviewed.json",
+    "prior_failed_candidates_preserved": true,
+    "commit_push": "not authorized this turn"
+  },
+  "previous_known_limits": [
+    "technical-01 thread context meaning still expands to nearby phrase; not all30 samples rerun under finalv7",
+    "Inherited V1-D01 conversion-load frame and V1-D02 academic semantic ambiguity",
+    "No final full physical trackpad speed/device matrix, quantitative selection latency or30-minute memory soak",
+    "No new actual OCR revision/import benchmark, clean-machine signing/notarization or every UI recovery permutation"
+  ],
+  "closeout_history": [
+    {
+      "report": "docs/76-v11-closeout-verification.md",
+      "source": "outputs/v11-closeout-20261011/source-manifest.json",
+      "ai_final_fixed30": {
+        "acceptable": 26,
+        "failed": 4,
+        "protocol": "context-meaning-v9",
+        "gate": "NOT_PASSED"
+      },
+      "native_frame_probe_ms": [
+        36,
+        18,
+        18,
+        24
+      ],
+      "native_frame_gate": "NOT_PASSED_36ms_GT_34ms",
+      "formal_web_updated": false,
+      "user_acceptance_ready": false,
+      "strict_guard_decision": "Rejected by user: false rejections not accepted; AI quality to be adjusted separately before acceptance",
+      "resource_observation": {
+        "seconds": 1800.6994252500008,
+        "samples": 180,
+        "core_footprint_reading_mib": 734.0983734130859,
+        "core_footprint_shelf_mib": 406.8796920776367,
+        "all_responsible_end_mib": 504.3209228515625,
+        "report": "outputs/v11-closeout-20261011/performance/resource-summary.json",
+        "paired_regression_claim": false
+      },
+      "data_protection": "formal web tables unchanged; client records preserved; expected reading progress/time/cache only",
+      "installed_files_match": 2857
+    },
+    {
+      "report": "docs/77-v11-repair-verification.md",
+      "source": "outputs/v11-repair-20261011/source-manifest.json",
+      "ai_final_fixed30": {
+        "acceptable": 26,
+        "failed": 4,
+        "protocol": "context-meaning-v9",
+        "gate": "NOT_PASSED",
+        "unchanged_this_turn": true
+      },
+      "ai_experiments_not_deployed": {
+        "v10": [
+          5,
+          6
+        ],
+        "v11": [
+          29,
+          30
+        ],
+        "v12": [
+          26,
+          30
+        ],
+        "v13": [
+          28,
+          30
+        ],
+        "real_requests": 96,
+        "auto_retry": 0
+      },
+      "native_controlled_four_p95_ms": [
+        18,
+        28,
+        20,
+        18
+      ],
+      "native_broader_probe_p95_max_ms": 36,
+      "native_frame_gate": "NOT_PASSED_36ms_GT_34ms",
+      "native_build5_smoke_p95_ms": [
+        20,
+        19,
+        19
+      ],
+      "formal_web_updated": true,
+      "user_acceptance_ready": false,
+      "installed_files_match": 2862,
+      "data_protection": "outputs/v11-repair-20261011/deployment/protection-reviewed.json"
+    },
+    {
+      "report": "docs/78-v11-context-and-turn-repair.md",
+      "source": "outputs/v11-final-repair-20261011/source-manifest.json",
+      "ai_fixed38_visible_gate": "PASS_FIXED_CORPUS",
+      "native_frame_gate": "PASS_DEFINED_ACTION_P95_GATE",
+      "formal_web_updated": true,
+      "user_acceptance_ready": true,
+      "human_acceptance": "pending",
+      "installed_files_match": 2863,
+      "data_protection": "outputs/v11-final-repair-20261011/deployment/final-protection-reviewed.json",
+      "prior_failed_candidates_preserved": true
+    }
+  ],
+  "validation_history": [
+    {
+      "build": "5-and-earlier",
+      "validation": {
+        "method": "Actual Web/native UI plus bounded temporary-DB production API evidence and matched V1 performance; no new unit tests",
+        "opening": [
+          {
+            "doc": 10,
+            "n_per_version": 10,
+            "same_source_anchor": true,
+            "firstSourceMs": {
+              "B": 227.8,
+              "C": 214.1,
+              "frozen_noise": 33.80000000000001,
+              "within_paired_noise": true
+            },
+            "readyMs": {
+              "B": 301.2,
+              "C": 288.3,
+              "frozen_noise": 31.700000000000017,
+              "within_paired_noise": true
+            }
+          },
+          {
+            "doc": 23,
+            "n_per_version": 10,
+            "same_source_anchor": true,
+            "firstSourceMs": {
+              "B": 27.2,
+              "C": 32.0,
+              "frozen_noise": 59,
+              "within_paired_noise": true
+            },
+            "readyMs": {
+              "B": 103.0,
+              "C": 108.8,
+              "frozen_noise": 45.20000000000002,
+              "within_paired_noise": true
+            }
+          },
+          {
+            "doc": 51,
+            "n_per_version": 10,
+            "same_source_anchor": true,
+            "firstSourceMs": {
+              "B": 21.4,
+              "C": 19.2,
+              "frozen_noise": 5.200000000000003,
+              "within_paired_noise": true
+            },
+            "readyMs": {
+              "B": 68.4,
+              "C": 67.1,
+              "frozen_noise": 13.400000000000006,
+              "within_paired_noise": true
+            }
+          },
+          {
+            "doc": 137,
+            "n_per_version": 10,
+            "same_source_anchor": true,
+            "firstSourceMs": {
+              "B": 24.5,
+              "C": 23.9,
+              "frozen_noise": 10.699999999999996,
+              "within_paired_noise": true
+            },
+            "readyMs": {
+              "B": 96.7,
+              "C": 99.8,
+              "frozen_noise": 12.099999999999994,
+              "within_paired_noise": true
+            }
+          }
+        ],
+        "turn_frame_p95_ms": [
+          17.1,
+          17.6
+        ],
+        "turns_per_version": 6,
+        "over34ms_frames": 0,
+        "real_provider_transports": 41,
+        "provider_auto_retries": 0,
+        "old_user_records_preserved": true,
+        "runtime_identity": {
+          "served_assets": 61,
+          "installed_runtime_files": 145
+        },
+        "measurement_build": "2; prior measurements, not rerun for build3 feedback refinements",
+        "repair_build5": "outputs/v11-repair-20261011/deployment/final-runtime-identity.json"
+      }
+    },
+    {
+      "build": "6",
+      "validation": {
+        "method": "Actual installed native UI and real provider fixed corpus; raw native JS draw traces; separate local API replay/fault injection; no new unit tests",
+        "measurement_build": "6",
+        "ai_visible_fixed_corpus": {
+          "acceptable": 38,
+          "total": 38,
+          "protocol": "context-meaning-v22",
+          "unseen_holdout": false,
+          "independent_review": true,
+          "whole_model_json_accuracy_claim": false
+        },
+        "ai_native_ui": {
+          "cases": 1,
+          "provider_calls": 2,
+          "reopen_extra_attempts": 0,
+          "source": "ai/build6-ui-verification.json"
+        },
+        "native_turns": {
+          "status": "PASS_DEFINED_NATIVE_JS_FRAME_GATE",
+          "sample_count": 18,
+          "taps": 15,
+          "cancel": 2,
+          "completed_drag": 1,
+          "threshold_ms": 34,
+          "tap_p95_range_ms": [
+            18,
+            20
+          ],
+          "cancel_release_p95_ms": [
+            19,
+            17
+          ],
+          "completed_drag_release_p95_ms": [
+            18
+          ],
+          "tap_isolated_max_ms": 99,
+          "legacy_all_pass_count": 17,
+          "legacy_all_interval_max_ms": 124,
+          "source": "performance/build6-native-single-cancel-check.json",
+          "viewport": {
+            "dpr": 2,
+            "height": 1295,
+            "width": 1883
+          },
+          "native_delivery_error": null,
+          "scope": "Actual installed WKWebView keyboard/mouse actions. JS draw submissions, not presented pixels or physical trackpad latency.",
+          "incomplete_attempts": "Earlier single-page drag attempts did not produce metrics and are retained as unmeasured; a subsequent outer-edge drag produced sequence18 spring-back with unchanged page17. No outcome was inferred for missing records.",
+          "repro_steps": "pastoring men source145-152: double8 alternating/boundary taps, short right-edge cancel, full right-edge drag, Left return; single6 alternating taps and short right-edge cancel. Wait900ms after action before AX. Restore auto wide-screen double.",
+          "geometry_dpi_lighting_duration_unchanged": true,
+          "physical_trackpad_acceptance": "pending human; no physical events generated in this walkthrough"
+        },
+        "old_user_records_preserved": true,
+        "runtime_identity": {
+          "installed_entries_match": 2863,
+          "working_production_inputs_match_frozen": 357,
+          "formal_web_and_native_served_assets_match": true
+        },
+        "cost_boundary": {
+          "final_fixed38_provider_calls": 76,
+          "total_experiment_and_native_ui_calls_this_turn": 458,
+          "automatic_retries": 0,
+          "monetary_cost": "unknown"
+        }
+      }
+    }
+  ],
+  "known_limits_history": [
+    {
+      "build": "5",
+      "limits": [
+        "AI final v9 fixed30 still has4 semantic failures; conservative15/30 rejection path not accepted by user",
+        "Native foreground probe has36ms p95 turn above34ms hard gate; not a paired regression claim",
+        "Inherited V1-D01 conversion-load frame and V1-D02 academic semantic ambiguity",
+        "No final full physical trackpad speed/device matrix or clean-machine signing/notarization",
+        "Domain priorities verified for7 exact dictionary entries, not broad coverage or V2 vocabulary F1"
+      ]
+    }
+  ]
 }

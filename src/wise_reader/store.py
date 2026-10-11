@@ -89,6 +89,10 @@ class Store:
             );
             """
         )
+        columns = {row["name"] for row in self._con.execute("PRAGMA table_info(profile)")}
+        if "focus_domains" not in columns:
+            # Familiarity is not a request for help. Never backfill from domains.
+            self._con.execute("ALTER TABLE profile ADD COLUMN focus_domains TEXT NOT NULL DEFAULT '[]'")
         self._commit()
 
     def get_profile(self) -> ReaderProfile:
@@ -105,6 +109,7 @@ class Store:
             known=known,
             unknown=unknown,
             domains=set(json.loads(row["domains"])),
+            focus_domains=set(json.loads(row["focus_domains"])),
             density=row["density"],
             repeat=bool(row["repeat_annotations"]),
             l1_enabled=bool(row["l1_enabled"]),
@@ -115,6 +120,7 @@ class Store:
             "vocab_size",
             "density",
             "domains",
+            "focus_domains",
             "repeat_annotations",
             "l1_enabled",
         }
@@ -125,7 +131,7 @@ class Store:
                 k = "repeat_annotations"
             if k not in allowed:
                 continue
-            if k == "domains":
+            if k in ("domains", "focus_domains"):
                 v = json.dumps(sorted(v) if not isinstance(v, str) else json.loads(v))
             if k in ("repeat_annotations", "l1_enabled"):
                 v = 1 if v else 0

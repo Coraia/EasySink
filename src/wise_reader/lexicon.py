@@ -29,6 +29,28 @@ _LEMMA_CODE = "0"
 
 _COLUMNS = "word, phonetic, translation, definition, detail, pos, frq, bnc, collins, oxford, tag, exchange"
 
+# Conservative entry-level metadata, not contextual sense selection. ECDICT's
+# [计] also occurs on everyday words (open, chapter, language), so copying any
+# one sense's label onto a whole entry would incorrectly boost ambiguous words.
+# These narrow terms are attested in the local dictionary. Match BOTH complete
+# source fields: another dictionary revision with extra senses fails closed.
+_FOCUS_ENTRIES = {
+    "codec": ("tech", "[计] 编码译码器", ""),
+    "username": ("tech", "n. [计]由字母或数字组成的用户名称, 以标明用户的身份", ""),
+    "theocentric": ("religion", "a. [宗]以上帝为中心的", ""),
+    "monotheism": ("religion", "n. 一神论, 一神教", "n. belief in a single God"),
+    "polytheism": ("religion", "n. 多神教, 多神论", "n. belief in multiple Gods"),
+    "trinitarian": (
+        "religion", "a. 三位一体的, 三位一体论的, 信仰三位一体的\nn. 信仰三位一体教理的人",
+        "n. adherent of Trinitarianism",
+    ),
+    "eschatology": (
+        "religion", "n. 末世论",
+        "n. the branch of theology that is concerned with such final things as death "
+        "and Last Judgment; Heaven and Hell; the ultimate destiny of humankind",
+    ),
+}
+
 
 def normalize_query(word: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", word).lower().replace("’", "'").split())
@@ -64,6 +86,14 @@ class Entry:
     @property
     def senses(self):
         return parse_senses(self.translation, self.definition)
+
+    @property
+    def focus_domain(self) -> str | None:
+        """A bounded, source-verified domain; no guesses from spelling or context."""
+        expected = _FOCUS_ENTRIES.get(self.word.lower())
+        if expected and (self.translation.strip(), self.definition.strip()) == expected[1:]:
+            return expected[0]
+        return None
 
     def full_gloss(self) -> str:
         return full_detail(self.translation, self.definition, self.detail)
