@@ -56,6 +56,7 @@ npx playwright install chromium
 
 ## 文档
 
+- [项目交接 · 2026-10-12](docs/handoffs/2026-10-12.md)
 - [V1 版本记录与遗留项](docs/releases/v1.0.0.json)
 - [V1 → V1.1 → V2 路线图](docs/65-v1-v2-roadmap.md)
 - [macOS 客户端运行与构建](desktop/README.md)
