@@ -184,9 +184,9 @@ export function mountCollectionsList(
     const item = items.find((item) => String(item.id) === entry.dataset.record);
     if (!item) return;
     if (button.dataset.action === "preview")
-      previewCollection(ctx, store, item, scope);
+      previewCollection(ctx, store, item, scope, root.closest("#tool-panel") ? root : null);
     else if (button.dataset.action === "edit")
-      editCollection(ctx, store, item, scope);
+      editCollection(ctx, store, item, scope, null, root.closest("#tool-panel") ? root : null);
     else {
       button.disabled = true;
       try {
@@ -212,7 +212,7 @@ export function mountCollectionsList(
       selectedQuotes: items
         .filter((item) => selected.has(String(item.id)))
         .map((item) => item.quote),
-    }),
+    }, root.closest("#tool-panel") ? root : null),
   );
   scope.on(store.events, "change", (event) => {
     if (event.detail.path === "/resurface") return;

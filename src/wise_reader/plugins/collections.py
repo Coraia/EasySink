@@ -63,6 +63,14 @@ class UndoIn(BaseModel):
     token: str = Field(min_length=1, max_length=128)
 
 
+class AdoptIn(BaseModel):
+    doc_id: int = Field(ge=1)
+    anchor: Anchor
+    adopt_assist_id: int = Field(ge=1)
+    expected_feedback_revision: int = Field(ge=0)
+    expected_collection_revision: int = Field(default=0, ge=0)
+
+
 class ResurfaceIn(BaseModel):
     action: Literal["next", "hide", "show", "snooze"]
     id: int | None = Field(default=None, ge=1)
@@ -125,6 +133,11 @@ def register(app: FastAPI, ctx) -> None:
     @router.post("/undo")
     def undo(body: UndoIn):
         return service.undo(body.token)
+
+    @router.post("/adopt")
+    def adopt_context(body: AdoptIn):
+        return service.adopt_context(body.doc_id, body.anchor, body.adopt_assist_id,
+                                     body.expected_feedback_revision, body.expected_collection_revision)
 
     @router.get("/resurface")
     def resurface():

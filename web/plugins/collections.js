@@ -7,6 +7,7 @@ import {
 } from "../collections-marks.js";
 import { mountCollectionsList, mountResurface } from "../collections-list.js";
 import { mountCollectionWord } from "../collections-word.js";
+import { adoptedExplanations } from "../collections-context.js";
 
 const STATE_READINESS_MS = 1500;
 
@@ -93,7 +94,9 @@ export function install(ctx) {
       reader.collectionsSeed = payload;
       controller.loaded = !error;
       controller.error = error;
-      const nextAnnotations = JSON.stringify(
+      const adopted = adoptedExplanations(state);
+      const nextAnnotations = JSON.stringify([
+        adopted.map(value => [value.anchor, value.explanation.payload.meaning, value.explanation.payload.explanation]),
         state.feedback
           .filter(
             (value) =>
@@ -108,11 +111,11 @@ export function install(ctx) {
             value.detail,
             value.target,
           ]),
-      );
+      ]);
       const nextMarks = JSON.stringify(
         state.items.map((item) => [item.id, item.kind, item.anchor]),
       );
-      overlay.set(state.feedback);
+      overlay.set(state.feedback, adopted);
       const annotationsChanged = nextAnnotations !== annotationSignature;
       annotationSignature = nextAnnotations;
       if (nextMarks !== markSignature) {
@@ -234,11 +237,8 @@ export function install(ctx) {
         scope.on(store.events, "change", (event) => {
           const path = event.detail.path;
           if (["/resurface", "/export"].includes(path)) return;
-          if (
-            path === "" ||
-            path.includes("?revision=") ||
-            ["/undo", "/import", "/cleanup"].includes(path)
-          ) {
+          if (path === "" || path === "/adopt" || path === "/feedback" ||
+              /^\/\d+/.test(path) || ["/undo", "/import", "/cleanup"].includes(path)) {
             // A book list can remove a record in an already warmed neighbor.
             // Discard only bounded neighboring page packets, so handoff never
             // reuses their old seed. This is not a source redraw/reflow.

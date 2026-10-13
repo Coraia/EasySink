@@ -214,6 +214,27 @@
 .collections-dialog::backdrop {
   background: #26372e38;
 }
+.collections-dialog.collections-inline-panel {
+  box-sizing: border-box;
+  width: 100%;
+  max-height: none;
+  overflow: visible;
+  margin: 16px 0;
+  padding: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--collection-line);
+  border-radius: 0;
+  box-shadow: none;
+}
+.collections-current-meaning {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+}
+.collections-adopted-gloss {
+  font-size: 18px;
+  font-weight: 600;
+}
 .collections-dialog header {
   display: flex;
   align-items: center;

@@ -140,12 +140,15 @@ class Collections:
         self.store.execute(f"UPDATE {TABLES[category]} SET " + ",".join(k + "=?" for k in fields) + " WHERE id=?", tuple(values[k] for k in fields) + (row["id"],))
         return self.row(row["id"], category, active=False)
 
-    def _undo_token(self, category, before, after):
+    def _undo_token(self, category, before, after, extra=()):
         changes = [{"category": category, "id": row["id"], "before": before.get(row["id"]), "after_revision": row["revision"]} for row in after]
+        changes.extend(extra)
+        if not changes:
+            return None
         token = secrets.token_urlsafe(32)
         self.store.execute("INSERT INTO wr_collection_undo(token,changes,created_at) VALUES(?,?,?)", (token, packed(changes), now()))
         for change in changes:
-            self.store.execute("INSERT INTO wr_collection_undo_touch VALUES(?,?,?)", (token, category, change["id"]))
+            self.store.execute("INSERT INTO wr_collection_undo_touch VALUES(?,?,?)", (token, change["category"], change["id"]))
         return token
 
     @staticmethod
@@ -224,15 +227,15 @@ class Collections:
                 data["subranges"] = list({packed(s): s for s in data["subranges"]}.values())
                 if len(data["subranges"]) > MAX_ROWS:
                     raise HTTPException(413, "子范围资料过多，请导出整理")
-                result = self._write(primary, data=data, snapshot=snap)
+                result = self._write(primary, data=self.with_adoptions(data), snapshot=snap)
             else:
                 previous = self.store.query_one("SELECT * FROM wr_collection WHERE dedupe=? AND deleted=1 ORDER BY id DESC LIMIT 1", (key(snap, kind),))
                 if previous:
                     before[previous["id"]] = previous
                     data = json.loads(previous["data"])
-                    result = self._write(previous, data=data, deleted=False)
+                    result = self._write(previous, data=self.with_adoptions(data), deleted=False)
                 else:
-                    result = self._insert(data, kind)
+                    result = self._insert(self.with_adoptions(data), kind)
             changed.append(result)
             return {"item": item(result), "merged_ids": [i for i in overlap if i != result["id"]],
                     "undo_token": self._undo_token("collections", before, changed)}
@@ -243,6 +246,7 @@ class Collections:
             if fields.get("expected_revision") is not None and fields["expected_revision"] != old["revision"]:
                 raise HTTPException(409, "记录已修改，请刷新后重试")
             data = json.loads(old["data"])
+            adoption_changes = []
             if "my_meaning" in fields:
                 data["my_meaning"] = fields["my_meaning"]
             if fields.get("adopt_assist_id") is not None:
@@ -282,18 +286,96 @@ class Collections:
                     if len(destination["explanation_history"]) > MAX_ROWS:
                         raise HTTPException(413, "解释历史过多，请先导出")
                     destination["explanation"] = exp
+                # Apply to this occurrence independently of mastery/retention.
+                # Collection and reading changes share one atomic undo receipt.
+                snap = validate(self.store, bound["doc_id"], Anchor.model_validate(exp["anchor"]))
+                _, adoption_changes = self._adopt_feedback(snap, exp)
             if data == json.loads(old["data"]):
-                return {"item": item(old), "undo_token": None}
+                return {"item": item(old), "undo_token": self._undo_token("collections", {}, [], adoption_changes)}
             updated = self._write(old, data=data)
-            return {"item": item(updated), "undo_token": self._undo_token("collections", {old["id"]: old}, [updated])}
+            return {"item": item(updated), "undo_token": self._undo_token("collections", {old["id"]: old}, [updated], adoption_changes)}
+
+    def with_adoptions(self, value):
+        """Project only adopted explanations into a collection, never preferences."""
+        value = json.loads(packed(value))
+        for part in [*value.get("subranges", []), value]:
+            snapshot = {**value, "anchor": part["anchor"]}
+            row = self.store.query_one("SELECT * FROM wr_collection_feedback WHERE dedupe=? AND deleted=0", (key(snapshot, "feedback"),))
+            state = json.loads(row["data"]) if row else {}
+            if not state.get("explanation"):
+                continue
+            history = [*part.get("explanation_history", [])]
+            if part.get("explanation") and part["explanation"] != state["explanation"]:
+                history.append(part["explanation"])
+            history.extend(state.get("explanation_history", []))
+            part["explanation_history"] = list({packed(exp): exp for exp in history}.values())
+            if len(part["explanation_history"]) > MAX_ROWS:
+                raise HTTPException(413, "解释历史过多，请先导出")
+            part["explanation"] = state["explanation"]
+        return value
+
+    def _preserve_legacy_adoptions(self, row):
+        """Before uncollecting, detach old adopted snapshots without rebinding them."""
+        data = json.loads(row["data"])
+        positions, cursor = {}, row["start_pos"]
+        for part in data["anchor"].get("segments") or [data["anchor"]]:
+            positions[part["block_id"]] = cursor - part["start"]
+            cursor += part["end"] - part["start"] + 2
+        candidates = {}
+        for part in [*data.get("subranges", []), data]:
+            exp = part.get("explanation")
+            if exp and exp.get("kind") == "context" and exp.get("anchor") and anchor_key(exp["anchor"]) == anchor_key(part["anchor"]):
+                candidates[packed(anchor_key(part["anchor"]))] = part
+        changes = []
+        for part in candidates.values():
+            segments = part["anchor"].get("segments") or [part["anchor"]]
+            snapshot = {k: data[k] for k in ("source_identity", "title", "book_title", "context", "context_truncated") if k in data}
+            snapshot.update(doc_id=row["doc_id"], book_id=row["book_id"], anchor=part["anchor"], quote=part["quote"],
+                            start_pos=positions[segments[0]["block_id"]] + segments[0]["start"],
+                            end_pos=positions[segments[-1]["block_id"]] + segments[-1]["end"])
+            existing = self.store.query_one("SELECT data FROM wr_collection_feedback WHERE dedupe=? AND deleted=0", (key(snapshot, "feedback"),))
+            if existing and json.loads(existing["data"]).get("explanation"):
+                continue
+            _, adopted = self._adopt_feedback(snapshot, part["explanation"], part.get("explanation_history", []))
+            changes.extend(adopted)
+        return changes
+
+    def _adopt_feedback(self, snapshot, explanation, prior_history=()):
+        old = self.store.query_one("SELECT * FROM wr_collection_feedback WHERE dedupe=? AND deleted=0", (key(snapshot, "feedback"),))
+        data = json.loads(old["data"]) if old else {**snapshot, "understood": None, "retained": False, "note": "", "detail": "", "target": ""}
+        if data.get("explanation") == explanation:
+            return old, []
+        history = data.setdefault("explanation_history", [])
+        history.extend(exp for exp in prior_history if exp not in history)
+        if data.get("explanation"):
+            history.append(data["explanation"])
+        if len(history) > MAX_ROWS:
+            raise HTTPException(413, "解释历史过多，请先导出")
+        data["explanation"] = explanation
+        updated = self._write(old, data=data, category="feedback") if old else self._insert(data, "feedback", "feedback")
+        return updated, [{"category": "feedback", "id": updated["id"], "before": old, "after_revision": updated["revision"]}]
+
+    def adopt_context(self, doc_id, anchor, assist_id, expected_feedback_revision, expected_collection_revision=0):
+        with self.store.transaction():
+            snap = validate(self.store, doc_id, anchor)
+            saved = self.store.query_one("SELECT * FROM wr_collection WHERE dedupe=? AND deleted=0", (key(snap, "word"),))
+            feedback = self.store.query_one("SELECT * FROM wr_collection_feedback WHERE dedupe=? AND deleted=0", (key(snap, "feedback"),))
+            if (saved["revision"] if saved else 0) != expected_collection_revision or (feedback["revision"] if feedback else 0) != expected_feedback_revision:
+                raise HTTPException(409, "此处记录已修改，请刷新后再采用")
+            if saved:
+                return self.patch(saved["id"], {"adopt_assist_id": assist_id, "expected_revision": expected_collection_revision})
+            explanation = self.adopt(assist_id, snap)
+            updated, changes = self._adopt_feedback(snap, explanation)
+            return {"state": item(updated), "undo_token": self._undo_token("feedback", {}, [], changes)}
 
     def delete(self, record_id, revision=None):
         with self.store.transaction():
             old = self.row(record_id)
             if revision is not None and old["revision"] != revision:
                 raise HTTPException(409, "记录已修改，请刷新后重试")
+            adoption_changes = self._preserve_legacy_adoptions(old)
             updated = self._write(old, deleted=True)
-            return {"undo_token": self._undo_token("collections", {old["id"]: old}, [updated])}
+            return {"undo_token": self._undo_token("collections", {old["id"]: old}, [updated], adoption_changes)}
 
     def feedback(self, doc_id, anchor, fields):
         with self.store.transaction():

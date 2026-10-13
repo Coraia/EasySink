@@ -244,7 +244,7 @@ def note_snapshot(service, row):
 def export_data(service, scope):
     with service.store.transaction():
         selections = selected_collections(service, scope) if scope.get("collections") or scope.get("ids") is not None else []
-        collections = [item(r) for r in selections] if scope.get("collections") else []
+        collections = [service.with_adoptions(item(r)) for r in selections] if scope.get("collections") else []
         feedback = [item(r) for r in scoped_feedback(service, scope, selections)] if scope.get("feedback") else []
         notes = [note_snapshot(service, r) for r in scoped_notes(service, scope, selections)] if scope.get("notes") else []
         if scope.get("notes"):
@@ -429,7 +429,7 @@ def import_data(service, data):
                         previous = item(service.row(prior["local_id"], category, active=False))
                     if previous["quote"] != saved["quote"] or previous["source_identity"] != saved["source_identity"] or anchor_key(previous.get("anchor")) != anchor_key(saved.get("anchor")):
                         # A union may contain an imported occurrence as a retained subrange.
-                        if not any(s.get("quote") == saved["quote"] and anchor_key(s.get("anchor")) == anchor_key(saved["anchor"]) for s in previous.get("subranges", [])):
+                        if previous["source_identity"] != saved["source_identity"] or not any(s.get("quote") == saved["quote"] and anchor_key(s.get("anchor")) == anchor_key(saved["anchor"]) for s in previous.get("subranges", [])):
                             raise HTTPException(409, "导入身份与现有记录冲突，未覆盖本机资料")
                     counts["duplicates"] += 1
                     continue
@@ -466,7 +466,7 @@ def import_data(service, data):
                             merged = merge_personal(local, saved)
                             if merged != local:
                                 service._write(duplicate, data=merged)
-                        elif any(local.get(k) != saved.get(k) for k in ("understood", "retained", "note", "detail", "target")):
+                        elif any(local.get(k) != saved.get(k) for k in ("understood", "retained", "note", "detail", "target", "explanation", "explanation_history")):
                             # Imported feedback must not silently override a newer local declaration.
                             raise HTTPException(409, "导入反馈与本机状态不同，未覆盖任何资料")
                         counts["duplicates"] += 1

@@ -44,6 +44,7 @@ export function installContextPopup(r, pop, anchor, scope) {
   section.className = "word-context";
   section.innerHTML = `<h4>语境解释</h4>
     <div data-context-result class="context-result"></div>
+    <button type="button" class="context-action" data-context-adopt hidden>用于此处释义</button>
     <button type="button" class="context-action" data-context-generate disabled>解释这里的意思</button>
     <button type="button" class="context-action" data-context-regenerate hidden>重新解释</button>
     <p class="meta" data-context-fee hidden>重新解释可能再次计费；已有解释仍保留。</p>
@@ -53,9 +54,10 @@ export function installContextPopup(r, pop, anchor, scope) {
   pop.append(section);
   const generate = $("[data-context-generate]", section);
   const regenerate = $("[data-context-regenerate]", section);
+  const adopt = $("[data-context-adopt]", section);
   const result = $("[data-context-result]", section);
   const status = $("[data-context-status]", section);
-  let plan = null, controller = null, previewSequence = 0, selectedRecord = null;
+  let plan = null, controller = null, previewSequence = 0, selectedRecord = null, adopting = false;
   pop.contextRecord = null;
   // The word hook runs before enhancePop. Subscribers can read this property
   // immediately or await the context-record event after a read-only preview.
@@ -77,6 +79,12 @@ export function installContextPopup(r, pop, anchor, scope) {
       <p>${e(value.payload.meaning)}</p><p>${e(value.payload.explanation)}</p>` : "";
   }
   function buttons() {
+    const adopted = selectedRecord && Number(pop.adoptedContext?.assist_id) === Number(selectedRecord.id);
+    // The adopted explanation is already the card's primary meaning.
+    result.hidden = Boolean(adopted);
+    adopt.hidden = !pop.adoptContext || !selectedRecord || Boolean(controller);
+    adopt.disabled = adopting || adopted;
+    adopt.textContent = adopted ? "已用于此处释义 ✓" : adopting ? "正在采用…" : "用于此处释义";
     const busy = Boolean(controller);
     const guarded = plan?.attempt && plan.attempt.state !== "succeeded";
     generate.hidden = !busy && Boolean(selectedRecord || guarded);
@@ -145,7 +153,7 @@ export function installContextPopup(r, pop, anchor, scope) {
       if (scope.signal.aborted || controller !== current) return;
       remember(value);
       show(value);
-      status.textContent = value.cached ? "已显示保存的解释。" : "已保留新解释；可在收藏中预览后采用。";
+      status.textContent = value.cached ? "已显示保存的解释。" : "新解释已保存；确认后可直接用于此处释义。";
       r.emit("assist-change");
       await preview({ preserveStatus: true });
     } catch (err) {
@@ -160,6 +168,22 @@ export function installContextPopup(r, pop, anchor, scope) {
       if (!scope.signal.aborted) buttons();
     }
   }
+  scope.on(pop, "context-adoption-change", buttons);
+  scope.on(adopt, "click", async () => {
+    if (adopting || !selectedRecord || !pop.adoptContext) return;
+    adopting = true;
+    const record = selectedRecord;
+    buttons();
+    try {
+      await pop.adoptContext(record);
+      if (!scope.signal.aborted) status.textContent = "已用于此处释义；词典和其他位置不变。";
+    } catch (error) {
+      if (!scope.signal.aborted) status.textContent = `尚未采用：${error.message}`;
+    } finally {
+      adopting = false;
+      if (!scope.signal.aborted) buttons();
+    }
+  });
   scope.on(generate, "click", () => explain(false));
   scope.on(regenerate, "click", () => explain(true));
   scope.on($("[data-context-refresh]", section), "click", () => preview());

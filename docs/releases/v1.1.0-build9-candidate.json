@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "product_version": "1.1.0",
+  "build": "9",
+  "date": "2026-10-13",
+  "status": "installed-context-adoption-repair-verified",
+  "report": "docs/79-v11-context-adoption-closeout.md",
+  "previous_candidate": "docs/releases/v1.1.0-candidate.json",
+  "source_base": "c9e4410",
+  "source_state": "uncommitted working tree; production inputs frozen by builder",
+  "manifest_sha256": "ac68ddd63b7a1cf16e7cd086e7094e3a9bdc81b832ecc94eda19c61ad01c5179",
+  "installed_entries": 2864,
+  "production_source_entries": 358,
+  "targeted_browser_checks": {"passed": 21, "total": 21, "preset_explanations": true, "provider_accuracy_claim": false},
+  "existing_api_smoke_checks": {"passed": 94, "total": 94},
+  "native_verification": {
+    "engine": "installed macOS WKWebView",
+    "existing_adoption_visible_in_source_and_card": true,
+    "inline_source_preview_and_escape_verified": true,
+    "new_generation_clicked": false,
+    "user_adoption_choice_changed": false,
+    "new_physical_trackpad_measurement": false
+  },
+  "data_protection": "outputs/v11-context-adoption-20261013/installed-verification.json",
+  "human_acceptance": {
+    "build8_reading_turns_lookup_trackpad": "accepted by user",
+    "build9_adoption_and_layers": "agent verified, not yet reaccepted by user"
+  },
+  "formal_web_restarted": false,
+  "git_committed_or_pushed": false,
+  "v2": "entered evaluation-contract and reversible-policy design; implementation not started"
+}

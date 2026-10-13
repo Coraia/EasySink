@@ -102,10 +102,19 @@ export function createMarkPainter(reader) {
 // more than once. Feedback never edits source text or legacy global verdicts.
 export function createAnnotationOverlay(reader) {
   const originals = new WeakMap();
-  let byBlock = new Map();
+  let byBlock = new Map(), meaningsByBlock = new Map();
   return {
-    set(feedback) {
+    set(feedback, adopted = []) {
       byBlock = new Map();
+      meaningsByBlock = new Map();
+      for (const value of adopted) {
+        const parts = anchorSegments(value.anchor);
+        // A sentence/paragraph explanation must not become a word's gloss.
+        if (parts.length !== 1 || value.anchor.quote.length > 96 || /[\r\n]/.test(value.anchor.quote)) continue;
+        const part = parts[0];
+        if (!meaningsByBlock.has(part.block_id)) meaningsByBlock.set(part.block_id, []);
+        meaningsByBlock.get(part.block_id).push({ ...value, ...part, version: value.anchor.version });
+      }
       for (const state of feedback) {
         for (const part of anchorSegments(state.anchor)) {
           if (!byBlock.has(part.block_id)) byBlock.set(part.block_id, []);
@@ -121,7 +130,9 @@ export function createAnnotationOverlay(reader) {
           states = (byBlock.get(block.id) || []).filter(
             (state) => state.version === reader.doc.version,
           );
-        if (!states.length) return block;
+        const meanings = (meaningsByBlock.get(block.id) || []).filter(value =>
+          value.version === reader.doc.version && block.text.slice(value.start, value.end) === value.quote);
+        if (!states.length && !meanings.length) return block;
         if (
           block.asset_url &&
           ["image", "image_fallback", "formula", "table"].includes(block.type)
@@ -133,7 +144,12 @@ export function createAnnotationOverlay(reader) {
         ).map((fragment) => {
           const start = offset;
           offset += fragment.text.length;
-          return { ...fragment, start, end: offset };
+          const adopted = meanings.find(value => value.start === start && value.end === offset);
+          return { ...fragment, ...(adopted && fragment.type !== "plain" ? {
+            note: adopted.explanation.payload.meaning,
+            detail: adopted.explanation.payload.explanation || "",
+            source: "context-adopted",
+          } : {}), start, end: offset };
         });
         // Refuse to decorate inconsistent fragment text; never repair offsets
         // by searching for repeated words elsewhere in the block.
@@ -185,13 +201,14 @@ export function createAnnotationOverlay(reader) {
             .filter((state) => state.retained && state.note)
             .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
           const understood = hits.some((state) => state.understood === true);
+          const adopted = retained && meanings.find(value => value.start === retained.start && value.end === retained.end);
           let fragment = { ...base, text: block.text.slice(start, end) };
           if (retained)
             fragment = {
               ...fragment,
               type: "annotation",
-              note: retained.note,
-              detail: retained.detail || "在这里保留的注释",
+              note: adopted?.explanation.payload.meaning || retained.note,
+              detail: adopted?.explanation.payload.explanation || retained.detail || "在这里保留的注释",
               target:
                 retained.target ||
                 block.text.slice(retained.start, retained.end),

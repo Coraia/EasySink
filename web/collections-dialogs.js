@@ -11,11 +11,13 @@ import {
   explanationText,
 } from "./collections-store.js";
 
-export function collectionDialog(store, owner, title, html) {
+export function collectionDialog(store, owner, title, html, host = null) {
   const scope = childScope(store.scope, owner),
-    dialog = document.createElement("dialog");
+    dialog = document.createElement(host ? "section" : "dialog");
   const returnFocus = document.activeElement;
-  dialog.className = "collections-dialog";
+  dialog.className = `collections-dialog${host ? " collections-inline-panel" : ""}`;
+  const siblings = host?.classList.contains("collections-view") ? [...host.children].map(node => [node, node.hidden]) : [];
+  for (const [node] of siblings) node.hidden = true;
   dialog.setAttribute("aria-label", title);
   dialog.innerHTML = `<header><h2>${e(title)}</h2><button type="button" data-close aria-label="关闭">×</button></header>${html}`;
   // A nested preview, close button or backdrop can dispose this scope while
@@ -49,7 +51,7 @@ export function collectionDialog(store, owner, title, html) {
       passive: true,
     });
   }
-  document.body.append(dialog);
+  (host || document.body).append(dialog);
   let beforeClose = async () => {},
     closing = false;
   const close = async () => {
@@ -74,7 +76,7 @@ export function collectionDialog(store, owner, title, html) {
     void close();
   });
   scope.on(dialog, "click", (event) => {
-    if (event.target !== dialog) return;
+    if (host || event.target !== dialog) return;
     const rect = dialog.getBoundingClientRect();
     if (
       event.clientX < rect.left ||
@@ -85,11 +87,23 @@ export function collectionDialog(store, owner, title, html) {
       void close();
   });
   scope.cleanup(() => {
-    dialog.close();
+    dialog.close?.();
     dialog.remove();
+    for (const [node, hidden] of siblings) node.hidden = hidden;
     if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
   });
-  if (!scope.signal.aborted) dialog.showModal();
+  // Run before the reader's document-capture shortcuts. Escape belongs to
+  // the innermost visible inspection/editor, including its guarded save.
+  if (host) scope.on(window, "keydown", event => {
+    const panels = [...document.querySelectorAll(".collections-inline-panel")];
+    const modal = document.querySelector("dialog[open]");
+    if (event.key !== "Escape" || panels.at(-1) !== dialog ||
+        (modal && !modal.contains(dialog))) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    void close();
+  }, { capture: true });
+  if (!scope.signal.aborted) dialog.showModal?.();
   else scope.dispose();
   return {
     dialog,
@@ -101,12 +115,13 @@ export function collectionDialog(store, owner, title, html) {
   };
 }
 
-export function previewCollection(ctx, store, item, owner) {
+export function previewCollection(ctx, store, item, owner, host = null) {
   const modal = collectionDialog(
     store,
     owner,
     "原文预览",
     `<p class="collections-source">${e(collectionSource(item))}</p><p class="collections-help">收藏时的原文片段${item.context_truncated ? " · 较长上下文已截取" : ""}</p><blockquote class="collections-quote">${e(sourceExcerpt(item.quote))}</blockquote><p class="collections-context">${e(contextText(item.context))}</p><details data-current-context hidden><summary>当前可核对的上下文</summary><p class="collections-context"></p></details><p class="collections-status" role="status">正在核对原文来源…</p><button type="button" class="button primary" data-continue disabled>从这里继续读</button><p class="collections-help">关闭预览后回到当前入口。</p>`,
+    host,
   );
   const { dialog, scope } = modal;
   let source,
@@ -255,6 +270,7 @@ export function editCollection(
   original,
   owner,
   initialCandidate = null,
+  host = null,
 ) {
   let item = original;
   const rangeIdentity = meaningRangeIdentity(original);
@@ -281,6 +297,7 @@ export function editCollection(
     owner,
     "收藏详情",
     `<p class="collections-source">${e(collectionSource(item))}</p><blockquote class="collections-quote">${e(sourceExcerpt(item.quote))}</blockquote><div data-explanation></div><label class="collections-label">我的释义<textarea data-meaning rows="4" maxlength="20000" placeholder="只记录你对这一次用法的理解">${e(item.my_meaning)}</textarea></label><p data-save-status class="collections-status" role="status">输入即自动保存</p><section data-range-change hidden></section><div class="collections-actions"><button type="button" data-retry hidden>重新核对版本</button><button type="button" data-existing>查看已有语境解释</button><button type="button" data-preview>回原文</button></div>${otherDrafts.length ? `<details open><summary>此前未保存的草稿 · ${otherDrafts.length}</summary><p class="collections-help">这些输入仍对应各自的原引用，仅供查看和复制，不会自动填入或保存到当前收藏。</p>${otherDrafts.map((value) => `<section class="collections-history-entry"><blockquote class="collections-context">${e(sourceExcerpt(draftQuote(value)))}</blockquote><label class="collections-label">原引用的草稿<textarea rows="3" readonly>${e(value.text)}</textarea></label></section>`).join("")}</details>` : ""}<div data-candidates></div><div data-history></div><div data-references></div>`,
+    host,
   );
   const { dialog, scope } = modal,
     input = $("[data-meaning]", dialog),
@@ -291,6 +308,10 @@ export function editCollection(
     failed = false,
     rangeChanged = false,
     draftKept = false;
+  const inspectionHost = document.createElement("div");
+  inspectionHost.dataset.collectionInspection = "";
+  dialog.append(inspectionHost);
+  let inspection = null;
   const rangeChangedMessage =
     "收藏的来源、版本或范围已变化；这份输入只对应上方原引用，不能保存到当前整条收藏。";
   if (draft && draft.text !== saved) {
@@ -443,11 +464,13 @@ export function editCollection(
         showRangeChange(latest);
         return;
       }
-      const review = collectionDialog(
+      inspection?.scope.dispose();
+      const review = inspection = collectionDialog(
         store,
         scope,
         "核对我的释义",
         `<p class="collections-help">已核对来源、原文版本和完整范围一致。</p><blockquote class="collections-quote">${e(sourceExcerpt(latest.quote))}</blockquote><h3>当前保存</h3><p class="collections-text">${e(latest.my_meaning || "（空）")}</p><h3>你的输入</h3><p class="collections-text">${e(input.value)}</p><button type="button" data-save-current>用我的输入保存</button><button type="button" data-use-current>使用当前保存</button>`,
+        inspectionHost,
       );
       review.scope.on(
         $("[data-save-current]", review.dialog),
@@ -487,9 +510,11 @@ export function editCollection(
       button.disabled = false;
     }
   });
-  scope.on($("[data-preview]", dialog), "click", () =>
-    previewCollection(ctx, store, item, scope),
-  );
+  scope.on($("[data-preview]", dialog), "click", () => {
+    inspection?.scope.dispose();
+    inspection = previewCollection(ctx, store, item, scope, inspectionHost);
+    inspectionHost.scrollIntoView({ block: "nearest" });
+  });
   const candidates = $("[data-candidates]", dialog);
   let values = [];
   const showCandidates = (list) => {
@@ -543,7 +568,7 @@ export function editCollection(
         render();
         showCandidates(values);
       }
-      store.undo(result, "已采用解释；此前解释仍可回看");
+      store.undo(result, "已用于此处释义；此前解释仍可回看");
     } catch (error) {
       if (!scope.signal.aborted) toast(error.message);
     } finally {
@@ -552,6 +577,7 @@ export function editCollection(
   });
   render();
   if (initialCandidate) showCandidates([initialCandidate]);
+  else $("[data-existing]", dialog).click();
   return modal;
 }
 
@@ -559,6 +585,7 @@ export function manageCollections(
   store,
   owner,
   { bookId, bookTitle, selected, selectedQuotes = [] },
+  host = null,
 ) {
   const ids = [...selected];
   const modal = collectionDialog(
@@ -566,6 +593,7 @@ export function manageCollections(
     owner,
     "收藏资料",
     `<fieldset><legend>操作范围</legend><label><input type="radio" name="collections-scope" value="selected" ${ids.length ? "checked" : "disabled"}>已选 ${ids.length} 条收藏及其关联记录</label>${bookId ? `<label><input type="radio" name="collections-scope" value="book" ${!ids.length ? "checked" : ""}>整本书：${e(bookTitle || "当前书籍")}</label>` : ""}<label><input type="radio" name="collections-scope" value="all" ${!ids.length && !bookId ? "checked" : ""}>全部收藏（仅导出）</label>${ids.length ? `<details><summary>查看选中的引用</summary>${selectedQuotes.map((quote) => `<p class="collections-context">${e(sourceExcerpt(quote))}</p>`).join("")}</details>` : ""}</fieldset><fieldset><legend>包含哪些资料</legend><label><input type="checkbox" data-type="collections" checked>词句收藏、我的释义与解释历史</label><label><input type="checkbox" data-type="notes">独立笔记</label><label><input type="checkbox" data-type="feedback">已掌握与保留注释</label></fieldset><div class="collections-actions"><button type="button" data-export="json">导出恢复资料 JSON</button><button type="button" data-export="markdown">导出可读 Markdown</button></div><hr><h3>恢复收藏资料</h3><input type="file" data-import-file accept=".json,application/json" aria-label="选择恢复资料 JSON"><button type="button" data-import disabled>恢复所选文件</button><p class="collections-help">恢复引用、解释和所选个人内容；原书需另行导入。</p><hr><h3>永久清理所选资料</h3><p class="collections-help">按上方范围和勾选类型清理；原书保留。此操作不能撤销。</p><label><input type="checkbox" data-confirm>我确认永久清理上述范围内勾选的资料</label><button type="button" class="collections-danger" data-cleanup disabled>永久清理</button><p class="collections-status" role="status"></p>`,
+    host,
   );
   const { dialog, scope } = modal,
     status = $("[role=status]", dialog);
