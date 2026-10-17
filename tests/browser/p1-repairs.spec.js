@@ -8,7 +8,7 @@ import {
   focus,
   selectParagraph,
 } from "./reader-helpers.js";
-const provider = "http://127.0.0.1:18768";
+const provider = `http://127.0.0.1:${process.env.WR_E2E_PROVIDER_PORT || "18768"}`;
 const large = execFileSync(".venv/bin/python", [
   "tests/browser/performance-book.py",
 ]);
@@ -64,7 +64,7 @@ test.beforeEach(async ({ request, page }) => {
   await enableAll(request);
   await readerDefaults(page);
 });
-test("same AI identity/request id makes one provider call and returns one saved result", async ({
+test("same AI identity/request id shares one two-stage provider flow and returns one saved result", async ({
   request,
 }, info) => {
   await config(request);
@@ -83,7 +83,7 @@ test("same AI identity/request id makes one provider call and returns one saved 
     "inflight-witness.json",
     await (await request.get("/__e2e/assist-debug")).json(),
   );
-  expect((await observed(request)).length - before).toBe(1);
+  expect((await observed(request)).length - before).toBe(2);
   const cache = await request.post(`/api/documents/${id}/context`, {
     data: { anchor, request_id: "cache-" + id },
   });
@@ -93,12 +93,12 @@ test("same AI identity/request id makes one provider call and returns one saved 
     await (await request.get(`/api/documents/${id}/assists`)).json(),
   ).toHaveLength(1);
   await evidence(info, "ai-dedup.json", {
-    providerCalls: 1,
+    providerCalls: 2,
     records: bodies.map((b) => b.id),
     cacheProtected: true,
   });
 });
-test("cancel one shared consumer preserves another; sole cancel returns promptly without records and allows retry", async ({
+test("cancel one shared consumer preserves another; uncertain sole cancel blocks an unsafe retry", async ({
   request,
 }, info) => {
   await config(request);
@@ -122,7 +122,7 @@ test("cancel one shared consumer preserves another; sole cancel returns promptly
   await request.delete(`/api/documents/${id}/assist-requests/shared-a`);
   expect((await a).status()).toBe(499);
   expect((await b).status()).toBe(200);
-  expect((await observed(request)).length - before).toBe(1);
+  expect((await observed(request)).length - before).toBe(2);
   expect(
     await (await request.get(`/api/documents/${id}/assists`)).json(),
   ).toHaveLength(1);
@@ -144,7 +144,8 @@ test("cancel one shared consumer preserves another; sole cancel returns promptly
   const retry = await request.post(`/api/documents/${second.id}/context`, {
     data: { anchor: second.anchor, request_id: "retry" },
   });
-  expect(retry.status()).toBe(200);
+  expect(retry.status()).toBe(409);
+  expect(await retry.text()).toContain("不会自动重发");
   await config(request, "broken-json");
   const failed = await selected(request);
   expect(
@@ -158,15 +159,15 @@ test("cancel one shared consumer preserves another; sole cancel returns promptly
   expect(
     (
       await request.post(`/api/documents/${failed.id}/context`, {
-        data: { anchor: failed.anchor, request_id: "recovered" },
+        data: { anchor: failed.anchor, request_id: "recovered", regenerate: true },
       })
     ).status(),
   ).toBe(200);
   await evidence(info, "ai-cancel.json", {
-    sharedProviderCalls: 1,
+    sharedProviderCalls: 2,
     cancelMs,
     soleNoLateRecord: true,
-    retryRecovered: true,
+    unsafeRetryBlocked: true,
   });
 });
 test("review requests share work and cancel promptly without changing original notes", async ({

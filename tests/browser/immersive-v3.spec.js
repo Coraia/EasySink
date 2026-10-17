@@ -15,7 +15,7 @@ test.beforeEach(async ({ page }) => readerDefaults(page));
 import fs from "node:fs";
 const original = fs.readFileSync("web/grammar-sample.txt", "utf8");
 const sentence = original.split("\n\n")[0];
-const provider = "http://127.0.0.1:18768";
+const provider = `http://127.0.0.1:${process.env.WR_E2E_PROVIDER_PORT || "18768"}`;
 async function enableAI(request, model = "e2e-model") {
   await request.put("/api/ai/config", {
     data: {
@@ -221,6 +221,7 @@ test("partial selection translates only selected clause; grammar expands full se
     "true",
   );
   expect(await pageCount(page)).toBe(pages);
+  await chooseRange(page, "The", "conviction");
   await page.locator('[data-selection-action="notes"]').click();
   await expect(page.locator("#note-quote")).toHaveText(
     "The reasoning of these two men did not carry conviction",
@@ -245,10 +246,10 @@ test("cancel requests has no late UI or saved result; malformed alignment and gr
   const d = await create(request);
   await read(page, d.id);
   await selectParagraph(page);
-  for (const action of ["grammar", "translation"]) {
-    await page.locator(`[data-selection-action="${action}"]`).click();
-    await page.locator(`[data-selection-action="${action}"]`).click();
-  }
+  await page.locator('[data-selection-action="grammar"]').click();
+  await page.locator("[data-grammar-cancel]").click();
+  await page.locator('[data-selection-action="translation"]').click();
+  await page.locator('[data-selection-action="translation"]').click();
   await page.waitForTimeout(1500);
   await expect(page.locator("[data-grammar-toggle]")).toHaveCount(0);
   await expect(page.locator("#translation-pane")).toBeHidden();
@@ -279,18 +280,26 @@ test("single-word IPA and AI context are explicit; selected text stays exact inc
   await enableAI(request);
   const d = await create(request);
   await read(page, d.id);
-  const before = await calls(request, "context-meaning");
+  const before = await calls(
+    request,
+    "anchored-usage-then-gloss-and-source-rendering",
+  );
   await page.locator('[data-word="conviction"]').click();
   await expect(page.locator("[data-word-ipa]")).toBeVisible();
-  expect((await calls(request, "context-meaning")).length).toBe(before.length);
+  expect(
+    (await calls(request, "anchored-usage-then-gloss-and-source-rendering"))
+      .length,
+  ).toBe(before.length);
   await page
     .getByRole("button", { name: "解释这里的意思", exact: true })
     .click();
   await expect(page.locator(".context-result")).toContainText("令人信服");
-  const actual = (await calls(request, "context-meaning")).at(-1);
-  expect(actual.source).toBe("conviction");
-  expect(actual.context).toContain("did not carry conviction");
-  expect(actual.context.length).toBeLessThanOrEqual(1000);
+  const actual = (
+    await calls(request, "anchored-usage-then-gloss-and-source-rendering")
+  ).at(-1);
+  expect(actual.selected_text).toBe("conviction");
+  expect(actual.nearby_excerpt.quote).toContain("did not carry conviction");
+  expect(actual.focus_sources[0].marked_text).toContain("conviction");
   await page.getByRole("button", { name: "关闭注释" }).click();
   await page.locator('[data-word="Inﬁnite"]').click();
   await expect(page.locator(".annotation-pop h3")).toHaveText("Inﬁnite");
@@ -422,6 +431,8 @@ test("late-page note and bookmark keep source offsets after density, font, viewp
   await page.locator("#note-body").fill("页码变了，位置不应变。");
   await expect(page.locator("#note-state")).toContainText("已保存");
   await page.getByRole("button", { name: "关闭侧栏" }).click();
+  await chooseRange(page, chosen.word, chosen.word);
+  await page.locator("[data-selection-more]").click();
   await page.locator('[data-selection-action="bookmarks"]').click();
   await expect(page.locator(".bookmark-marker")).toHaveCount(1);
   const notes = await (await request.get("/api/notes?doc_id=" + d.id)).json(),
@@ -553,7 +564,7 @@ test("grammar switch removes interaction but preserves records; small dark layou
   expect(
     await (await request.get(`/api/documents/${d.id}/assists`)).json(),
   ).toEqual(records);
-  await selectParagraph(page);
+  await chooseRange(page, "The", "conviction");
   await page.locator('[data-selection-action="translation"]').click();
   await expect(page.locator("[data-pair]").first()).toBeVisible();
   await page.setViewportSize({ width: 320, height: 844 });

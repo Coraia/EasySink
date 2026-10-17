@@ -205,7 +205,8 @@ test("missing shader precision safely preserves source and nonanimated navigatio
   );
   await page.locator("#reading-edge-next").click();
   await expect(page.locator(".reader")).toHaveAttribute("data-page-index", "1");
-  await expect(page.locator("#page-curl-layer")).toBeHidden();
+  await expect(page.locator("#page-curl-layer")).toHaveAttribute("aria-hidden", "true");
+  await expect(page.locator("#page-curl-layer")).toHaveCSS("pointer-events", "none");
   await expect(page.locator("#article")).toContainText("Knowledge");
   await page.locator("#reading-edge-prev").click();
   await expect(page.locator(".reader")).toHaveAttribute("data-page-index", "0");

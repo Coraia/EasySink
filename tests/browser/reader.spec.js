@@ -32,8 +32,10 @@ test("paste import persists a draft and opens an immersive source", async ({
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "＋ 添加阅读" }).click();
-  await page.locator("#paste-title").fill("My article");
+  await expect(page.getByRole("heading", { name: "把内容放进来" })).toBeVisible();
   await page.locator("#paste-text").fill(sample);
+  await expect(page.locator("#import-detected-title")).toHaveText("已识别为粘贴文字");
+  await page.locator("#paste-title").fill("My article");
   await expect(page.locator("#paste-state")).toContainText("草稿已自动保存");
   await page.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "＋ 添加阅读" }).click();
@@ -239,7 +241,9 @@ test("missing AI is explicit, legacy translations remain stored, exports downloa
   );
   await page.locator("[data-selection-action=translation]").click();
   expect((await result).status()).toBe(400);
-  await expect(page.locator("#toast")).toContainText("配置并启用");
+  await expect(page.getByRole("dialog", { name: "阅读中的文本 AI 设置" })).toBeVisible();
+  await expect(page.locator("#ai-text-status")).toContainText("未启用");
+  await page.getByRole("button", { name: "收起 AI 设置" }).click();
   await expect(page.locator("#translation-pane")).toBeHidden();
   await page.reload();
   expect(
@@ -264,7 +268,8 @@ test("all feature switches remain reversible and preserve notes", async ({
   });
   await page.goto("/#/labs");
   const switches = page.locator("[data-plugin]");
-  await expect(switches).toHaveCount(16);
+  const catalog = await (await request.get("/api/plugins")).json();
+  await expect(switches).toHaveCount(catalog.plugins.length);
   for (const box of await switches.all()) {
     await box.uncheck();
     await expect(page.locator("#plugin-save")).toContainText("已保存并生效");

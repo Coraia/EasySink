@@ -145,7 +145,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"ok": True, "version": "0.2.0", "product_version": "1.1.0", "web_revision": "20261013-context-adoption"}
+        return {"ok": True, "version": "0.2.0", "product_version": "1.2.0", "web_revision": "20261017-unified-import-entry"}
 
     @app.get("/api/jobs")
     def job_list():

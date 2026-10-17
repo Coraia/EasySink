@@ -21,7 +21,7 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
   }
   function log(kind, extra = {}, update = true) {
     records.push({ at: performance.now(), kind, doc: ctx.reader?.doc.id,
-      page: ctx.reader?.pages.index, ...extra });
+      page: ctx.reader?.pages?.index, ...extra });
     if (records.length > 256) records.shift();
     if (update) publish();
   }

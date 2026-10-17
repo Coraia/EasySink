@@ -8,6 +8,7 @@ import threading
 import time
 import re
 import wave
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -44,7 +45,14 @@ class Provider:
                     except ValueError:
                         selection = {}
                     task = selection.get("task", "legacy")
-                    observed["chat"].append({"model": p["model"], "task": task, "source": selection.get("source"), "context": selection.get("context"), "traces": selection.get("traces")})
+                    observed["chat"].append({
+                        "model": p["model"], "task": task,
+                        "source": selection.get("source"), "context": selection.get("context"),
+                        "selected_text": selection.get("selected_text"),
+                        "nearby_excerpt": selection.get("nearby_excerpt"),
+                        "focus_sources": selection.get("focus_sources"),
+                        "traces": selection.get("traces"),
+                    })
                     if p["model"] == "slow-assist":
                         time.sleep(1.2)
                     if p["model"] == "broken-json":
@@ -57,10 +65,28 @@ class Provider:
                         content = json.dumps({"segments": [{"quote": text.lstrip(), "zh": "测试译文：" + str(i + 1)} for i, text in enumerate(pieces) if text.strip()]})
                         if p["model"] == "bad-alignment":
                             content = '{"segments":[{"quote":"invented source","zh":"虚构对应"}]}'
-                    elif task == "context-meaning":
-                        content = '{"meaning":"此处为令人信服的力量","explanation":"依据所选词附近的论证语境判断，区别于法律定罪。"}'
+                    elif task == "anchored-usage-then-gloss-and-source-rendering":
+                        explanation = "测试译文：这两个人的论证未能令人信服。"
+                        gloss = "令人信服"
                         if p["model"] == "long-context":
-                            content = json.dumps({"meaning": "用于测试卡片滚动的上下文解释", "explanation": "这是本机验收用的长解释，检查滚动范围与边界。" * 35}, ensure_ascii=False)
+                            gloss = "用于测试卡片滚动的上下文解释"
+                            explanation = "这是本机验收用的长解释，检查滚动范围与边界。" * 35
+                        content = json.dumps({
+                            "target_usage": {
+                                "quote": selection["nearby_excerpt"]["quote"],
+                                "usage": "此处表示论证具有令人信服的力量",
+                            },
+                            "lexical_gloss": gloss,
+                            "translations": [
+                                {
+                                    "unit_id": source["id"],
+                                    "plain_chinese": explanation,
+                                }
+                                for source in selection["focus_sources"]
+                            ],
+                        }, ensure_ascii=False)
+                    elif task == "source-grounded-draft-verification":
+                        content = json.dumps(selection["draft"], ensure_ascii=False)
                     elif task == "reading-review":
                         content = '{"body":"AI 回顾草稿：保留读者的原始笔记，复习请求过的句子结构与词义。"}'
                     elif task == "grammar-map":
@@ -131,7 +157,8 @@ class Provider:
                     return
                 self.send(404, b"{}")
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", 18768), Handler)
+        port = int(os.environ.get("WR_E2E_PROVIDER_PORT", "18768"))
+        self.server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
     def __enter__(self):

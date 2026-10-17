@@ -28,7 +28,16 @@ function saveAllowedHosts(hosts) {
 }
 
 function urlDialog(ctx, dialog, scope, current) {
-  const input = $("#url-import-input", dialog);
+  const form = $("#paste-form", dialog);
+  const input = $("#paste-text", dialog);
+  const primary = $("#import-continue", dialog);
+  const clear = $("#import-clear", dialog);
+  const panel = $("#url-import-panel", dialog);
+  const tools = $("#url-import-tools", dialog);
+  const requestTools = $("#url-import-request-tools", dialog);
+  const detectedTitle = $("#import-detected-title", dialog);
+  const detectedCopy = $("#import-detected-copy", dialog);
+  const textOptions = $("#import-text-options", dialog);
   const submit = $("#url-import-submit", dialog);
   const check = $("#url-import-check", dialog);
   const cancel = $("#url-import-cancel", dialog);
@@ -47,6 +56,9 @@ function urlDialog(ctx, dialog, scope, current) {
   let consent = null;
   const durable = new Set();
   let selectionRequired = false;
+  let savedCount = 0, allowedCount = 0;
+  const isURLMode = () => form.dataset.importKind === "url";
+  const renderTools = () => { tools.hidden = savedCount === 0 && allowedCount === 0; };
   const activeKey = () => `wr2:url-intent-active:${library}`;
   const select = (record) => {
     const value = JSON.stringify({ request_id: record?.request_id ?? null });
@@ -83,6 +95,10 @@ function urlDialog(ctx, dialog, scope, current) {
   const render = () => {
     if (!current()) return;
     const state = intent?.state;
+    panel.hidden = !isURLMode();
+    if (!isURLMode()) return;
+    requestTools.hidden = !intent;
+    textOptions.hidden = true;
     input.disabled = !library || !!failure || selectionRequired || !!intent || !!consent;
     submit.disabled = !library || !!failure || selectionRequired || pending || !!consent || (!!intent && !["prepared", "not_found"].includes(state));
     submit.textContent = state === "not_found" ? "同编号重新提交" : "导入 URL";
@@ -105,21 +121,32 @@ function urlDialog(ctx, dialog, scope, current) {
       unavailable: "原资料损坏或不可用，不会自动重抓或导航。",
     };
     const prompt = consent ? `网站 ${consent.host} 不在内置或个人允许列表，请选择本次许可。` : "";
-    status.textContent = failure || (library ? `${lastError ? lastError + "。" : ""}${prompt || messages[state] || "同一快照复用原文章；内容变化则另存，旧记录保留。"}${intent ? ` 请求编号：${intent.request_id}` : ""}` : "正在核对资料库身份…");
+    const message = failure || (library ? `${lastError ? lastError + "。" : ""}${prompt || messages[state] || "同一快照复用原文章；内容变化则另存，旧记录保留。"}${intent ? ` 请求编号：${intent.request_id}` : ""}` : "正在核对资料库身份…");
+    status.textContent = message;
+    detectedTitle.textContent = state === "committed" ? "网页已经保存" : consent ? "需要确认网站权限" : "已识别为网页链接";
+    detectedCopy.textContent = message;
+    const checksExisting = state === "running" || state === "unknown";
+    primary.disabled = state === "committed" ? open.disabled : checksExisting ? check.disabled : submit.disabled;
+    primary.textContent = state === "committed" ? "打开文章 →" : consent ? "等待选择" : checksExisting ? "核对导入状态" : "核对并导入";
+    clear.disabled = pending || (!!intent && !urlTerminal.has(state));
   };
   const failStorage = (error) => { failure = `${error.message}；未启动新的 URL 导入。已有编号保留，请勿清除存储。`; render(); };
   const list = () => {
     const saved = readSaved();
+    savedCount = saved.length;
     history.innerHTML = '<option value="">选择已保存请求</option>' + saved.map(item =>
       `<option value="${e(item.request_id)}">${e(item.state)} · ${e(item.url)}</option>`).join("");
     history.value = intent?.request_id || "";
+    renderTools();
     return saved;
   };
   const listAllowed = () => {
     const hosts = allowedHosts();
+    allowedCount = hosts.length;
     allowedList.innerHTML = '<option value="">选择个人允许的网站</option>' +
       hosts.map(host => `<option value="${e(host)}">${e(host)}</option>`).join("");
     removeAllowed.disabled = true;
+    renderTools();
     return hosts;
   };
   const inspect = async (url) => {
@@ -205,6 +232,42 @@ function urlDialog(ctx, dialog, scope, current) {
     } catch (error) { failStorage(error); return; }
     await sendIntent();
   };
+  const detectURL = () => {
+    const value = input.value.trim();
+    const matches = /^https?:\/\/\S+$/i.test(value);
+    if (matches) {
+      form.dataset.importKind = "url";
+      textOptions.hidden = true;
+      panel.hidden = false;
+      primary.hidden = false;
+      render();
+    } else if (isURLMode() && !intent && !consent) {
+      form.dataset.importKind = value ? "text" : "";
+      input.disabled = false;
+      panel.hidden = true;
+    }
+  };
+  scope.on(input, "input", detectURL);
+  scope.on(form, "wr:import-clear", () => {
+    if (intent && !urlTerminal.has(intent.state)) return;
+    try { if (library) select(null); } catch (error) { failStorage(error); return; }
+    intent = null;
+    receipt = null;
+    consent = null;
+    lastError = "";
+    selectionRequired = false;
+    history.value = "";
+    input.disabled = false;
+    panel.hidden = true;
+  });
+  scope.on(primary, "click", (event) => {
+    if (!isURLMode()) return;
+    event.preventDefault();
+    const state = intent?.state;
+    if (state === "committed") open.click();
+    else if (state === "running" || state === "unknown") check.click();
+    else submit.click();
+  });
   scope.on(submit, "click", async () => {
     if (submit.disabled) return;
     if (intent) { await sendIntent(); return; }
@@ -249,7 +312,11 @@ function urlDialog(ctx, dialog, scope, current) {
   scope.on(fresh, "click", () => {
     if (fresh.disabled) return;
     try { select(null); } catch (error) { failStorage(error); return; }
-    intent = null; receipt = null; consent = null; lastError = ""; input.value = ""; history.value = ""; render();
+    intent = null; receipt = null; consent = null; lastError = ""; input.value = ""; history.value = "";
+    form.dataset.importKind = "";
+    input.disabled = false;
+    panel.hidden = true;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
   });
   scope.on(allowedList, "change", render);
   scope.on(removeAllowed, "click", () => {
@@ -267,7 +334,7 @@ function urlDialog(ctx, dialog, scope, current) {
       const selected = readSaved().find(item => item.request_id === history.value);
       if (!selected) return;
       select(selected);
-      intent = selected; receipt = null; input.value = selected.url; render(); void reconcile("status");
+      intent = selected; receipt = null; input.value = selected.url; form.dataset.importKind = "url"; panel.hidden = false; render(); void reconcile("status");
     } catch (error) { failStorage(error); }
   });
   scope.on(open, "click", async () => {
@@ -276,6 +343,7 @@ function urlDialog(ctx, dialog, scope, current) {
     if (!current() || failure || value?.state !== "committed" || !readingDocument(value.doc_id)) return;
     ctx.refresh(); dialog.close(); ctx.navigate(`#/read/${readingDocument(value.doc_id)}`);
   });
+  detectURL();
   render();
   void (async () => {
     try {
@@ -297,7 +365,12 @@ function urlDialog(ctx, dialog, scope, current) {
         intent = selected.request_id === null ? null : saved.find(item => item.request_id === selected.request_id);
         if (selected.request_id !== null && !intent) throw new Error("活动请求原记录缺失；请保留存储");
       }
-      if (intent) { input.value = intent.url; history.value = intent.request_id; }
+      if (intent) {
+        input.value = intent.url;
+        history.value = intent.request_id;
+        form.dataset.importKind = "url";
+        panel.hidden = false;
+      } else detectURL();
       render();
       if (intent) await reconcile("status");
     } catch (error) { if (current()) failStorage(error); }
@@ -315,14 +388,27 @@ export function install(ctx) {
     const scope = (dialogScope = new Scope());
     let closeURL = () => {};
     scope.on(dialog, "close", () => { closeURL(); scope.dispose(); });
+    $("#import-supported", dialog).textContent = "支持 PDF、EPUB、TXT、Markdown";
+    $("#import-file-slot", dialog).innerHTML = '<label class="import-file-button">选择文件<input id="upload-file" type="file" accept=".pdf,application/pdf,.epub,.zip,.txt,.md,.markdown" aria-label="选择阅读文件"></label>';
     $("#import-extension", dialog).innerHTML =
-      '<section aria-label="网页导入"><label>公开网页 URL<input id="url-import-input" type="url" maxlength="4096" placeholder="https://…"></label><p class="dialog-hint">同一快照复用原文章；内容变化则另存，旧文章和阅读记录保留。Wise Reader 不判断网站或内容是否安全，不携带登录信息，也不执行页面脚本。</p><div id="url-import-consent" class="notice" hidden><strong>此网站尚未加入允许列表：<span id="url-import-consent-host"></span></strong><p class="dialog-hint">只会尝试提取公开正文和必要图片。跨网站重定向会停止，请粘贴最终地址重新确认。</p><div class="row wrap"><button type="button" id="url-import-allow-once">仅导入这一次</button><button type="button" id="url-import-allow-always">始终允许这个网站</button><button type="button" id="url-import-decline">取消</button></div></div><label>本资料库的已保存请求<select id="url-import-history"></select></label><div class="row wrap"><button type="button" id="url-import-submit">导入 URL</button><button type="button" id="url-import-check">核对状态</button><button type="button" id="url-import-cancel">请求取消</button><button type="button" id="url-import-new">新请求</button><button type="button" id="url-import-open">打开文章 →</button></div><details><summary>我允许的网站</summary><div class="row wrap"><select id="url-import-allowed-hosts" aria-label="个人允许的网站"></select><button type="button" id="url-import-remove-host">移除</button></div></details><p id="url-import-state" role="status" aria-live="polite"></p></section>' +
-      '<div class="row wrap"><label>PDF 处理位置 <select id="pdf-import-engine" aria-describedby="pdf-import-location"><option value="auto" selected>当前电脑（默认）</option><option value="mineru_source" disabled>当前电脑 · 公式与复杂排版（原式优先）（正在检查）</option><option value="omarchy" disabled>Omarchy · GPU OCR（正在检查）</option></select></label><button type="button" id="pdf-import-capabilities-retry" class="text-button">刷新状态</button></div><div id="pdf-import-service-status" class="notice" role="status" aria-live="polite">正在检查 PDF 处理服务…</div><p id="pdf-import-location" class="dialog-hint" role="status">PDF 默认在当前电脑快速处理。公式与复杂排版可选择原式优先模式；此选项仅影响 PDF。</p><label class="dropzone">↥　导入 PDF / EPUB / TXT / Markdown<input id="upload-file" type="file" accept=".pdf,application/pdf,.epub,.zip,.txt,.md,.markdown" aria-label="选择阅读文件"></label><p class="dialog-hint">PDF 最大 256 MiB，原件登记后即保存在书架，阅读版逐步准备；可以关闭这里。<br>EPUB / TXT / Markdown 最大 20 MB，最多 500 章；兼容 Mac EPUB 文件包及其 ZIP。保留标题、段落、列表和代码；旧格式图片显示替代文字。<br><a href="/static/sample.epub" download>下载示例 EPUB ↗</a><br>或直接粘贴英文：</p><div id="upload-state" role="status"></div>';
+      '<section id="url-import-panel" class="import-context-panel" aria-label="网页导入" hidden><div id="url-import-consent" class="notice" hidden><strong>此网站尚未加入允许列表：<span id="url-import-consent-host"></span></strong><p class="dialog-hint">只会尝试提取公开正文和必要图片。跨网站重定向会停止，请粘贴最终地址重新确认。</p><div class="row wrap"><button type="button" id="url-import-allow-once">仅导入这一次</button><button type="button" id="url-import-allow-always">始终允许这个网站</button><button type="button" id="url-import-decline">取消</button></div></div><button type="button" id="url-import-submit" hidden>导入 URL</button><p id="url-import-state" hidden role="status" aria-live="polite"></p><details id="url-import-request-tools" class="import-secondary-tools" hidden><summary>请求详情</summary><div class="row wrap"><button type="button" id="url-import-check">核对状态</button><button type="button" id="url-import-cancel">请求取消</button><button type="button" id="url-import-new">新请求</button><button type="button" id="url-import-open">打开文章 →</button></div></details></section>' +
+      '<details id="url-import-tools" class="import-secondary-tools" hidden><summary>历史与网站权限</summary><label>本资料库的已保存请求<select id="url-import-history"></select></label><details><summary>我允许的网站</summary><div class="row wrap"><select id="url-import-allowed-hosts" aria-label="个人允许的网站"></select><button type="button" id="url-import-remove-host">移除</button></div></details><p class="dialog-hint">Wise Reader 不判断网站或内容是否安全，不携带登录信息，也不执行页面脚本。</p></details>' +
+      '<section id="pdf-import-panel" class="import-context-panel" aria-label="PDF 处理方式" hidden><div class="row wrap"><label>PDF 处理位置 <select id="pdf-import-engine" aria-describedby="pdf-import-location"><option value="auto" selected>当前电脑（默认）</option><option value="mineru_source" disabled>当前电脑 · 公式与复杂排版（原式优先）（正在检查）</option><option value="omarchy" disabled>Omarchy · GPU OCR（正在检查）</option></select></label><button type="button" id="pdf-import-capabilities-retry" class="text-button">刷新状态</button></div><div id="pdf-import-service-status" class="notice" role="status" aria-live="polite">正在检查 PDF 处理服务…</div><p id="pdf-import-location" class="dialog-hint" role="status">此选项只影响 PDF。</p></section><div id="upload-state" role="status"></div>';
     const input = $("#upload-file", dialog);
     const engine = $("#pdf-import-engine", dialog);
     const locationHint = $("#pdf-import-location", dialog);
     const retryCapabilities = $("#pdf-import-capabilities-retry", dialog);
     const serviceStatus = $("#pdf-import-service-status", dialog);
+    const form = $("#paste-form", dialog);
+    const entry = $("#import-entry", dialog);
+    const textInput = $("#paste-text", dialog);
+    const textOptions = $("#import-text-options", dialog);
+    const detectedTitle = $("#import-detected-title", dialog);
+    const detectedCopy = $("#import-detected-copy", dialog);
+    const primary = $("#import-continue", dialog);
+    const pdfPanel = $("#pdf-import-panel", dialog);
+    const urlPanel = $("#url-import-panel", dialog);
+    const uploadState = $("#upload-state", dialog);
     let caps = null;
     let checkedAt = null;
     let checkError = "";
@@ -350,11 +436,11 @@ export function install(ctx) {
         ? "在你的 Omarchy 上识别，无付费 API。选择 PDF 后将发送整份文件到该服务器。"
         : engine.value === "mineru_source"
           ? "当前电脑处理公式与复杂排版；公式保留高清原式，阅读时点击才识别公式。此模式比默认文字提取更慢。"
-          : "PDF 默认在当前电脑快速处理；公式或复杂排版可选择原式优先模式。此选项仅影响 PDF。";
+          : "此选项只影响 PDF。";
       retryCapabilities.disabled = checkingCapabilities || input.disabled;
       retryCapabilities.textContent = checkingCapabilities ? "检查中…" : "刷新状态";
       if (checkingCapabilities) {
-        serviceStatus.innerHTML = '<span>正在检查模型与服务状态…</span><div class="dialog-hint">提交 PDF 前会再次检查；EPUB / TXT / Markdown 不受影响。</div>';
+        serviceStatus.innerHTML = '<div class="pdf-service-summary"><span class="pdf-service-icon" aria-hidden="true">…</span><strong>正在检查 PDF 处理能力…</strong></div>';
         return;
       }
       const disabled = caps?.processing_enabled === false;
@@ -370,7 +456,27 @@ export function install(ctx) {
         ? "可用 · 原式保留，公式按需识别"
         : checkError || adapter("mineru_source")?.missing_reason || "模型未准备，暂不可用";
       const stamp = checkedAt ? new Date(checkedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : "";
-      serviceStatus.innerHTML = `<div data-pdf-local-state="${available("digital") ? "ready" : "unavailable"}"><strong>当前电脑</strong> · ${e(local)}</div><div data-pdf-formula-state="${available("mineru_source") ? "ready" : "unavailable"}"><strong>公式与复杂排版（原式优先）</strong> · ${e(formulaDetail)}</div><div data-pdf-remote-state="${e(readiness?.state || (available("omarchy") ? "ready" : "unknown"))}"><strong>Omarchy</strong> · ${e(remoteDetail)}</div><div class="dialog-hint">${stamp ? `${e(stamp)} 检查 · ` : ""}提交前再次核验；EPUB / TXT / Markdown 不受影响。</div>`;
+      const detailWasOpen = serviceStatus.querySelector("details")?.open === true;
+      let summary = "", summaryDetail = "", summaryReady = false;
+      if (engine.value === "omarchy") {
+        summaryReady = available("omarchy");
+        summary = summaryReady ? "Omarchy 已就绪" : "Omarchy 未就绪，请改用当前电脑";
+        summaryDetail = remoteDetail;
+      } else if (engine.value === "mineru_source") {
+        summaryReady = available("mineru_source");
+        summary = summaryReady ? "复杂排版处理已就绪，公式将保留原式" : "复杂排版处理未准备，请改用默认模式";
+        summaryDetail = formulaDetail;
+      } else {
+        summaryReady = available("digital");
+        summary = disabled ? "PDF 处理已关闭"
+          : summaryReady && available("docling") ? "当前电脑：文字提取与扫描 OCR 可用"
+          : summaryReady ? "当前电脑：文字提取可用；扫描 PDF 将保留原图"
+          : "当前电脑暂不能处理 PDF";
+        summaryDetail = local;
+      }
+      serviceStatus.innerHTML = `<div class="pdf-service-summary" data-state="${summaryReady ? "ready" : "attention"}" tabindex="0" title="${e(summaryDetail)}" aria-label="${e(summary)}。${e(summaryDetail)}"><span class="pdf-service-icon" aria-hidden="true">${summaryReady ? "✓" : "!"}</span><strong>${e(summary)}</strong><span class="pdf-service-hover">悬浮查看原因</span></div><details class="pdf-service-details"><summary>诊断详情</summary><div class="pdf-service-detail-list"><div data-pdf-local-state="${available("digital") ? "ready" : "unavailable"}"><strong>当前电脑</strong> · ${e(local)}</div><div data-pdf-formula-state="${available("mineru_source") ? "ready" : "unavailable"}"><strong>复杂排版（原式优先）</strong> · ${e(formulaDetail)}</div><div data-pdf-remote-state="${e(readiness?.state || (available("omarchy") ? "ready" : "unknown"))}"><strong>Omarchy</strong> · ${e(remoteDetail)}</div><div class="dialog-hint">${stamp ? `${e(stamp)} 检查 · ` : ""}提交前会再次核验；EPUB / TXT / Markdown 不受影响。</div></div></details>`;
+      const details = serviceStatus.querySelector("details");
+      if (details) details.open = detailWasOpen;
     };
     const loadCapabilities = () => {
       if (!current()) return Promise.resolve(null);
@@ -411,15 +517,14 @@ export function install(ctx) {
       clearTimeout(refreshTimer);
       if (!current()) return;
       refreshTimer = setTimeout(async () => {
-        if (!document.hidden && !input.disabled) await loadCapabilities();
+        if (!document.hidden && !input.disabled && !pdfPanel.hidden) await loadCapabilities();
         scheduleRefresh();
       }, 20000);
     };
     scope.cleanup(() => clearTimeout(refreshTimer));
     scope.on(document, "visibilitychange", () => {
-      if (!document.hidden && current() && !input.disabled) void loadCapabilities();
+      if (!document.hidden && current() && !input.disabled && !pdfPanel.hidden) void loadCapabilities();
     });
-    void loadCapabilities();
     scheduleRefresh();
     input.onchange = async () => {
       if (!current() || input.disabled) return;
@@ -427,7 +532,18 @@ export function install(ctx) {
       if (!file) return;
       const isPDF =
         /\.pdf$/i.test(file.name) || file.type === "application/pdf";
-      const el = $("#upload-state", dialog);
+      const el = uploadState;
+      form.dataset.importKind = isPDF ? "pdf" : "file";
+      textInput.value = "";
+      textInput.disabled = true;
+      textOptions.hidden = true;
+      urlPanel.hidden = true;
+      pdfPanel.hidden = !isPDF;
+      detectedTitle.textContent = isPDF ? "已识别为 PDF" : "已识别为阅读文件";
+      detectedCopy.textContent = `${file.name} · ${(file.size / (1024 * 1024)).toFixed(file.size >= 1024 * 1024 ? 1 : 2)} MB`;
+      primary.disabled = true;
+      primary.textContent = "正在导入…";
+      primary.hidden = true;
       stopProgress();
       const limit = (isPDF ? 256 : 20) * 1024 * 1024;
       if (file.size > limit) {
@@ -451,7 +567,9 @@ export function install(ctx) {
           el.innerHTML = `<div class="notice error">${e(reason)}<br>本次尚未上传。可刷新状态，或选择其他处理位置后重新选择文件。</div>`;
           input.disabled = false;
           engine.disabled = false;
+          textInput.disabled = false;
           input.value = "";
+          primary.textContent = "继续";
           updateLocation();
           return;
         }
@@ -572,10 +690,43 @@ export function install(ctx) {
           input.disabled = false;
           engine.disabled = false;
           retryCapabilities.disabled = false;
+          textInput.disabled = false;
           input.value = "";
         }
       }
     };
+    scope.on(entry, "dragover", (event) => {
+      if (!event.dataTransfer?.types?.includes("Files") || input.disabled) return;
+      event.preventDefault();
+      entry.classList.add("is-dragging");
+    });
+    scope.on(entry, "dragleave", () => entry.classList.remove("is-dragging"));
+    scope.on(entry, "drop", (event) => {
+      entry.classList.remove("is-dragging");
+      if (!event.dataTransfer?.files?.length || input.disabled) return;
+      event.preventDefault();
+      input.files = event.dataTransfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    scope.on(textInput, "input", () => {
+      if (form.dataset.importKind === "pdf" || form.dataset.importKind === "file") {
+        form.dataset.importKind = textInput.value.trim() ? "text" : "";
+        pdfPanel.hidden = true;
+        uploadState.innerHTML = "";
+        input.value = "";
+        primary.hidden = false;
+      }
+    });
+    scope.on(form, "wr:import-clear", () => {
+      stopProgress();
+      input.value = "";
+      input.disabled = false;
+      engine.disabled = false;
+      textInput.disabled = false;
+      pdfPanel.hidden = true;
+      uploadState.innerHTML = "";
+      primary.hidden = false;
+    });
   });
   return () => {
     active = false;

@@ -117,10 +117,23 @@ class EvidenceStore:
             self.con.close()
 
 
+def evidence_path(path):
+    """Keep a legacy sidecar unless a same-stem business DB makes it ambiguous."""
+    legacy = path.with_suffix(".evidence.sqlite3")
+    suffix = path.suffix.lower()
+    sibling_suffix = ".sqlite3" if suffix == ".db" else ".db" if suffix == ".sqlite3" else None
+    sibling = path.with_suffix(sibling_suffix) if sibling_suffix else None
+    if sibling is not None and sibling.exists():
+        # Never guess which same-stem library owns the old sidecar. Preserve it
+        # untouched and give each live library a name derived from its full name.
+        return path.with_name(path.name + ".evidence.sqlite3")
+    return legacy
+
+
 class Evidence:
     def __init__(self, store, *, autostart=True):
         self.business_store = store
-        self.store = EvidenceStore(store.path.with_suffix(".evidence.sqlite3"))
+        self.store = EvidenceStore(evidence_path(store.path))
         self.fault = ""
         self._queue = deque()
         self._queue_bytes = 0

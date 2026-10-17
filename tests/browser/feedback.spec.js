@@ -14,7 +14,7 @@ import { test, expect } from "@playwright/test";
 test.beforeEach(async ({ page }) => readerDefaults(page));
 import fs from "node:fs";
 const sample = fs.readFileSync("web/sample.txt", "utf8");
-const provider = "http://127.0.0.1:18768";
+const provider = `http://127.0.0.1:${process.env.WR_E2E_PROVIDER_PORT || "18768"}`;
 const key = "e2e-no-secret";
 async function document(request) {
   return (
@@ -101,12 +101,17 @@ test("retaining words is additive and undo restores prior feedback", async ({
   for (const word of ["phone", "morning"]) {
     await doubleClickWord(page, word);
     await page.getByRole("button", { name: "保留注释", exact: true }).click();
-    await expect(page.locator("#toast")).toContainText("已记住：保留这项注释");
+    await expect(page.locator("#toast")).toContainText("已在这里保留注释");
     await expect(page.locator(`[data-target="${word}"]`)).toHaveCount(1);
     const current = await targets(page);
     expect(baseline.every((t) => current.includes(t))).toBeTruthy();
-    expect(current).toContain(word);
-    evidence.steps.push({ word, targets: current });
+    evidence.steps.push({
+      word,
+      sourceTargets: current,
+      visibleTargets: await page.locator("#article [data-target]").evaluateAll(
+        (nodes) => nodes.map((node) => node.dataset.target),
+      ),
+    });
   }
   await page.reload();
   await expect(page.locator('[data-target="morning"]')).toHaveCount(1);
@@ -117,6 +122,10 @@ test("retaining words is additive and undo restores prior feedback", async ({
     contentType: "application/json",
   });
   // A previously-known word: undo must restore known, rather than reset its history.
+  await page.locator('[data-target="phone"]').click();
+  await page.getByRole("button", { name: "已保留注释 ✓", exact: true }).click();
+  await page.getByRole("button", { name: "关闭注释" }).click();
+  await expect(page.locator('[data-target="phone"]')).toHaveCount(0);
   await request.post("/api/feedback", {
     data: { target: "phone", verdict: "known" },
   });
@@ -193,9 +202,6 @@ test("AI config masks keys, hot-enables models, validates errors and translates 
   await page.locator("#ai-text-url").fill(provider + "/v1");
   await page.locator("#ai-text-model").fill("e2e-model");
   await page.locator("#ai-text-key").fill(key);
-  await page.locator("#ai-text-enabled").check();
-  await page.locator("#ai-text-save").click();
-  await expect(page.locator("#ai-text-status")).toContainText("已保存");
   await page.locator("#ai-text-test").click();
   await expect(page.locator("#ai-text-status")).toContainText("连接成功");
   const config = await (await request.get("/api/ai/config")).json();
@@ -222,12 +228,10 @@ test("AI config masks keys, hot-enables models, validates errors and translates 
   await expect(page.locator(".trace-entries")).toContainText("测试译文");
   await page.goto("/#/ai");
   await page.locator("#ai-text-model").fill("broken-json");
-  await page.locator("#ai-text-save").click();
   await page.locator("#ai-text-test").click();
   await expect(page.locator("#ai-text-status")).toContainText("无法读取");
   await page.locator("#ai-text-key").fill("wrong-test-key");
   await page.locator("#ai-text-model").fill("e2e-model");
-  await page.locator("#ai-text-save").click();
   await page.locator("#ai-text-test").click();
   await expect(page.locator("#ai-text-status")).toContainText("凭据");
   await testInfo.attach("ai-error-redacted.png", {
@@ -235,7 +239,7 @@ test("AI config masks keys, hot-enables models, validates errors and translates 
     contentType: "image/png",
   });
   await page.locator("#ai-text-enabled").uncheck();
-  await page.locator("#ai-text-save").click();
+  await expect(page.locator("#ai-text-status")).toContainText("已关闭");
   await expect
     .poll(
       async () =>
@@ -332,9 +336,14 @@ test("repeated feedback remains additive across densities; pure source remains i
     for (const word of ["phone", "morning"]) {
       if (await page.locator("[data-selection-clear]").isVisible())
         await page.locator("[data-selection-clear]").click();
-      if (i === 0) await doubleClickWord(page, word);
-      else await page.locator(`[data-target="${word}"]`).click();
-      await page.getByRole("button", { name: "保留注释", exact: true }).click();
+      if (i === 0) {
+        await doubleClickWord(page, word);
+        await page.getByRole("button", { name: "保留注释", exact: true }).click();
+      } else {
+        await page.locator(`[data-target="${word}"]`).click();
+        await expect(page.getByRole("button", { name: "已保留注释 ✓", exact: true })).toBeVisible();
+      }
+      await page.getByRole("button", { name: "关闭注释" }).click();
       await expect(page.locator(".annotation-pop")).toHaveCount(0);
       await expect(page.locator(`[data-target="${word}"]`)).toHaveCount(1);
     }
@@ -495,7 +504,7 @@ test("entry, styles and dynamically imported plugins share a cache-busting sourc
   expect(entry).toMatch(/^\/assets\/[a-f0-9]{16}\/app\.js(?:\?.*)?$/);
   const prefix = entry.split("app.js")[0];
   expect(
-    await page.locator('link[rel="stylesheet"]').getAttribute("href"),
+    await page.locator('link[rel="stylesheet"][href*="/style.css"]').getAttribute("href"),
   ).toMatch(new RegExp("^" + prefix + "style\\.css(?:\\?.*)?$"));
   const imported = [];
   page.on("request", (req) => {

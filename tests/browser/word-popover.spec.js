@@ -13,7 +13,7 @@ async function openWord(page, request) {
   await page.goto("/#/read/" + doc.id);
   await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");
   await page.locator('.source-unit[data-word="prominent"]').first().click();
-  await expect(page.locator(".annotation-pop .context-action")).toBeVisible();
+  await expect(page.locator(".annotation-pop [data-context-generate]")).toBeVisible();
   return page.getByRole("dialog", { name: "注释详情" });
 }
 async function wheelOver(page, pop, delta) {
@@ -87,14 +87,14 @@ test("long asynchronous word explanation stays inside the viewport and scrolls i
     data: {
       text: {
         enabled: true,
-        base_url: "http://127.0.0.1:18768/v1",
+        base_url: `http://127.0.0.1:${process.env.WR_E2E_PROVIDER_PORT || "18768"}/v1`,
         model: "long-context",
         api_key: "e2e-no-secret",
       },
     },
   });
   const pop = await openWord(page, request);
-  await pop.locator(".context-action").click();
+  await pop.locator("[data-context-generate]").click();
   await expect(pop.locator(".context-result")).toContainText(
     "这是本机验收用的长解释",
   );

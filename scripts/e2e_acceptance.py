@@ -98,8 +98,8 @@ if __name__ == "__main__":
         "versions": versions,
         "lexicon_sha256": digest(lexicon) if lexicon.exists() else None,
         "database": "disposable temporary SQLite; real data/user.db not used",
-        "app_port": 18767,
-        "fixture_port": 18768,
+        "app_port": int(os.environ.get("WR_E2E_PORT", "18767")),
+        "fixture_port": int(os.environ.get("WR_E2E_PROVIDER_PORT", "18768")),
         "ai_scope": "real HTTP and browser chain with deterministic fixture translations/annotations and WAV tone; not real model quality",
     }
     if (destination / "results.json").exists():
@@ -136,7 +136,7 @@ Exit code: {code}. Source changes during run: {changed}.
 
 Reproduce in this checkout, with the same lexicon hash from manifest:
 1. Run `uv sync --extra dev`, `npm ci`, `npx playwright install chromium`.
-2. Ensure ports 18767/18768 are free. Run the command above.
+2. Ensure the manifest's app/provider ports are free (defaults: 18767/18768), or set `WR_E2E_PORT` and `WR_E2E_PROVIDER_PORT`. Run the command above.
 3. Read the newly generated manifest and HTML report. No production database is used.
 
 For a trace: `npx playwright show-trace <path-to-trace.zip>`.

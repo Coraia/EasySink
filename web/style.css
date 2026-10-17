@@ -667,6 +667,61 @@ small,
 .notice.error {
   color: var(--danger);
 }
+.pdf-service-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  cursor: help;
+}
+.pdf-service-summary[data-state="attention"] { color: #976127; }
+.pdf-service-summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.pdf-service-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 12px;
+  line-height: 1;
+}
+.pdf-service-hover {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.pdf-service-details {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+.pdf-service-details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+.pdf-service-detail-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 9px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 560px) {
+  .pdf-service-summary { align-items: flex-start; flex-wrap: wrap; }
+  .pdf-service-hover { width: 100%; margin-left: 28px; }
+}
 .card {
   background: var(--paper);
   border: 1px solid var(--border);
@@ -1217,6 +1272,120 @@ dialog::backdrop {
   background: #18281f60;
   backdrop-filter: blur(4px);
 }
+.import-dialog {
+  width: min(760px, calc(100vw - 32px));
+}
+.unified-import {
+  gap: 14px;
+}
+.import-kicker {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+.import-entry {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--paper) 86%, var(--bg));
+  transition: border-color 150ms ease, background 150ms ease;
+}
+.import-entry:focus-within,
+.import-entry.is-dragging {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.import-entry textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 170px;
+  padding: 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.import-entry textarea:focus {
+  outline: 0;
+  box-shadow: none;
+}
+.import-entry-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px 12px 20px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+}
+.import-file-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.import-file-button:hover { border-color: var(--accent); }
+.import-file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.import-detected {
+  display: grid;
+  gap: 5px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.import-detected span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.import-context-panel {
+  padding-top: 2px;
+}
+.import-context-panel > .notice:first-child { margin-top: 0; }
+.import-secondary-tools {
+  color: var(--muted);
+  font-size: 13px;
+}
+.import-secondary-tools summary {
+  width: fit-content;
+  color: var(--accent);
+  cursor: pointer;
+}
+.import-secondary-tools[open] > summary { margin-bottom: 10px; }
+.import-secondary-tools details { margin-top: 10px; }
+.import-actions {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  margin-top: 4px;
+}
+.import-actions .save-state {
+  text-align: right;
+}
+.import-actions .primary {
+  min-width: 110px;
+}
 .dialog-head {
   display: flex;
   align-items: center;
@@ -1239,6 +1408,15 @@ dialog::backdrop {
 }
 .dropzone input {
   font-size: 13px;
+}
+@media (max-width: 560px) {
+  .import-dialog { padding: 22px; }
+  .import-entry textarea { min-height: 145px; }
+  .import-entry-footer { align-items: flex-start; flex-direction: column; }
+  .import-file-button { width: 100%; justify-content: center; box-sizing: border-box; }
+  .import-actions { grid-template-columns: auto 1fr; }
+  .import-actions .save-state { display: none; }
+  .import-actions .primary { grid-column: 2; }
 }
 .dialog-hint {
   font-size: 13px;

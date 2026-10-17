@@ -42,7 +42,7 @@ const snap = page => page.evaluate(() => ({
 }));
 test.beforeEach(async ({ page, request }) => {
   await enableAll(request);
-  page.__errors = []; page.on('pageerror', e => page.__errors.push(e.message));
+  page.__errors = []; page.on('pageerror', e => page.__errors.push(e.stack || e.message));
 });
 test.afterEach(async ({ page }, info) => {
   await info.attach('native-production.json', { body: JSON.stringify({
@@ -120,11 +120,11 @@ test('Retina 120Hz phase-fixture turns retain bounded rendering latency and GPU 
     await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
   }
   const metrics = await page.evaluate(() => JSON.parse(document.querySelector('.reader').dataset.curlMetrics));
+  await info.attach('retina-frame-metrics.json', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });
   expect(metrics).toHaveLength(12);
   expect(Math.max(...metrics.map(m => m.p95FrameMs))).toBeLessThan(34);
   expect(Math.max(...metrics.map(m => m.p95InputMs))).toBeLessThan(34);
   expect(+(await page.locator('.reader').getAttribute('data-curl-cached-pixels'))).toBeLessThanOrEqual(24e6);
-  await info.attach('retina-frame-metrics.json', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });
 });
 for (const dpr of [1, 2, 3]) test(`DPR ${dpr}: canvas and page textures retain native resolution with bounded cache`, async ({ browser, request }, info) => {
   const context = await browser.newContext({ deviceScaleFactor: dpr, viewport: { width: 1100, height: 800 } });

@@ -74,11 +74,16 @@ const ctx = {
     local.remove(`jump:${reader.doc.id}`);
     ctx.reader = reader;
     history.pushState(null, "", `#/read/${reader.doc.id}`);
-    reader.mount().catch(error => {
+    const trackpad = previous.pages.trackpad;
+    reader.mount().then(() => {
+      // Reader.mount() creates the destination ReadingPages. Moving an active
+      // native-input owner before that point leaves queued gestures pointing
+      // at undefined instead of the new chapter.
+      if (!scope.signal.aborted) trackpad?.handoff?.(reader);
+    }).catch(error => {
       if (error.name !== "AbortError" && !scope.signal.aborted)
         reader.status("阅读工具暂未完成加载，正文已保留。请稍后重新打开。", {notice: true});
     });
-    previous.pages.trackpad?.handoff?.(reader);
     const root = $(".reader");
     if (root) root.dataset.rangeTurns = JSON.stringify(ctx.rangeTurns || []);
   },
@@ -249,29 +254,72 @@ async function renderHome(scope) {
 function importText() {
   const draft = local.get("import-draft", { title: "", text: "" });
   const d = openDialog(
-    "添加一段值得读的文字",
-    `<div id="import-extension"></div><form id="paste-form" class="stack"><div><label for="paste-title">标题</label><input id="paste-title" placeholder="给这篇阅读起个名字" value="${e(draft.title)}"></div><div><label for="paste-text">英文原文</label><textarea id="paste-text" rows="8" required placeholder="粘贴文章、邮件或你想读懂的一段英文…">${e(draft.text)}</textarea></div><div class="row between"><span class="save-state" id="paste-state">草稿保留在此浏览器</span><button class="primary" type="submit">开始阅读 →</button></div></form>`,
+    "把内容放进来",
+    `<form id="paste-form" class="stack unified-import"><div id="import-entry" class="import-entry"><textarea id="paste-text" rows="7" required aria-label="粘贴网页链接或文字" placeholder="粘贴网页链接或文字，也可以把文件拖到这里">${e(draft.text)}</textarea><div class="import-entry-footer"><span id="import-supported">粘贴英文文字</span><span id="import-file-slot"></span></div></div><div id="import-detected" class="import-detected" role="status" aria-live="polite"><strong id="import-detected-title">等待内容</strong><span id="import-detected-copy">系统会自动识别链接、文字或文件；只有需要选择时才会继续询问。</span></div><div id="import-extension"></div><div id="import-text-options" hidden><label for="paste-title">标题（可选）</label><input id="paste-title" placeholder="给这篇阅读起个名字" value="${e(draft.title)}"></div><div class="import-actions"><button id="import-clear" type="button">清除</button><span class="save-state" id="paste-state">草稿保留在此浏览器</span><button id="import-continue" class="primary" type="submit" disabled>继续</button></div></form>`,
   );
+  d.classList.add("import-dialog");
+  $(".dialog-head h2", d).innerHTML = '<span class="import-kicker">添加阅读</span>把内容放进来';
+  d.addEventListener("close", () => d.classList.remove("import-dialog"), { once: true });
   const form = $("#paste-form", d);
+  const text = $("#paste-text", d);
+  const title = $("#paste-title", d);
+  const textOptions = $("#import-text-options", d);
+  const detectedTitle = $("#import-detected-title", d);
+  const detectedCopy = $("#import-detected-copy", d);
+  const submit = $("#import-continue", d);
+  const pasteState = $("#paste-state", d);
+  const renderText = () => {
+    if (!form.dataset.importKind || form.dataset.importKind === "text") {
+      const value = text.value.trim();
+      form.dataset.importKind = value ? "text" : "";
+      textOptions.hidden = !value;
+      detectedTitle.textContent = value ? "已识别为粘贴文字" : "等待内容";
+      detectedCopy.textContent = value
+        ? `约 ${value.split(/\s+/).filter(Boolean).length} 个英文单词；不会联网。`
+        : "系统会自动识别链接、文字或文件；只有需要选择时才会继续询问。";
+      submit.disabled = !value;
+      submit.textContent = value ? "开始阅读 →" : "继续";
+    }
+  };
   form.oninput = () => {
+    const value = text.value.trim();
+    if (/^https?:\/\/\S+$/i.test(value)) {
+      const savedDraft = local.get("import-draft", null);
+      if (savedDraft?.text === text.value) local.remove("import-draft");
+      pasteState.textContent = "网页链接不会保存为文字草稿";
+      return;
+    }
+    if (!form.dataset.importKind || form.dataset.importKind === "text") renderText();
+    if (form.dataset.importKind && form.dataset.importKind !== "text") return;
     const saved = local.set("import-draft", {
-      title: $("#paste-title", d).value,
-      text: $("#paste-text", d).value,
+      title: title.value,
+      text: text.value,
     });
-    $("#paste-state", d).textContent = saved
+    pasteState.textContent = saved
       ? "草稿已自动保存"
       : "草稿未保存，请复制内容";
   };
+  $("#import-clear", d).onclick = () => {
+    text.value = "";
+    title.value = "";
+    form.dataset.importKind = "";
+    local.remove("import-draft");
+    pasteState.textContent = "草稿保留在此浏览器";
+    form.dispatchEvent(new CustomEvent("wr:import-clear", { bubbles: true }));
+    renderText();
+    text.focus();
+  };
   form.onsubmit = (ev) => {
     ev.preventDefault();
+    if (form.dataset.importKind !== "text") return;
     busy(
-      $("button[type=submit]", form),
+      submit,
       async () => {
-        const text = $("#paste-text", d).value.trim();
-        if (!text) throw new Error("先粘贴一些英文内容");
+        const source = text.value.trim();
+        if (!source) throw new Error("先粘贴一些英文内容");
         const doc = await api("/documents", {
           method: "POST",
-          body: { title: $("#paste-title", d).value, text },
+          body: { title: title.value, text: source },
         });
         local.remove("import-draft");
         d.close();
@@ -280,6 +328,7 @@ function importText() {
       "正在整理…",
     ).catch(() => {});
   };
+  renderText();
   ctx.run("importDialog", d).catch((err) => toast(err.message));
 }
 async function renderProfile(scope) {

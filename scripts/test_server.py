@@ -44,6 +44,6 @@ if __name__ == "__main__":
             create_test_app,
             factory=True,
             host="127.0.0.1",
-            port=18767,
+            port=int(os.environ.get("WR_E2E_PORT", "18767")),
             log_level="warning",
         )

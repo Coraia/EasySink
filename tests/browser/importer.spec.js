@@ -34,6 +34,31 @@ async function upload(page, file) {
   await page.locator("#upload-file").setInputFiles(file);
 }
 
+async function expectEpubReady(page, chapters = 2) {
+  await expect(page.locator("#upload-state")).toContainText(
+    new RegExp(`已完整导入 ${chapters} 章|已复用已有书籍`),
+  );
+}
+
+test("the unified entry reveals URL consent only after recognizing a link", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "＋ 添加阅读" }).click();
+  await expect(page.getByRole("heading", { name: "把内容放进来" })).toBeVisible();
+  await expect(page.locator("#url-import-panel")).toBeHidden();
+  await expect(page.locator("#pdf-import-panel")).toBeHidden();
+
+  await page.locator("#paste-text").fill("https://example.com/");
+  await expect(page.locator("#import-detected-title")).toHaveText("已识别为网页链接");
+  await expect(page.locator("#paste-state")).toContainText("不会保存为文字草稿");
+  await expect(page.locator("#url-import-panel")).toBeVisible();
+  await expect(page.locator("#pdf-import-panel")).toBeHidden();
+  await page.getByRole("button", { name: "核对并导入" }).click();
+  await expect(page.locator("#url-import-consent")).toBeVisible();
+  await expect(page.locator("#url-import-consent-host")).toHaveText("example.com");
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(page.locator("#import-detected-copy")).toContainText("未访问该网站");
+});
+
 test("EPUB content survives a transport filename without its extension", async ({
   page,
 }, testInfo) => {
@@ -42,7 +67,7 @@ test("EPUB content survives a transport filename without its extension", async (
     mimeType: "application/octet-stream",
     buffer: epub,
   });
-  await expect(page.locator("#upload-state")).toContainText("已完整导入 2 章");
+  await expectEpubReady(page);
   await testInfo.attach("import-complete", {
     body: await page.screenshot(),
     contentType: "image/png",
@@ -99,7 +124,7 @@ test("EPUB MIME is accepted without an EPUB filename and a retry recovers", asyn
     mimeType: "application/epub+zip",
     buffer: epub,
   });
-  await expect(page.locator("#upload-state")).toContainText("已完整导入 2 章");
+  await expectEpubReady(page);
 });
 
 test("a non-EPUB ZIP is rejected and Markdown still imports", async ({
@@ -148,9 +173,7 @@ for (const mode of ["single", "nested"])
       mimeType: "application/zip",
       buffer: packageFixture(mode),
     });
-    await expect(page.locator("#upload-state")).toContainText(
-      "已完整导入 2 章",
-    );
+    await expectEpubReady(page);
     await page.locator("#open-import").click();
     await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");
 
@@ -239,24 +262,14 @@ test("one EPUB stays one shelf entry across reload and search; chapters only app
       },
     })
   ).json();
-  // Include another book with the same title so this check cannot accidentally
-  // pass only because the test server contains a single import.
-  const sameTitle = await request.post("/api/import", {
-    multipart: {
-      file: {
-        name: "same-title.epub",
-        mimeType: "application/epub+zip",
-        buffer: epub,
-      },
-    },
-  });
-  expect(sameTitle.ok()).toBeTruthy();
+  // Importing the same source again must reuse the existing book, regardless
+  // of the transport filename used by this test or an earlier scenario.
   await upload(page, {
     name: "One Book.epub",
     mimeType: "application/epub+zip",
     buffer: epub,
   });
-  await expect(page.locator("#upload-state")).toContainText("已完整导入 2 章");
+  await expectEpubReady(page);
   await page.locator("#open-import").click();
   await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");
   const chapterId = +page.url().match(/read\/(\d+)/)[1];

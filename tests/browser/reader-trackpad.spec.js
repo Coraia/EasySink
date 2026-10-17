@@ -217,7 +217,8 @@ test("warm-paper inertia keeps a single provisional session until release; reduc
   await wheel(page, -420);
   await quiet(page);
   await position(page, 0);
-  await expect(page.locator("#page-curl-layer")).toBeHidden();
+  await expect(page.locator("#page-curl-layer")).toHaveAttribute("aria-hidden", "true");
+  await expect(page.locator("#page-curl-layer")).toHaveCSS("pointer-events", "none");
 });
 
 test("tools, word card, selection and translation retain ownership of scrolling", async ({
@@ -255,7 +256,7 @@ test("tools, word card, selection and translation retain ownership of scrolling"
     data: {
       text: {
         enabled: true,
-        base_url: "http://127.0.0.1:18768/v1",
+        base_url: `http://127.0.0.1:${process.env.WR_E2E_PROVIDER_PORT || "18768"}/v1`,
         model: "e2e-model",
         api_key: "e2e-no-secret",
       },

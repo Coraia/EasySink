@@ -262,7 +262,7 @@ test("late source restore survives reflow, bookmarks and reopen; leaving cancels
   });
 });
 
-test("content analysis optimization retains hyphenated phrases and live personal feedback", async ({
+test("content analysis optimization retains exact phrases and live personal feedback", async ({
   page,
   request,
 }) => {
@@ -272,17 +272,17 @@ test("content analysis optimization retains hyphenated phrases and live personal
   const created = await request.post("/api/documents", {
     data: {
       title: "Phrase cache acceptance",
-      text: "We wanted to break-the ice before the conversation began.",
+      text: "We wanted to break the ice before the conversation began.",
     },
   });
   expect(created.ok()).toBeTruthy();
   const doc = await created.json();
   await page.goto("/#/read/" + doc.id);
   await expect(page.locator('.annotation[data-kind="phrase"]')).toContainText(
-    "打破尴尬",
+    "打破沉默",
   );
   await page.locator('.annotation[data-kind="phrase"]').click();
-  await page.getByRole("button", { name: "已掌握 ✓", exact: true }).click();
+  await page.locator("[data-understood]").click();
   await expect(page.locator('.annotation[data-kind="phrase"]')).toHaveCount(0);
   await page.reload();
   await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");

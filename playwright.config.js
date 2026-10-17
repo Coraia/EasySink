@@ -1,5 +1,6 @@
 import { defineConfig } from "@playwright/test";
 const evidence = process.env.WR_E2E_EVIDENCE;
+const appPort = process.env.WR_E2E_PORT || "18767";
 export default defineConfig({
   outputDir: evidence ? evidence + "/results" : "test-results",
   testDir: "./tests/browser",
@@ -15,7 +16,7 @@ export default defineConfig({
       ]
     : [["list"], ["html", { open: "never" }]],
   use: {
-    baseURL: "http://127.0.0.1:18767",
+    baseURL: `http://127.0.0.1:${appPort}`,
     browserName: "chromium",
     viewport: { width: 1440, height: 1000 },
     trace: evidence ? "on" : "retain-on-failure",
@@ -23,7 +24,7 @@ export default defineConfig({
   },
   webServer: {
     command: ".venv/bin/python scripts/test_server.py",
-    url: "http://127.0.0.1:18767/health",
+    url: `http://127.0.0.1:${appPort}/health`,
     reuseExistingServer: false,
     timeout: 20000,
   },
