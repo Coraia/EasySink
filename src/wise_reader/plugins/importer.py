@@ -5,12 +5,16 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import posixpath
 import zipfile
+from uuid import UUID
 from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree as ET
 
-from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 from markdown_it import MarkdownIt
 
 from wise_reader import content
@@ -21,6 +25,23 @@ MAX_BYTES = 20 * 1024 * 1024
 MAX_CHAPTERS = 500
 MAX_EXPANDED = 100 * 1024 * 1024
 EPUB_CONTAINER = "META-INF/container.xml"
+
+
+def start_url_import(app: FastAPI, store):
+    from wise_reader.url_commit import URLCommitter
+    from wise_reader.url_transport import ImportFailure
+
+    app.state.url_committer = None
+    app.state.url_import_error = None
+    try:
+        committer = URLCommitter(store)
+    except Exception as exc:
+        app.state.url_import_error = exc.code if isinstance(exc, ImportFailure) else "initialization_failed"
+        logging.getLogger(__name__).exception("URL import unavailable; existing reading remains available")
+    else:
+        app.state.url_committer = committer
+        if not committer.recovery_ready:
+            app.state.url_import_error = "recovery_incomplete"
 
 
 def migrate(store):
@@ -246,7 +267,225 @@ def parse_plain(data, filename):
     return title, "", [(title, text)]
 
 
+def _url_request_id(value):
+    try:
+        if not isinstance(value, str) or str(UUID(value)) != value:
+            raise ValueError
+    except (ValueError, AttributeError):
+        raise HTTPException(422, "request_id must be a canonical UUID") from None
+    return value
+
+
+def _url_origin(request: Request, *, write: bool):
+    hosts = request.headers.getlist('host')
+    server = request.scope.get('server')
+    scheme = request.scope.get('scheme')
+    if len(hosts) != 1 or not server or scheme not in ('http', 'https'):
+        raise HTTPException(403, "URL import requires a trusted local authority")
+    host = hosts[0]
+    server_host, port = server
+    allowed = {server_host.lower()}
+    if server_host in ('127.0.0.1', '::1'):
+        allowed.add('localhost')
+    authorities = set()
+    for name in allowed:
+        name = f'[{name}]' if ':' in name else name
+        authorities.add(f'{name}:{port}')
+        if port == (443 if scheme == 'https' else 80):
+            authorities.add(name)
+    if host.lower() not in authorities:
+        raise HTTPException(403, "Host does not match this server")
+    origins = request.headers.getlist('origin')
+    if (write or origins) and origins != [f'{scheme}://{host}']:
+        raise HTTPException(403, "A same-origin request is required")
+    sites = request.headers.getlist('sec-fetch-site')
+    if sites and sites not in (['same-origin'], ['none']):
+        raise HTTPException(403, "Cross-site request rejected")
+
+
+async def _url_json(request: Request):
+    _url_origin(request, write=True)
+    types = request.headers.getlist('content-type')
+    if len(types) != 1 or types[0].lower().strip() not in (
+            'application/json', 'application/json; charset=utf-8'):
+        raise HTTPException(415, "application/json required")
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > 16384:
+            raise HTTPException(413, "URL request exceeds 16 KiB")
+        data.extend(chunk)
+
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError('duplicate key')
+            result[key] = value
+        return result
+
+    def invalid_constant(value):
+        raise ValueError('invalid JSON constant')
+
+    try:
+        body = json.loads(data.decode('utf-8'), object_pairs_hook=pairs, parse_constant=invalid_constant)
+        if not isinstance(body, dict):
+            raise ValueError('object required')
+    except (ValueError, UnicodeError, RecursionError):
+        raise HTTPException(422, "Invalid JSON object") from None
+    return body
+
+
+def _url_expected_library(request: Request):
+    values = request.headers.getlist('x-wr-library-id')
+    if not values:
+        raise HTTPException(428, 'X-WR-Library-ID required; retrieve URL identity first')
+    if len(values) != 1:
+        raise HTTPException(422, 'Exactly one library identity required')
+    return _url_request_id(values[0])
+
+
+def _url_response(receipt, store, library_id=None):
+    state = receipt.state
+    value = {'request_id': receipt.request_id, 'state': state, 'library_id': library_id}
+    codes = {'committed': 200, 'running': 202, 'cancelled': 200, 'failed': 422,
+             'interrupted': 422, 'not_found': 404, 'unknown': 503,
+             'unavailable': 409, 'source_removed': 410}
+    if state == 'committed':
+        try:
+            source = store.query_one(
+                'SELECT o.original_url,o.final_url,o.fetched_at,s.metadata_json '
+                'FROM wr_url_observation o JOIN wr_url_snapshot s ON s.snapshot_id=o.snapshot_id '
+                'WHERE o.request_id=? AND s.snapshot_id=? AND s.doc_id=? AND s.availability=\'ready\'',
+                (receipt.request_id, receipt.snapshot_id, receipt.doc_id))
+            if source is None:
+                raise ValueError('source unavailable')
+            metadata = json.loads(source.pop('metadata_json'))
+            source.update(author=metadata['author'], published_at=metadata['published_at'])
+        except Exception:
+            value.update(state='unknown', code='source_read_failed', message='保存结果待核对，请保留请求编号。',
+                         stage='status', retryable=False)
+            return JSONResponse(value, status_code=503, headers={'Cache-Control': 'no-store'})
+        value.update(doc_id=receipt.doc_id, snapshot_id=receipt.snapshot_id, reused=receipt.reused,
+                     source=source, notice='已保留已有文章和阅读记录。' if receipt.reused else '已独立保存；旧文章和记录保留。')
+    elif state != 'running':
+        value.update(code=receipt.error_code or state, stage='status', retryable=state in ('failed', 'interrupted'),
+                     message='结果待核对，请保留请求编号。' if state == 'unknown' else '请按请求状态处理；未返回可导航文章。')
+    return JSONResponse(value, status_code=codes.get(state, 503), headers={'Cache-Control': 'no-store'})
+
+
+def _register_url_routes(app: FastAPI, ctx: PluginContext):
+    from wise_reader.url_commit import Execution, Receipt
+    from wise_reader.url_import import URLPreparer
+    from wise_reader.url_transport import Control, ImportFailure, normalize_url
+
+    def current_owner():
+        owner = getattr(app.state, 'url_committer', None)
+        if owner is None or owner.store is not ctx.store:
+            raise ImportFailure('url_unavailable')
+        return owner, owner.identity()
+
+    @app.get('/api/import/url/identity')
+    def url_identity(request: Request):
+        _url_origin(request, write=False)
+        try:
+            _, library_id = current_owner()
+        except Exception:
+            return JSONResponse({'code': 'library_identity_unavailable'}, status_code=503,
+                                headers={'Cache-Control': 'no-store'})
+        return JSONResponse({'library_id': library_id}, headers={'Cache-Control': 'no-store'})
+
+    def invoke(request_id, action, expected_library, url: str = ''):
+        try:
+            owner, library_id = current_owner()
+        except Exception:
+            return _url_response(Receipt(request_id, 'unknown', error_code='url_unavailable'), ctx.store)
+        if library_id != expected_library:
+            return JSONResponse({'code': 'library_mismatch', 'request_id': request_id,
+                                 'library_id': library_id}, status_code=409,
+                                headers={'Cache-Control': 'no-store'})
+        try:
+            if action == 'submit':
+                if not ctx.store.is_plugin_enabled(PLUGIN_ID):
+                    raise HTTPException(404, 'plugin importer is off')
+                control = Control()
+                begun = owner.begin(request_id, url, control)
+                if begun.attempt is None:
+                    receipt = begun.receipt
+                else:
+                    def work():
+                        prepared = URLPreparer(ctx.engine.prepare_import).prepare(url, control)
+                        sealed = owner.staging.prepare(prepared.source, prepared.document, prepared.assets,
+                                                       prepared.raw_html, control)
+                        return owner.commit(begun.attempt, sealed, ctx.engine)
+                    receipt = owner.execute(begun.attempt, Execution(control, work))
+            elif action == 'cancel':
+                receipt = owner.cancel(request_id)
+            else:
+                receipt = owner.status(request_id)
+        except ImportFailure as exc:
+            if exc.code in ('request_conflict', 'busy'):
+                return JSONResponse({'request_id': request_id, 'library_id': library_id, 'code': exc.code}, status_code=409,
+                                    headers={'Cache-Control': 'no-store'})
+            # A start race or an I/O failure cannot authorize a replacement request.
+            try:
+                receipt = owner.status(request_id)
+            except Exception:
+                receipt = Receipt(request_id, 'unknown', error_code=exc.code)
+            if receipt.state in ('not_found', 'running'):
+                receipt = Receipt(request_id, 'unknown', error_code=exc.code)
+        except HTTPException:
+            raise
+        except Exception:
+            logging.getLogger(__name__).exception('URL request requires reconciliation')
+            receipt = Receipt(request_id, 'unknown', error_code='request_unconfirmed')
+        return _url_response(receipt, owner.store, library_id)
+
+    @app.post('/api/import/url', dependencies=[Depends(require_plugin(PLUGIN_ID))])
+    async def submit_url(request: Request):
+        body = await _url_json(request)
+        if set(body) != {'request_id', 'url'} or not isinstance(body['url'], str) or not 1 <= len(body['url']) <= 4096:
+            raise HTTPException(422, 'Expected only request_id and bounded url')
+        request_id = _url_request_id(body['request_id'])
+        try:
+            normalize_url(body['url'])
+        except ImportFailure as exc:
+            raise HTTPException(422, exc.code) from None
+        return await run_in_threadpool(invoke, request_id, 'submit', _url_expected_library(request), body['url'])
+
+    @app.get('/api/import/url/requests/{request_id}')
+    async def url_status(request: Request, request_id: str):
+        _url_origin(request, write=False)
+        return await run_in_threadpool(invoke, _url_request_id(request_id), 'status', _url_expected_library(request))
+
+    @app.get('/api/import/url/snapshots/{snapshot_id}/assets/{asset_id}')
+    def url_asset(request: Request, snapshot_id: str, asset_id: str):
+        _url_origin(request, write=False)
+        headers = {'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'}
+        owner = getattr(app.state, 'url_committer', None)
+        code = 'unknown'
+        if owner is not None:
+            try:
+                asset = owner.read_asset(snapshot_id, asset_id)
+                return Response(content=asset.data, media_type=asset.mime, headers=headers)
+            except ImportFailure as exc:
+                if exc.code in ('invalid_snapshot_id', 'invalid_asset_id', 'not_found', 'unavailable'):
+                    code = exc.code
+            except Exception:
+                logging.getLogger(__name__).exception('URL asset read could not be confirmed')
+        status = {'invalid_snapshot_id': 422, 'invalid_asset_id': 422,
+                  'not_found': 404, 'unavailable': 409, 'unknown': 503}[code]
+        return JSONResponse({'code': code, 'message': '图片不可用或读取结果待核对。'},
+                            status_code=status, headers=headers)
+
+    @app.post('/api/import/url/requests/{request_id}/cancel')
+    async def cancel_url(request: Request, request_id: str):
+        if await _url_json(request) != {}:
+            raise HTTPException(422, 'Cancel expects an empty JSON object')
+        return await run_in_threadpool(invoke, _url_request_id(request_id), 'cancel', _url_expected_library(request))
+
+
 def register(app: FastAPI, ctx: PluginContext):
+    _register_url_routes(app, ctx)
     router = APIRouter(dependencies=[Depends(require_plugin(PLUGIN_ID))])
 
     @router.post("/api/import")

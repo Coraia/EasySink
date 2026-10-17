@@ -83,8 +83,8 @@ class Engine:
             "cache_key": self._source_cache.key(row),
         }
 
-    def persist_import(self, prepared):
-        """Caller owns a short book-wide atomic transaction; no analysis here."""
+    def persist_import(self, prepared, *, cache_analysis=True):
+        """Caller owns the transaction; URL imports must bypass best-effort cache writes."""
         row = prepared["row"]
         doc_id = int(self.store.execute(
             "INSERT INTO document(title,text,word_count,text_hash,l0_json,l1_json,created_at) "
@@ -94,7 +94,8 @@ class Engine:
         ).lastrowid)
         self.store.execute("INSERT INTO wr_content(doc_id,version,blocks) VALUES(?,?,?)",
                            (doc_id, prepared["version"], prepared["blocks"]))
-        self._source_cache.save_prepared({**row, "id": doc_id}, prepared["analysis"], prepared["cache_key"])
+        if cache_analysis:
+            self._source_cache.save_prepared({**row, "id": doc_id}, prepared["analysis"], prepared["cache_key"])
         return {"id": doc_id, "title": row["title"], "word_count": row["word_count"]}
 
     def _l1(self, doc: Document, h: str) -> tuple[list[Annotation], dict]:

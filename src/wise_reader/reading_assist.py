@@ -121,7 +121,7 @@ def selected(ctx, doc_id, anchor, sentence=False):
     source = "\n\n".join(p.quote for p in resolved)
     if utf16(source) > 8000:
         raise HTTPException(400, "本次选区超过 8000 个字符，请缩短后重试")
-    out = anchor.model_copy(update={**resolved[0].model_dump(), "version": version,
+    out = Anchor.model_validate({**anchor.model_dump(), **resolved[0].model_dump(), "version": version,
         "quote": source, "segments": resolved if len(resolved) > 1 else []})
     context = context_blocks[0] if len(resolved) == 1 else {"text": source}
     return context, out, source
@@ -560,10 +560,10 @@ async def context_assist(app, ctx, request, doc_id, body):
         attempt = {"id": attempt_id}
     return await shared(app, "context:" + attempt["id"], state, request,
                         lambda flight: produce_context(app, ctx, doc_id, target, text, context, identity,
-                                                       p, attempt["id"], request_id, flight))
+                                                       p, attempt["id"], request_id, flight, request))
 
 
-async def produce_context(app, ctx, doc_id, target, text, context, identity, p, attempt_id, request_id, flight):
+async def produce_context(app, ctx, doc_id, target, text, context, identity, p, attempt_id, request_id, flight, evidence_request=None):
     diagnostic = AssistFailureDiagnostic(ctx.store, doc_id, "context", request_id, target, target, p["api_key"])
     diagnostic.data.update(prompt_version=assist_context.PROTOCOL, context=context)
     journal = {"format": "context-stages-v1", "protocol": assist_context.PROTOCOL,
@@ -652,9 +652,23 @@ async def produce_context(app, ctx, doc_id, target, text, context, identity, p, 
             raise
 
     def finish(state, message, status):
-        ctx.store.execute("""UPDATE wr_context_attempt SET state=?,error=?,http_status=?,response=?,updated_at=?
-            WHERE id=? AND state='pending'""",
-            (state, message, status, retained(), _now(), attempt_id))
+        with ctx.store.transaction():
+            ctx.store.execute("""UPDATE wr_context_attempt SET state=?,error=?,http_status=?,response=?,updated_at=?
+                WHERE id=? AND state='pending'""",
+                (state, message, status, retained(), _now(), attempt_id))
+        capture_evidence(state, {"http_status": status})
+
+    def capture_evidence(status, result):
+        evidence = getattr(app.state, "evidence", None)
+        if evidence and evidence_request is not None:
+            try:
+                evidence.capture_result(evidence_request, "explanation_result", status, result,
+                    {"doc_id": doc_id, "version": target.version, "anchor": target.model_dump(mode="json"),
+                     "request_id": request_id, "attempt_id": attempt_id, "protocol": assist_context.PROTOCOL})
+            except Exception:
+                # Optional capture may never change the persisted producer result,
+                # trigger another provider call, or run finish() a second time.
+                evidence.fault = "capture-producer-failure"
 
     try:
         require_consumers(flight)
@@ -683,6 +697,7 @@ async def produce_context(app, ctx, doc_id, target, text, context, identity, p, 
             ctx.store.execute("""UPDATE wr_context_attempt SET state='succeeded',assist_id=?,response=?,updated_at=? WHERE id=?""",
                               (cursor.lastrowid, retained(), _now(), attempt_id))
             row = ctx.store.query_one("SELECT * FROM wr_assist WHERE id=?", (cursor.lastrowid,))
+        capture_evidence("succeeded", {"id": cursor.lastrowid})
         # Completed context explanations are retained history. A late popover
         # close/cancel must never delete an explanation already adopted elsewhere.
         return {**record(row), "cached": False}
@@ -735,7 +750,20 @@ def register(app, ctx):
         if group and not group["retained"] and all(o["cancelled"] for o in group["owners"]):
             ctx.store.execute("DELETE FROM wr_assist WHERE id=? AND doc_id=?", (group["id"], doc_id))
             app.state.assist_records.pop(group["id"], None)
-        return {"ok": True}
+        # Cancelling a waiter is not proof that a provider stopped or a result was
+        # discarded. Expose only a read-only durable context receipt, if known.
+        result = {"ok": True, "result_state": "unknown"}
+        try:
+            attempt = ctx.store.query_one("SELECT id,state,assist_id FROM wr_context_attempt WHERE doc_id=? AND request_id=?", (doc_id, request_id))
+            if attempt:
+                result.update(attempt_id=attempt["id"], observed_attempt_state=attempt["state"], assist_id=attempt["assist_id"])
+                if attempt["state"] in {"succeeded", "failed", "unknown"}:
+                    result["result_state"] = attempt["state"]
+        except Exception:
+            # Optional evidence lookup must not turn an accepted cancellation into
+            # a business failure or trigger another model request.
+            result["receipt_gap"] = "state-unavailable"
+        return result
 
     @router.get("/api/documents/{doc_id}/assists")
     def list_assists(doc_id: int):

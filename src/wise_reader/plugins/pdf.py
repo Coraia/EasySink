@@ -77,6 +77,23 @@ def register(app: FastAPI, ctx: PluginContext):
         except (ValueError, ValidationError):
             raise error(422, "invalid_enhancement_request", "Check the selected service, original page and region.") from None
 
+    @router.post("/api/pdf/documents/{doc_id}/resume-position")
+    async def resume_position(doc_id: int, request: Request):
+        # Read-only and PDF-specific: this endpoint cannot adopt a quotation.
+        local_operation(request)
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > 16 * 1024:
+                raise error(413, "position_too_large", "Reading position is too large.")
+        try:
+            body = json.loads(raw)
+            if not isinstance(body, dict) or not isinstance(body.get('anchor'), dict) or not isinstance(body.get('version'), str):
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise error(422, "invalid_position", "Reading position is invalid.") from None
+        return {"anchor": module.resume_position(doc_id, body['anchor'], body['version'])}
+
     @router.get("/api/pdf/enhancement/config")
     async def enhancement_config(response: Response):
         response.headers["Cache-Control"] = "no-store"

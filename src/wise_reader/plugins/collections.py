@@ -104,6 +104,10 @@ class CleanupIn(Scope):
 def register(app: FastAPI, ctx) -> None:
     service = Collections(ctx.store)
 
+    def observe(request, kind, call, details=None):
+        evidence = getattr(app.state, "evidence", None)
+        return evidence.business(request, kind, call, details) if evidence else call()
+
     def enabled(request: Request):
         # Same flag as require_plugin, without an import-time catalog dependency.
         if not request.app.state.store.is_plugin_enabled(PLUGIN_ID, True):
@@ -118,26 +122,34 @@ def register(app: FastAPI, ctx) -> None:
         return service.list(doc_id, book_id, kind, q, limit, offset)
 
     @router.post("")
-    def add_record(body: SaveIn):
-        return service.save(body.doc_id, body.kind, body.anchor, body.explanation.model_dump(exclude_none=True) if body.explanation else None)
+    def add_record(body: SaveIn, request: Request):
+        return observe(request, "collection_save",
+            lambda: service.save(body.doc_id, body.kind, body.anchor, body.explanation.model_dump(exclude_none=True) if body.explanation else None),
+            {"doc_id": body.doc_id, "version": body.anchor.version, "anchor": body.anchor.model_dump(mode="json")})
 
     @router.get("/state/{doc_id}")
     def state(doc_id: int):
         return service.state(doc_id)
 
     @router.post("/feedback")
-    def feedback(body: FeedbackIn):
+    def feedback(body: FeedbackIn, request: Request):
         fields = body.model_dump(exclude_unset=True, exclude={"doc_id", "anchor"})
-        return service.feedback(body.doc_id, body.anchor, fields)
+        return observe(request, "feedback_declaration", lambda: service.feedback(body.doc_id, body.anchor, fields),
+            {"doc_id": body.doc_id, "version": body.anchor.version, "anchor": body.anchor.model_dump(mode="json"),
+             **{k: fields[k] for k in ("understood", "retained") if k in fields}})
 
     @router.post("/undo")
-    def undo(body: UndoIn):
-        return service.undo(body.token)
+    def undo(body: UndoIn, request: Request):
+        return observe(request, "undo", lambda: service.undo(body.token), {"undo_token": body.token})
 
     @router.post("/adopt")
-    def adopt_context(body: AdoptIn):
-        return service.adopt_context(body.doc_id, body.anchor, body.adopt_assist_id,
-                                     body.expected_feedback_revision, body.expected_collection_revision)
+    def adopt_context(body: AdoptIn, request: Request):
+        return observe(request, "adopt",
+            lambda: service.adopt_context(body.doc_id, body.anchor, body.adopt_assist_id,
+                                          body.expected_feedback_revision, body.expected_collection_revision),
+            {"doc_id": body.doc_id, "version": body.anchor.version, "anchor": body.anchor.model_dump(mode="json"), "assist_id": body.adopt_assist_id,
+             "expected_feedback_revision": body.expected_feedback_revision,
+             "expected_collection_revision": body.expected_collection_revision})
 
     @router.get("/resurface")
     def resurface():
@@ -184,11 +196,16 @@ def register(app: FastAPI, ctx) -> None:
             return service.source(record_id)
 
     @router.patch("/{record_id}")
-    def patch(record_id: int, body: PatchIn):
-        return service.patch(record_id, body.model_dump(exclude_unset=True))
+    def patch(record_id: int, body: PatchIn, request: Request):
+        # Personal meaning edits are business data, never evidence payloads.
+        if body.adopt_assist_id is None:
+            return service.patch(record_id, body.model_dump(exclude_unset=True))
+        return observe(request, "adopt", lambda: service.patch(record_id, body.model_dump(exclude_unset=True)),
+            {"record_id": record_id, "assist_id": body.adopt_assist_id, "expected_revision": body.expected_revision})
 
     @router.delete("/{record_id}")
-    def delete(record_id: int, revision: int | None = Query(None, ge=1)):
-        return service.delete(record_id, revision)
+    def delete(record_id: int, request: Request, revision: int | None = Query(None, ge=1)):
+        return observe(request, "collection_remove", lambda: service.delete(record_id, revision),
+            {"record_id": record_id, "expected_revision": revision})
 
     app.include_router(router)

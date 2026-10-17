@@ -56,6 +56,7 @@ PLUGINS: tuple[PluginSpec, ...] = (
     PluginSpec("typography", "排版", "字号、行距、栏宽。"),
     PluginSpec("search", "文内搜索", "在当前篇里找词并跳转。"),
     PluginSpec("stats", "阅读统计", "累计阅读时长与篇数。", backend="stats"),
+    PluginSpec("evidence", "本机阅读证据", "首次明确开启后才采集；独立关闭、导出与清除。", backend="evidence"),
     PluginSpec("shortcuts", "快捷键", "键盘操作密度、沉浸、搜索。"),
 )
 

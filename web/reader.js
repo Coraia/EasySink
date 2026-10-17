@@ -187,7 +187,8 @@ export class Reader {
         this.restoring = false;
         // Explicit directory/note jumps are a new reading position, not merely
         // resuming the old one. Persist after the initial restore guard lifts.
-        if (selector || this.handoff) this.emit("position");
+        if (selector || this.handoff || this.resumePositionMapped) this.emit("position");
+        this.resumePositionMapped = false;
         this.handoff = null;
         $(".reader")?.setAttribute("data-ready", "true");
         $(".reader").dataset.readyMs = (
@@ -346,7 +347,8 @@ export class Reader {
     if (this.scope.signal.aborted) return;
     if (pdfBackground && (this.restoring || !this.pdfCanRefresh?.())) return false;
     const generation = ++this.generation;
-    const anchor = this.position();
+    let anchor = this.position();
+    let restoredPosition = false;
     this.restoring = true;
     try {
       const doc = nextDocument || await api(
@@ -356,7 +358,16 @@ export class Reader {
       if (this.scope.signal.aborted || generation !== this.generation) return;
       if (doc.id !== this.doc.id || (pdfBackground && !this.pdfCanRefresh?.())) return false;
       if (pdfBackground && doc.density !== this.doc.density) return false;
-      if (doc.pdf && anchor.pdf_source && !this.pdfAnchorBlock(anchor, doc)) return false;
+      if (pdfBackground && doc.pdf && anchor.pdf_source && doc.version !== this.doc.version) {
+        // A live position is not a stored quotation. Stamp only a proven mapping
+        // so leaving immediately after refresh cannot persist the old revision.
+        anchor = this.pdfTools?.normalizedPosition(anchor, doc) || anchor;
+      }
+      if (doc.pdf && anchor.pdf_source && !this.pdfAnchorBlock(anchor, doc)) {
+        const position = pdfBackground && this.pdfTools?.normalizedPosition(anchor, doc);
+        if (!position) return false;
+        anchor = position;
+      }
       if (pdfBackground && doc.version === this.doc.version && doc.density === this.doc.density) {
         this.doc.pdf = doc.pdf;
         this.doc.chapters = doc.chapters;
@@ -368,11 +379,15 @@ export class Reader {
       if (this.scope.signal.aborted || generation !== this.generation) return false;
       await this.restore(anchor, {automatic: true});
       if (this.scope.signal.aborted || generation !== this.generation) return false;
+      restoredPosition = pdfBackground;
       return true;
     } finally {
       if (generation === this.generation)
         requestAnimationFrame(() => {
-          if (!this.scope.signal.aborted && generation === this.generation) this.restoring = false;
+          if (!this.scope.signal.aborted && generation === this.generation) {
+            this.restoring = false;
+            if (restoredPosition) this.emit("position");
+          }
         });
     }
   }
@@ -408,10 +423,20 @@ export class Reader {
         (b.text.includes(anchor.quote) && b.text.indexOf(anchor.quote) === b.text.lastIndexOf(anchor.quote))));
     return matches.find(b => b.id === anchor.block_id) || (matches.length === 1 ? matches[0] : null);
   }
-  restore(anchor, {automatic = false, mark = true} = {}) {
-    if (automatic && this.handoff) return Promise.resolve(false);
+  async restore(anchor, {automatic = false, mark = true} = {}) {
+    if (automatic && this.handoff) return false;
+    let unprovenPosition = false;
+    if (automatic && this.doc.pdf && anchor?.pdf_source &&
+        anchor.version !== this.doc.version && anchor.kind !== "image") {
+      const position = await this.pdfTools?.retainedPosition(anchor);
+      if (position === false || this.scope.signal.aborted) return false;
+      if (position) {
+        anchor = position;
+        this.resumePositionMapped = true;
+      } else unprovenPosition = true;
+    }
     if (anchor?.segments?.length) anchor = { ...anchor, ...anchor.segments[0], segments: [] };
-    if (this.doc.pdf && anchor?.pdf_source && (anchor.pdf_historical || !this.pdfAnchorBlock(anchor))) {
+    if (this.doc.pdf && anchor?.pdf_source && (unprovenPosition || anchor.pdf_historical || !this.pdfAnchorBlock(anchor))) {
       if (automatic) {
         // OCR may replace regions while keeping the source page. Resume there
         // without treating an approximate position as a relocated quotation.

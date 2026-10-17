@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 
 from fastapi import HTTPException
 
@@ -177,6 +178,7 @@ def candidate_ids(store, source):
 
 def unique_quote(store, doc_id, saved, version, blocks):
     """Exact continuous quote, with saved edge context, in a verified origin only."""
+    from .pdf.text_normalization import intersects_change
     quote = saved["quote"]
     old = saved["anchor"]
     parts = old.get("segments") or [old]
@@ -195,6 +197,11 @@ def unique_quote(store, doc_id, saved, version, blocks):
             continue
         if suffix and not text[pos + len(quote):].startswith(suffix):
             continue
+        # Even matching context cannot transplant old semantics into a corrected
+        # OCR token. Keep the saved version/source instead of guessing a hit.
+        if any(intersects_change(block, pos - block["start"], pos + len(quote) - block["start"])
+               for block in blocks):
+            continue
         hits.append(pos)
         if len(hits) > 1:
             return None
@@ -208,8 +215,75 @@ def unique_quote(store, doc_id, saved, version, blocks):
     return snap if snap["quote"] == quote else None
 
 
+def normalized_snapshot(store, doc_id, saved, version, blocks):
+    """Map a single unchanged range using retained old text and explicit edits.
+
+    This produces a read-only return anchor, never modifies the saved snapshot or
+    copies its explanation/feedback to another version. Multi-block ranges retain
+    the existing conservative fallback rather than guessing across missing pages.
+    """
+    old_anchor = saved["anchor"]
+    if old_anchor.get("segments") or not exists(store, "wr_pdf_revision"):
+        return None
+    retained = store.query_one("SELECT blocks FROM wr_pdf_revision WHERE doc_id=? AND revision=?",
+                               (doc_id, old_anchor.get("version")))
+    if not retained:
+        return None
+    old_blocks = json.loads(retained["blocks"])
+    previous = [b for b in old_blocks if b["id"] == old_anchor.get("block_id")]
+    current = [b for b in blocks if b["id"] == old_anchor.get("block_id")]
+    if len(previous) != 1 or len(current) != 1:
+        return None
+    before, after = previous[0], current[0]
+    if not before.get("source", {}).get("source_sha256"):
+        return None
+    for key in ("source_sha256", "page_number", "bbox"):
+        if before.get("source", {}).get(key) != after.get("source", {}).get(key):
+            return None
+    start, end = index(before["text"], old_anchor["start"]), index(before["text"], old_anchor["end"])
+    if before["text"][start:end] != saved["quote"]:
+        return None
+    normalization = after.get("normalization")
+    if normalization is not None:
+        from .pdf.text_normalization import verified_mapping
+        if not verified_mapping(before, after):
+            return None
+        if any(start < hi and end > lo for lo, hi in (c["old_cp"] for c in normalization["changes"])):
+            return None
+        edits = normalization["edits"]
+        mapped_start = start - sum(e["old_cp"][1] - e["old_cp"][0] for e in edits if e["old_cp"][1] <= start)
+        mapped_end = end - sum(e["old_cp"][1] - e["old_cp"][0] for e in edits if e["old_cp"][1] <= end)
+    elif before["text"] == after["text"]:
+        mapped_start, mapped_end = start, end
+    else:
+        return None
+    if after["text"][mapped_start:mapped_end] != saved["quote"]:
+        return None
+    anchor = Anchor(version=version, block_id=after["id"], start=utf16(after["text"][:mapped_start]),
+                    end=utf16(after["text"][:mapped_end]), quote=saved["quote"])
+    return validate(store, doc_id, anchor)
+
+
 def resolve(store, saved, *, imported=False):
     source = saved["source_identity"]
+    if not imported and saved.get("doc_id") and not store.get_document(saved["doc_id"]):
+        try:
+            request = store.query_one(
+                "SELECT snapshot_id FROM wr_url_request WHERE doc_id=? AND state='committed' LIMIT 1",
+                (saved["doc_id"],)) if exists(store, "wr_url_request") else None
+            if request:
+                from .url_commit import URLCommitter
+                snapshot = store.query_one("SELECT * FROM wr_url_snapshot WHERE snapshot_id=?",
+                                           (request["snapshot_id"],))
+                if snapshot is None:
+                    raise ValueError("missing URL snapshot")
+                if (saved["doc_id"] in URLCommitter._removed_docs(snapshot)
+                        or (snapshot["availability"] == "deleted" and snapshot["doc_id"] is None)):
+                    # Local URL collections retain the removed document, not its replacement.
+                    return None
+                raise ValueError("unconfirmed URL removal")
+        except (sqlite3.Error, ValueError, KeyError, TypeError):
+            raise HTTPException(503, "暂时无法核对原文来源，请稍后重试") from None
     ids = candidate_ids(store, source) if imported or not saved.get("doc_id") else [saved["doc_id"]]
     matches = []
     for doc_id in ids:
@@ -230,7 +304,12 @@ def resolve(store, saved, *, imported=False):
                     snap = validate(store, doc_id, Anchor.model_validate(saved["anchor"]))
                 except (HTTPException, ValueError):
                     pass
-            if snap is None:
+            if snap is None and current["source_kind"] == "pdf":
+                snap = normalized_snapshot(store, doc_id, saved, version, blocks)
+            # On a normalized PDF, a failed retained-version proof is final.
+            # A quotation search must not bypass corrupt edits or a changed word.
+            if snap is None and not (current["source_kind"] == "pdf" and
+                                     any("normalization" in b for b in blocks)):
                 snap = unique_quote(store, doc_id, saved, version, blocks)
             if snap:
                 matches.append(snap)

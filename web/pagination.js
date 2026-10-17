@@ -148,7 +148,9 @@ export class ReadingPages {
   }
   adjacent(direction) {
     if (this.r.focus.isOpen() || this.animating || this.displayPending) return;
-    const target = this.index + direction * this.count;
+    const target = this.index > 0
+      ? Math.max(0, this.index + direction * this.count)
+      : this.index + direction * this.count;
     if (target < 0 || (this.complete && target >= this.pages.length)) {
       const next = this.neighbor(direction);
       if (next) {
@@ -402,13 +404,20 @@ export class ReadingPages {
     const b = this.blocks.get(fragment.id);
     const { start, end } = fragment;
     if (this.visualBlock(b)) {
+      const urlAsset = this.urlAsset(b);
+      const decoded = urlAsset ? this.urlImages?.get(urlAsset) : null;
       const box = b.source?.bbox;
-      const width = Math.max(1, b.width || (box && box[2] - box[0]) || 600);
-      const height = Math.max(1, b.height || (box && box[3] - box[1]) || 400);
+      const width = Math.max(1, decoded?.naturalWidth || b.width || (box && box[2] - box[0]) || 600);
+      const height = Math.max(1, decoded?.naturalHeight || b.height || (box && box[3] - box[1]) || 400);
       const available = Math.max(80, parseFloat(this.measure.style.width) || this.width - 64);
       const fitWidth = Math.min(available, width * 2);
       const scale = Math.min(1, Math.max(32, this.height - 100) / (fitWidth * height / width));
       const shownWidth = Math.round(fitWidth * scale), shownHeight = Math.round(shownWidth * height / width);
+      if (urlAsset) {
+        const figure = `<figure data-block="${e(b.id)}" data-start="0" data-end="0" class="url-image" style="margin:1.1em 0;max-width:100%"><img src="${e(urlAsset)}" alt="文章插图" width="${shownWidth}" height="${shownHeight}" style="display:block;margin-inline:auto;width:${shownWidth}px;height:${shownHeight}px;max-width:100%;object-fit:contain" draggable="false" decoding="async"></figure>`;
+        if (measure) return figure;
+        return `<section class="source-fragment url-image-fragment" data-fragment="${e(b.id)}" data-fragment-start="0" data-fragment-end="0"><div class="source-row"><span class="grammar-slot" aria-hidden="true"></span>${figure}</div></section>`;
+      }
       const caption = b.type === "image_fallback"
         ? `原图保留${b.source?.page_number ? ` · 来源第 ${b.source.page_number} 页` : ""}`
         : b.caption || "";
@@ -443,7 +452,46 @@ export class ReadingPages {
         : `<div class="paragraph-actions"><button data-read-block="${b.id}" type="button" ${this.r.ctx.enabled("tts") ? "" : "hidden"}>听这一段</button><button data-select-block="${b.id}" type="button">选择这一段</button></div>`;
     return `<section class="source-fragment" data-fragment="${b.id}" data-fragment-start="${start}" data-fragment-end="${end}"><div class="source-row"><span class="grammar-slot" data-grammar-slot="${b.id}"></span>${source}</div>${actions}<section class="inline-grammar" data-grammar-block="${b.id}" hidden></section></section>`;
   }
+  urlAsset(block) {
+    const doc = this.r.doc, snapshot = doc.source?.snapshot_id;
+    if (doc.pdf || !doc.source) return null;
+    if (block?.type !== "image") return null;
+    if (doc.availability !== "ready" || typeof snapshot !== "string" ||
+        !/^[a-f0-9]{64}$/.test(snapshot) || typeof block.asset_id !== "string" ||
+        !/^[A-Za-z0-9_-]{1,128}$/.test(block.asset_id))
+      throw new Error("文章图片引用无效，请重新核对资料。");
+    return `/api/import/url/snapshots/${snapshot}/assets/${block.asset_id}`;
+  }
+  async prepareUrlImages() {
+    this.urlImages ??= new Map();
+    for (const block of this.r.doc.blocks) {
+      const url = this.urlAsset(block);
+      if (!url || this.urlImages.has(url)) continue;
+      const image = new Image(), signal = this.r.scope.signal;
+      await new Promise((resolve, reject) => {
+        const finish = (error) => {
+          clearTimeout(timer);
+          signal.removeEventListener("abort", abort);
+          image.onload = image.onerror = null;
+          if (error) { image.removeAttribute("src"); reject(error); }
+          else resolve();
+        };
+        const abort = () => finish(new DOMException("Reading closed", "AbortError"));
+        const timer = setTimeout(() => finish(new Error("文章图片加载超时，请重新打开文章。")), 10000);
+        image.onload = () => image.decode().then(() => finish(), () => finish(new Error("文章图片无法解码。")));
+        image.onerror = () => finish(new Error("文章图片无法读取，请核对保留资料。"));
+        signal.addEventListener("abort", abort, {once: true});
+        if (signal.aborted) abort();
+        else image.src = url;
+      });
+      signal.throwIfAborted();
+      if (!image.naturalWidth || !image.naturalHeight) throw new Error("文章图片尺寸无效。");
+      this.urlImages.set(url, image);
+    }
+  }
   visualBlock(block) {
+    if (this.urlAsset(block)) return true;
+    if (this.r.doc.source && !this.r.doc.pdf) return false;
     if (!block || !["image", "image_fallback", "formula", "table"].includes(block.type) || !block.asset_url) return false;
     try {
       const url = new URL(block.asset_url, location.origin);
@@ -454,9 +502,13 @@ export class ReadingPages {
     this.waiters.splice(0).forEach((resolve) => resolve());
   }
   // Build exact pages cooperatively. The first completed page is usable immediately.
-  reflow(anchor = this.position()) {
-    if (this.r.scope.signal.aborted) return Promise.resolve();
+  async reflow(anchor = this.position()) {
+    if (this.r.scope.signal.aborted) return;
     const generation = ++this.generation;
+    if (this.r.doc.source && !this.r.doc.pdf) {
+      await this.prepareUrlImages();
+      if (this.r.scope.signal.aborted || generation !== this.generation) return;
+    }
     this.clearRanges();
     clearTimeout(this.timer);
     this.wake();
@@ -762,7 +814,9 @@ export class ReadingPages {
     const setup = this.painter.collectPerformance ? { enteredAt: performance.now(), inputEvents: [] } : null;
     if ((!force && !this.canGrab()) || this.animating || this.displayPending)
       return null;
-    const target = this.index + direction * this.count;
+    const target = this.index > 0
+      ? Math.max(0, this.index + direction * this.count)
+      : this.index + direction * this.count;
     const outside = target < 0 || target >= this.pages.length;
     const boundary = outside && this.complete ? this.rangeNeighbor(direction, true) : null;
     if (outside && !boundary) return null;

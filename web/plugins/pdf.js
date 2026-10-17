@@ -851,6 +851,82 @@ class PDFReading {
     }
     return this.outlineController.open();
   }
+  async retainedPosition(anchor) {
+    const doc = this.r.doc;
+    if (!safeToUpdate(this.r, this, true)) return false;
+    if (anchor.segments?.length || anchor.kind === "image") return null;
+    try {
+      // Send only position/source identity, never the historical quotation.
+      const {anchor: position} = await pdfApi(`/pdf/documents/${doc.id}/resume-position`, {
+        signal: this.scope.signal, method: "POST", body: {version: doc.version,
+          anchor: {version: anchor.version, block_id: anchor.block_id,
+            start: anchor.start, ratio: anchor.ratio, kind: anchor.kind,
+            pdf_source: anchor.pdf_source}},
+      });
+      if (this.r.doc !== doc || !safeToUpdate(this.r, this, true)) return false;
+      return position?.version === doc.version ? position : null;
+    } catch (error) {
+      if (error.name === "AbortError") throw error;
+      if (this.r.doc !== doc || !safeToUpdate(this.r, this, true)) return false;
+      return null; // Missing/unprovable revision keeps the original-page fallback.
+    }
+  }
+  normalizedPosition(anchor, doc) {
+    // Only the live reading position, never a saved quotation or meaning.
+    // Reconstruct the exact new text from retained old UTF-16 deletion ranges.
+    const old = this.r.doc;
+    if (!safeToUpdate(this.r, this, true) || anchor.version !== old.version ||
+        anchor.segments?.length || anchor.kind === "image" ||
+        !old.pdf?.source_sha256 || old.pdf.source_sha256 !== doc.pdf?.source_sha256 ||
+        old.pdf.book_id !== doc.pdf?.book_id) return null;
+    const before = old.blocks.filter(b => b.id === anchor.block_id);
+    const after = doc.blocks.filter(b => b.id === anchor.block_id);
+    if (before.length !== 1 || after.length !== 1) return null;
+    const a = before[0], b = after[0], map = b.normalization;
+    const box = value => Array.isArray(value) && value.length === 4 &&
+      value.every(Number.isFinite) && value[0] < value[2] && value[1] < value[3];
+    const boundary = (text, offset) => !(offset > 0 && offset < text.length &&
+      /[\uD800-\uDBFF]/.test(text[offset - 1]) && /[\uDC00-\uDFFF]/.test(text[offset]));
+    if (!box(a.source?.bbox) || !box(b.source?.bbox) ||
+        !Number.isInteger(a.source?.page_number) || a.source.page_number < 1 ||
+        anchor.pdf_source?.source_sha256 !== a.source.source_sha256 ||
+        anchor.pdf_source?.page_number !== a.source.page_number ||
+        anchor.pdf_source?.book_id !== old.pdf.book_id ||
+        JSON.stringify(anchor.pdf_source?.bbox) !== JSON.stringify(a.source.bbox) ||
+        a.source.source_sha256 !== old.pdf.source_sha256 ||
+        b.source.source_sha256 !== old.pdf.source_sha256 ||
+        a.source.page_number !== b.source.page_number ||
+        JSON.stringify(a.source.bbox) !== JSON.stringify(b.source.bbox) ||
+        !Number.isInteger(anchor.start) || anchor.start < 0 || anchor.start > a.text.length ||
+        !boundary(a.text, anchor.start)) return null;
+    if (a.text === b.text) return {version: doc.version, block_id: b.id,
+      start: anchor.start, end: anchor.start, kind: "text", quote: "",
+      ratio: anchor.ratio, pdf_source: {...b.source, revision: doc.version}};
+    if (!map || map.version !== "pdf-line-wrap-v1" ||
+        !Array.isArray(map.edits) || !map.edits.length ||
+        a.source?.source_sha256 !== old.pdf.source_sha256 ||
+        b.source?.source_sha256 !== old.pdf.source_sha256 ||
+        a.source.page_number !== b.source.page_number ||
+        JSON.stringify(a.source.bbox) !== JSON.stringify(b.source.bbox) ||
+        a.text.length !== map.old_length_utf16 || b.text.length !== map.new_length_utf16 ||
+        !Number.isInteger(anchor.start) || anchor.start < 0 || anchor.start > a.text.length) return null;
+    let cursor = 0, text = "", removed = 0, start = anchor.start;
+    for (const edit of map.edits) {
+      const [lo, hi] = edit.old_utf16 || [];
+      if (!Number.isInteger(lo) || !Number.isInteger(hi) || lo < cursor || hi !== lo + 2 ||
+          hi > a.text.length || a.text.slice(lo, hi) !== "- ") return null;
+      text += a.text.slice(cursor, lo);
+      cursor = hi;
+      if (anchor.start >= hi) removed += hi - lo;
+      else if (anchor.start > lo) start = lo;
+    }
+    text += a.text.slice(cursor);
+    if (text !== b.text) return null;
+    start -= removed;
+    // No quote is asserted for a position inside a changed token.
+    return {version: doc.version, block_id: b.id, start, end: start,
+      kind: "text", quote: "", ratio: anchor.ratio, pdf_source: {...b.source, revision: doc.version}};
+  }
   schedule(ms = 1800) {
     clearTimeout(this.timer);
     if (!this.scope.signal.aborted)

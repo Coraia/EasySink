@@ -19,6 +19,19 @@ export const readerIcon = (id) =>
 export function readerShell(d, progressEnabled) {
   const sourceRange = d.pdf ? `来源 PDF 第 ${d.pdf.start_page}–${d.pdf.end_page} 页` : "";
   const caption = d.pdf ? `阅读版 · ${sourceRange}` : d.title;
+  let source = "";
+  if (!d.pdf && d.availability === "ready" && d.source) {
+    const value = d.source.final_url;
+    try {
+      const url = new URL(value);
+      if (typeof value === "string" && ["https:", "http:"].includes(url.protocol) &&
+          !url.username && !url.password && !/[\u0000-\u0020\u007f\\]/.test(value)) {
+        const details = [["作者", d.source.author], ["发布", d.source.published_at], ["抓取", d.source.fetched_at]]
+          .filter(([, v]) => typeof v === "string" && v.length).map(([label, v]) => `${label}：${e(v)}`).join(" · ");
+        source = `<span class="reading-url-source" style="display:block;white-space:normal;overflow-wrap:anywhere">来源：<a href="${e(value)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">${e(value)}</a>${details ? `<span style="display:block">${details}</span>` : ""}</span>`;
+      }
+    } catch { /* Invalid source metadata must never become a navigation target. */ }
+  }
   return `<div class="reader paged-reader" data-document-id="${d.id}" data-chrome="closed">
     <button id="show-tools" class="reader-top-zone" aria-label="显示阅读工具" aria-expanded="false"></button>
     <div id="reader-chrome" hidden>
@@ -32,7 +45,7 @@ export function readerShell(d, progressEnabled) {
       <button id="reading-edge-prev" class="reading-edge-grip" aria-label="抓住左侧纸页" title="按住向右拖动 · 上一页"></button><button id="reading-edge-next" class="reading-edge-grip" aria-label="抓住右侧纸页" title="按住向左拖动 · 下一页"></button>
       <div id="page-curl-layer" aria-hidden="true" hidden></div>
       <div id="reading-selection" class="reading-selection" hidden></div>
-      <div class="reader-page-caption" aria-live="off"><span class="caption-title" ${d.pdf ? 'data-pdf-reading-edition title="当前为可重排阅读版；来源页码用于核对 PDF 原件"' : ""}>${e(caption)}</span><span id="reading-page-total"></span></div>
+      <div class="reader-page-caption" aria-live="off"><span class="caption-title" ${d.pdf ? 'data-pdf-reading-edition title="当前为可重排阅读版；来源页码用于核对 PDF 原件"' : ""}>${e(caption)}${source}</span><span id="reading-page-total"></span></div>
     </section>
     <button id="panel-dismiss" class="panel-backdrop" aria-label="关闭阅读面板" hidden></button>
     <aside class="tool-panel" id="tool-panel" hidden></aside>

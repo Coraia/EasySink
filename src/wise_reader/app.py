@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
+from anyio import CancelScope
+from starlette.concurrency import run_in_threadpool
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,10 +20,13 @@ from wise_reader.l1 import NullLLM, OpenAICompatLLM
 from wise_reader.lexicon import Lexicon
 from wise_reader.native_input import register as register_native_input
 from wise_reader.plugins import PluginContext, mount_plugins
+from wise_reader.plugins.importer import start_url_import
 from wise_reader.profile import DOMAINS, EXAM_VOCAB
 from wise_reader.reading_assist import close_assistance, register as register_reading_assist
 from wise_reader.settings import ROOT, Settings
 from wise_reader.store import Store, _now
+from wise_reader.url_commit import URLCommitter
+from wise_reader.url_transport import ImportFailure
 from wise_reader.vocab_test import VocabTester, question_payload
 
 WEB = ROOT / "web"
@@ -90,17 +96,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        jobs.start()
         pdf = getattr(_app.state, "pdf", None)
-        if pdf is not None:
-            await pdf.start()
-        yield
-        if pdf is not None:
-            await pdf.close()
-        await close_assistance(_app)
-        jobs.close()
-        lexicon.close()
-        store.close()
+        errors = []
+        try:
+            start_url_import(_app, store)
+            jobs.start()
+            if pdf is not None:
+                await pdf.start()
+            yield
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            with CancelScope(shield=True):
+                committer = getattr(_app.state, "url_committer", None)
+                if committer is not None:
+                    try:
+                        await run_in_threadpool(committer.shutdown)
+                    except BaseException as exc:
+                        # An unconfirmed drain cannot authorize closing its dependencies.
+                        raise BaseExceptionGroup("Application URL shutdown failed", [*errors, exc]) from None
+                if pdf is not None:
+                    try:
+                        await pdf.close()
+                    except BaseException as exc:
+                        errors.append(exc)
+                try:
+                    await close_assistance(_app)
+                except BaseException as exc:
+                    errors.append(exc)
+                for close in (jobs.close, lexicon.close, store.close):
+                    try:
+                        close()
+                    except BaseException as exc:
+                        errors.append(exc)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("Application lifecycle failed", errors)
 
     app = FastAPI(title="Wise Reader", lifespan=lifespan)
     app.state.engine = engine
@@ -196,7 +228,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/documents")
     def list_documents():
         archived = {r["doc_id"] for r in store.query("SELECT doc_id FROM wr_archive")}
-        return [{**r, "archived": r["id"] in archived} for r in store.list_documents()]
+        result = []
+        committer = getattr(app.state, "url_committer", None)
+        for row in store.list_documents():
+            with URLCommitter.document_access(store, row['id'], committer) as info:
+                result.append({**row, 'archived': row['id'] in archived, **(info or {})})
+        return result
 
     @app.get("/api/documents/{doc_id}")
     def get_document(
@@ -206,24 +243,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         profile = store.get_profile()
         try:
-            result = engine.present(doc_id, profile, density=density, compact=compact)
-            pdf = getattr(app.state, "pdf", None)
-            if pdf is not None:
-                metadata = pdf.document_metadata(doc_id)
-                if metadata is not None:
-                    result["pdf"] = metadata
-            # Engine output and PDF metadata are already JSON values. Avoid a
-            # second recursive conversion of every block in a long chapter.
-            return JSONResponse(result)
+            with URLCommitter.document_access(store, doc_id, getattr(app.state, 'url_committer', None)) as info:
+                if info is not None and info['availability'] != 'ready':
+                    state = info['availability']
+                    code = {'source_removed': 410, 'unavailable': 409}.get(state, 503)
+                    return JSONResponse(info, status_code=code, headers={'Cache-Control': 'private, no-store'})
+                result = engine.present(doc_id, profile, density=density, compact=compact)
+                if info is not None:
+                    result.update(info)
+                pdf = getattr(app.state, "pdf", None)
+                if pdf is not None:
+                    metadata = pdf.document_metadata(doc_id)
+                    if metadata is not None:
+                        result["pdf"] = metadata
+                return JSONResponse(result, headers={'Cache-Control': 'private, no-store'} if info else None)
         except KeyError:
             raise HTTPException(404, "not found")
+        except ImportFailure:
+            raise HTTPException(503, 'URL document state unknown')
 
     @app.delete("/api/documents/{doc_id}")
     def delete_document(doc_id: int):
         pdf = getattr(app.state, "pdf", None)
         if pdf is not None and pdf.document_metadata(doc_id) is not None:
             raise HTTPException(409, "PDF 阅读范围属于原书，请从书架回收整本书；原件与记录会保留。")
-        store.delete_document(doc_id)
+        committer = getattr(app.state, 'url_committer', None)
+        try:
+            with URLCommitter.document_access(store, doc_id, committer) as info:
+                if info is None:
+                    store.delete_document(doc_id)
+                elif info['availability'] == 'source_removed':
+                    return {'ok': True}
+                elif committer is None or info['availability'] == 'unknown':
+                    raise HTTPException(503, 'URL document state unknown')
+                elif committer.delete_document(doc_id) != 'source_removed':
+                    raise HTTPException(503, 'URL deletion unconfirmed')
+        except (ImportFailure, sqlite3.Error, OSError):
+            raise HTTPException(503, 'Document deletion unconfirmed')
         return {"ok": True}
 
     @app.post("/api/documents/{doc_id}/finish")

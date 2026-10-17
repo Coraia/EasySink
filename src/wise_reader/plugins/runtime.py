@@ -53,7 +53,7 @@ def plugin_payload(store: Store) -> list[dict]:
                 "backend": spec.backend is not None,
                 "requires": ["content-v2", "route-scope"],
                 "data_policy": "关闭停止 PDF 后续处理，保留原件、阅读版与记录" if spec.id == "pdf" else "关闭仅隐藏入口，保留数据",
-                "always_readable": spec.id == "pdf",
+                "always_readable": spec.id in ("pdf", "evidence"),
             }
         )
     return out
@@ -65,10 +65,18 @@ def mount_plugins(app: FastAPI, ctx: PluginContext) -> None:
         if not spec.backend:
             continue
         mod = importlib.import_module(f"wise_reader.plugins.{spec.backend}")
-        if hasattr(mod, "migrate"):
-            mod.migrate(ctx.store)
-        if hasattr(mod, "register"):
-            mod.register(app, ctx)
+        try:
+            if hasattr(mod, "migrate"):
+                mod.migrate(ctx.store)
+            if hasattr(mod, "register"):
+                mod.register(app, ctx)
+        except Exception:
+            if spec.id != "evidence":
+                raise
+            # Optional capture must not make an otherwise readable library fail
+            # to start (e.g. evidence migration hits a storage limit).
+            import logging
+            logging.getLogger(__name__).exception("Local evidence unavailable; reading remains available")
 
     @app.get("/api/plugins")
     def list_plugins():
@@ -78,6 +86,10 @@ def mount_plugins(app: FastAPI, ctx: PluginContext) -> None:
     async def patch_plugin(plugin_id: str, body: PluginPatch):
         if plugin_id not in BY_ID:
             raise HTTPException(404, "unknown plugin")
+        if plugin_id == "evidence" and not body.enabled:
+            evidence = app.state.evidence
+            state = await run_in_threadpool(evidence.status)
+            await run_in_threadpool(evidence.control, "disable", state["epoch"])
         await run_in_threadpool(ctx.store.set_plugin_enabled, plugin_id, body.enabled)
         if plugin_id == "pdf" and hasattr(app.state, "pdf"):
             await app.state.pdf.set_processing_enabled(body.enabled)

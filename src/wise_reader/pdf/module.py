@@ -16,6 +16,7 @@ from wise_reader.pdf_lab.worker import LocalWorkers
 from wise_reader.store import _now
 
 from .representation import build_representation
+from .text_normalization import intersects_change
 from .formulas import FormulaService
 from .enhancements import EnhancementService
 from .enhancement_publication import prepare_page as prepare_enhancement_page
@@ -243,6 +244,29 @@ class PDFModule:
             return None
         mapping, source = self.source_book(scope["book_id"])
         return self.metadata(mapping, source, scope)
+
+    def resume_position(self, doc_id, anchor, version):
+        """Read-only cold resume proof; never updates semantic saved references."""
+        from .text_normalization import reading_position
+        scope = self.store.query_one("SELECT * FROM wr_pdf_range WHERE doc_id=?", (doc_id,))
+        current = self.store.query_one("SELECT version,blocks FROM wr_content WHERE doc_id=?", (doc_id,))
+        if not scope or not current or current['version'] != version:
+            return None
+        if not isinstance(anchor.get('version'), str):
+            return None
+        retained = self.store.query_one("SELECT blocks FROM wr_pdf_revision WHERE doc_id=? AND revision=?",
+                                        (doc_id, anchor.get('version')))
+        if not retained:
+            return None
+        mapping, source = self.source_book(scope['book_id'])
+        if mapping['lifecycle'] != 'active':
+            return None
+        try:
+            return reading_position(anchor, json.loads(retained['blocks']),
+                                    json.loads(current['blocks']), version,
+                                    scope['book_id'], source['file_sha256'])
+        except (ValueError, TypeError):
+            return None
 
     def prepare_document(self, doc_id):
         # Background publication prepared lexical analysis before the short commit.
@@ -502,6 +526,10 @@ class PDFModule:
             else:
                 candidates = [b for b in candidates if b["type"] not in {"image", "image_fallback"}]
                 reliable = bool(quote and sum(b["text"].count(quote) for b in candidates) == 1)
+                if reliable:
+                    candidate = next(b for b in candidates if quote in b["text"])
+                    start = candidate["text"].index(quote)
+                    reliable = not intersects_change(candidate, start, start + len(quote))
             states.append((record["owner"], record["owner_id"], record["doc_id"], revision,
                            "mapped" if reliable else "uncertain"))
         return states

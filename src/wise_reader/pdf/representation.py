@@ -4,6 +4,8 @@ import hashlib
 import json
 import math
 
+from .text_normalization import normalize_block
+
 OBJECT = "\ufffc"
 
 
@@ -45,13 +47,14 @@ def build_representation(pages, book_id, source_sha256):
         if page.get("quality_state") == "rejected":
             continue
         for original in page["blocks"]:
+            normalization = None
             asset = original.get("asset_url")
             kind = original["type"]
             if asset:
                 kind = "image_fallback" if kind == "image_fallback" else "image"
                 value = OBJECT
             else:
-                value = original.get("text", "").strip()
+                value, normalization = normalize_block(original)
                 if not value:
                     continue
                 kind = {"list": "list-item", "table": "table-row"}.get(kind, kind)
@@ -66,6 +69,8 @@ def build_representation(pages, book_id, source_sha256):
             block = {"id": f"pdf-{original['id']}", "type": kind, "text": value,
                      "start": position, "end": position + len(value), "source": source,
                      "source_page": page["page_number"], "quality_state": page.get("quality_state", "candidate")}
+            if normalization:
+                block["normalization"] = normalization
             if original.get("formula_id"):
                 block["formula_id"] = original["formula_id"]
                 block["source_type"] = "formula"
