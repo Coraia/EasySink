@@ -368,14 +368,23 @@ def _url_response(receipt, store, library_id=None):
         value.update(doc_id=receipt.doc_id, snapshot_id=receipt.snapshot_id, reused=receipt.reused,
                      source=source, notice='已保留已有文章和阅读记录。' if receipt.reused else '已独立保存；旧文章和记录保留。')
     elif state != 'running':
+        messages = {
+            'redirect_host_changed': '页面跳转到了另一个网站；请粘贴最终地址并重新确认。',
+            'unsupported_html': '该地址没有返回可读取的 HTML 文章。',
+            'ambiguous_article': '该页面没有可明确识别的单篇正文。',
+            'empty_article': '该页面没有可读取的正文。',
+            'unsupported_content': '该地址返回的内容类型暂不支持。',
+        }
         value.update(code=receipt.error_code or state, stage='status', retryable=state in ('failed', 'interrupted'),
-                     message='结果待核对，请保留请求编号。' if state == 'unknown' else '请按请求状态处理；未返回可导航文章。')
+                     message=('结果待核对，请保留请求编号。' if state == 'unknown' else
+                              messages.get(receipt.error_code, '导入失败；未保存可阅读文章。')))
     return JSONResponse(value, status_code=codes.get(state, 503), headers={'Cache-Control': 'no-store'})
 
 
 def _register_url_routes(app: FastAPI, ctx: PluginContext):
     from wise_reader.url_commit import Execution, Receipt
     from wise_reader.url_import import URLPreparer
+    from wise_reader.url_sources import source_policy
     from wise_reader.url_transport import Control, ImportFailure, normalize_url
 
     def current_owner():
@@ -394,7 +403,7 @@ def _register_url_routes(app: FastAPI, ctx: PluginContext):
                                 headers={'Cache-Control': 'no-store'})
         return JSONResponse({'library_id': library_id}, headers={'Cache-Control': 'no-store'})
 
-    def invoke(request_id, action, expected_library, url: str = ''):
+    def invoke(request_id, action, expected_library, url: str = '', user_approved: bool = False):
         try:
             owner, library_id = current_owner()
         except Exception:
@@ -407,6 +416,8 @@ def _register_url_routes(app: FastAPI, ctx: PluginContext):
             if action == 'submit':
                 if not ctx.store.is_plugin_enabled(PLUGIN_ID):
                     raise HTTPException(404, 'plugin importer is off')
+                if not source_policy(url)['builtin'] and not user_approved:
+                    raise HTTPException(403, 'This website requires explicit user approval')
                 control = Control()
                 begun = owner.begin(request_id, url, control)
                 if begun.attempt is None:
@@ -443,14 +454,29 @@ def _register_url_routes(app: FastAPI, ctx: PluginContext):
     @app.post('/api/import/url', dependencies=[Depends(require_plugin(PLUGIN_ID))])
     async def submit_url(request: Request):
         body = await _url_json(request)
-        if set(body) != {'request_id', 'url'} or not isinstance(body['url'], str) or not 1 <= len(body['url']) <= 4096:
-            raise HTTPException(422, 'Expected only request_id and bounded url')
+        if (set(body) not in ({'request_id', 'url'}, {'request_id', 'url', 'user_approved'})
+                or not isinstance(body['url'], str) or not 1 <= len(body['url']) <= 4096
+                or not isinstance(body.get('user_approved', False), bool)):
+            raise HTTPException(422, 'Expected request_id, bounded url, and optional user approval')
         request_id = _url_request_id(body['request_id'])
         try:
             normalize_url(body['url'])
         except ImportFailure as exc:
             raise HTTPException(422, exc.code) from None
-        return await run_in_threadpool(invoke, request_id, 'submit', _url_expected_library(request), body['url'])
+        return await run_in_threadpool(
+            invoke, request_id, 'submit', _url_expected_library(request),
+            body['url'], body.get('user_approved', False))
+
+    @app.post('/api/import/url/policy', dependencies=[Depends(require_plugin(PLUGIN_ID))])
+    async def url_policy(request: Request):
+        body = await _url_json(request)
+        if set(body) != {'url'} or not isinstance(body['url'], str) or not 1 <= len(body['url']) <= 4096:
+            raise HTTPException(422, 'Expected one bounded url')
+        try:
+            value = source_policy(body['url'])
+        except ImportFailure as exc:
+            raise HTTPException(422, exc.code) from None
+        return JSONResponse(value, headers={'Cache-Control': 'no-store'})
 
     @app.get('/api/import/url/requests/{request_id}')
     async def url_status(request: Request, request_id: str):

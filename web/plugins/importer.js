@@ -10,6 +10,22 @@ function readingDocument(id) {
 const urlUUID = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 const urlTerminal = new Set(["committed", "cancelled", "failed", "interrupted", "source_removed", "unavailable"]);
 const urlStates = new Set([...urlTerminal, "unknown", "running", "not_found", "prepared"]);
+const allowedHostsKey = "wr2:url-allowed-hosts:v1";
+
+function allowedHosts() {
+  const raw = localStorage.getItem(allowedHostsKey);
+  if (raw === null) return [];
+  const value = JSON.parse(raw);
+  if (!Array.isArray(value) || value.some(host => typeof host !== "string" || !host || host.length > 253 || host !== host.toLowerCase()))
+    throw new Error("个人允许网站记录损坏");
+  return [...new Set(value)].sort();
+}
+
+function saveAllowedHosts(hosts) {
+  const value = JSON.stringify([...new Set(hosts)].sort());
+  localStorage.setItem(allowedHostsKey, value);
+  if (localStorage.getItem(allowedHostsKey) !== value) throw new Error("个人允许网站无法可靠保存");
+}
 
 function urlDialog(ctx, dialog, scope, current) {
   const input = $("#url-import-input", dialog);
@@ -20,7 +36,15 @@ function urlDialog(ctx, dialog, scope, current) {
   const open = $("#url-import-open", dialog);
   const history = $("#url-import-history", dialog);
   const status = $("#url-import-state", dialog);
+  const consentPanel = $("#url-import-consent", dialog);
+  const consentHost = $("#url-import-consent-host", dialog);
+  const allowOnce = $("#url-import-allow-once", dialog);
+  const allowAlways = $("#url-import-allow-always", dialog);
+  const decline = $("#url-import-decline", dialog);
+  const allowedList = $("#url-import-allowed-hosts", dialog);
+  const removeAllowed = $("#url-import-remove-host", dialog);
   let library = null, intent = null, pending = 0, failure = "", lastError = "", receipt = null;
+  let consent = null;
   const durable = new Set();
   let selectionRequired = false;
   const activeKey = () => `wr2:url-intent-active:${library}`;
@@ -46,7 +70,10 @@ function urlDialog(ctx, dialog, scope, current) {
       if (!name?.startsWith(prefix)) continue;
       const value = JSON.parse(localStorage.getItem(name));
       if (!value || value.library_id !== library || !urlUUID(value.request_id) || key(value) !== name ||
-          typeof value.url !== "string" || !value.url || value.url.length > 4096 || !urlStates.has(value.state))
+          typeof value.url !== "string" || !value.url || value.url.length > 4096 || !urlStates.has(value.state) ||
+          (value.user_approved !== undefined && typeof value.user_approved !== "boolean") ||
+          (value.allow_after_success !== undefined && typeof value.allow_after_success !== "boolean") ||
+          (value.approved_host !== undefined && (typeof value.approved_host !== "string" || !value.approved_host)))
         throw new Error("已保存的 URL 请求损坏；保留原记录，暂停导入");
       result.push(value);
       durable.add(value.request_id);
@@ -56,24 +83,29 @@ function urlDialog(ctx, dialog, scope, current) {
   const render = () => {
     if (!current()) return;
     const state = intent?.state;
-    input.disabled = !library || !!failure || selectionRequired || !!intent;
-    submit.disabled = !library || !!failure || selectionRequired || pending || (!!intent && !["prepared", "not_found"].includes(state));
+    input.disabled = !library || !!failure || selectionRequired || !!intent || !!consent;
+    submit.disabled = !library || !!failure || selectionRequired || pending || !!consent || (!!intent && !["prepared", "not_found"].includes(state));
     submit.textContent = state === "not_found" ? "同编号重新提交" : "导入 URL";
     check.disabled = !library || !!failure || !intent || pending;
     cancel.disabled = !library || !intent || !durable.has(intent.request_id) || urlTerminal.has(state);
     fresh.disabled = !library || !!failure || pending || (!!intent && !urlTerminal.has(state));
     open.disabled = !!failure || pending || state !== "committed" || !readingDocument(receipt?.doc_id);
     history.disabled = !!failure || pending;
+    consentPanel.hidden = !consent;
+    consentHost.textContent = consent?.host || "";
+    allowOnce.disabled = allowAlways.disabled = decline.disabled = !consent || pending || !!failure;
+    removeAllowed.disabled = !allowedList.value || pending || !!failure;
     const messages = {
       prepared: "请求编号已保存，尚未发送。", running: "正在导入；可核对状态或请求取消。",
       unknown: "结果待核对。保留原编号，仅查询，不自动重抓。",
       not_found: "当前未查到结果，不代表从未提交。可手动用同一编号重发，或请求取消。",
       committed: receipt?.reused ? "已复用原文章，已有阅读记录保留。" : "已独立保存，旧文章和记录保留。",
-      cancelled: "取消已确认，未返回可阅读文章。", failed: "导入失败；原记录保留，可明确开始新请求。",
+      cancelled: "取消已确认，未返回可阅读文章。", failed: receipt?.message || "导入失败；原记录保留，可明确开始新请求。",
       interrupted: "上次导入已中断，可明确开始新请求。", source_removed: "原文章已删除，不会自动复活。",
       unavailable: "原资料损坏或不可用，不会自动重抓或导航。",
     };
-    status.textContent = failure || (library ? `${lastError ? lastError + "。" : ""}${messages[state] || "同一快照复用原文章；内容变化则另存，旧记录保留。"}${intent ? ` 请求编号：${intent.request_id}` : ""}` : "正在核对资料库身份…");
+    const prompt = consent ? `网站 ${consent.host} 不在内置或个人允许列表，请选择本次许可。` : "";
+    status.textContent = failure || (library ? `${lastError ? lastError + "。" : ""}${prompt || messages[state] || "同一快照复用原文章；内容变化则另存，旧记录保留。"}${intent ? ` 请求编号：${intent.request_id}` : ""}` : "正在核对资料库身份…");
   };
   const failStorage = (error) => { failure = `${error.message}；未启动新的 URL 导入。已有编号保留，请勿清除存储。`; render(); };
   const list = () => {
@@ -83,6 +115,21 @@ function urlDialog(ctx, dialog, scope, current) {
     history.value = intent?.request_id || "";
     return saved;
   };
+  const listAllowed = () => {
+    const hosts = allowedHosts();
+    allowedList.innerHTML = '<option value="">选择个人允许的网站</option>' +
+      hosts.map(host => `<option value="${e(host)}">${e(host)}</option>`).join("");
+    removeAllowed.disabled = true;
+    return hosts;
+  };
+  const inspect = async (url) => {
+    const response = await fetch("/api/import/url/policy", { method: "POST", credentials: "same-origin", cache: "no-store",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }), signal: scope.signal });
+    const value = await response.json();
+    if (!response.ok || typeof value.url !== "string" || typeof value.host !== "string" || typeof value.builtin !== "boolean")
+      throw new Error("网址无法识别，请检查后重试");
+    return value;
+  };
   const request = async (record, action, keepalive = false) => {
     const path = action === "submit" ? "/api/import/url" :
       `/api/import/url/requests/${record.request_id}${action === "cancel" ? "/cancel" : ""}`;
@@ -90,7 +137,9 @@ function urlDialog(ctx, dialog, scope, current) {
       headers: { "X-WR-Library-ID": record.library_id }, keepalive };
     if (action !== "status") {
       options.headers["Content-Type"] = "application/json";
-      options.body = JSON.stringify(action === "submit" ? { request_id: record.request_id, url: record.url } : {});
+      options.body = JSON.stringify(action === "submit" ? {
+        request_id: record.request_id, url: record.url, user_approved: record.user_approved === true,
+      } : {});
     }
     const response = await fetch(path, options);
     const value = await response.json();
@@ -112,6 +161,15 @@ function urlDialog(ctx, dialog, scope, current) {
       const value = await request(record, action, keepalive);
       // A late running reply cannot erase a cancellation/commit already observed.
       if (!urlTerminal.has(record.state) || urlTerminal.has(value.state)) record.state = value.state;
+      if (value.state === "committed" && record.allow_after_success && record.approved_host) {
+        try {
+          saveAllowedHosts([...allowedHosts(), record.approved_host]);
+          record.allow_after_success = false;
+          listAllowed();
+        } catch (error) {
+          lastError = `文章已导入，但个人允许网站未保存：${error.message}`;
+        }
+      }
       persist(record);
       if (intent === record) receipt = value;
       if (current()) list();
@@ -126,19 +184,8 @@ function urlDialog(ctx, dialog, scope, current) {
       render();
     }
   };
-  scope.on(submit, "click", async () => {
-    if (submit.disabled) return;
+  const sendIntent = async () => {
     try {
-      if (!intent) {
-        const url = input.value.trim();
-        if (!url || url.length > 4096 || !/^https?:\/\//i.test(url)) {
-          status.textContent = "请输入一个公开 HTTP(S) 网页 URL。"; return;
-        }
-        const created = { library_id: library, request_id: crypto.randomUUID(), url, state: "prepared" };
-        persist(created);
-        select(created);
-        intent = created;
-      }
       persist(intent);
       list();
     } catch (error) { failStorage(error); return; }
@@ -146,13 +193,73 @@ function urlDialog(ctx, dialog, scope, current) {
     intent.state = "unknown";
     try { persist(intent); } catch (error) { failStorage(error); return; }
     await reconcile("submit");
+  };
+  const startURL = async (policy, remember) => {
+    try {
+      const created = { library_id: library, request_id: crypto.randomUUID(), url: policy.url, state: "prepared",
+        user_approved: !policy.builtin, allow_after_success: remember, ...(remember ? { approved_host: policy.host } : {}) };
+      persist(created);
+      select(created);
+      intent = created;
+      input.value = policy.url;
+    } catch (error) { failStorage(error); return; }
+    await sendIntent();
+  };
+  scope.on(submit, "click", async () => {
+    if (submit.disabled) return;
+    if (intent) { await sendIntent(); return; }
+    const url = input.value.trim();
+    if (!url || url.length > 4096 || !/^https?:\/\//i.test(url)) {
+      status.textContent = "请输入一个公开 HTTP(S) 网页 URL。"; return;
+    }
+    pending++;
+    lastError = "";
+    render();
+    let approved = null;
+    try {
+      const policy = await inspect(url);
+      const personal = allowedHosts().includes(policy.host);
+      if (policy.builtin || personal) {
+        approved = policy;
+      } else {
+        consent = policy;
+      }
+    } catch (error) {
+      lastError = error.name === "AbortError" ? "网址核对已取消" : error.message;
+    } finally {
+      pending--;
+      render();
+    }
+    if (approved) await startURL(approved, false);
+  });
+  scope.on(allowOnce, "click", async () => {
+    if (!consent || allowOnce.disabled) return;
+    const policy = consent; consent = null; render(); await startURL(policy, false);
+  });
+  scope.on(allowAlways, "click", async () => {
+    if (!consent || allowAlways.disabled) return;
+    const policy = consent; consent = null; render(); await startURL(policy, true);
+  });
+  scope.on(decline, "click", () => {
+    if (decline.disabled) return;
+    consent = null; lastError = "已取消导入，未访问该网站"; render();
   });
   scope.on(check, "click", () => { if (!check.disabled) void reconcile("status"); });
   scope.on(cancel, "click", () => { if (!cancel.disabled) void reconcile("cancel"); });
   scope.on(fresh, "click", () => {
     if (fresh.disabled) return;
     try { select(null); } catch (error) { failStorage(error); return; }
-    intent = null; receipt = null; lastError = ""; input.value = ""; history.value = ""; render();
+    intent = null; receipt = null; consent = null; lastError = ""; input.value = ""; history.value = ""; render();
+  });
+  scope.on(allowedList, "change", render);
+  scope.on(removeAllowed, "click", () => {
+    if (removeAllowed.disabled) return;
+    try {
+      saveAllowedHosts(allowedHosts().filter(host => host !== allowedList.value));
+      listAllowed();
+      lastError = "已移除个人允许网站";
+    } catch (error) { lastError = error.message; }
+    render();
   });
   scope.on(history, "change", () => {
     if (history.disabled) return;
@@ -177,6 +284,7 @@ function urlDialog(ctx, dialog, scope, current) {
       if (!response.ok || !urlUUID(value.library_id)) throw new Error("资料库身份不可用");
       if (!current()) return;
       library = value.library_id;
+      listAllowed();
       const saved = list();
       const active = localStorage.getItem(activeKey());
       if (active === null) {
@@ -208,7 +316,7 @@ export function install(ctx) {
     let closeURL = () => {};
     scope.on(dialog, "close", () => { closeURL(); scope.dispose(); });
     $("#import-extension", dialog).innerHTML =
-      '<section aria-label="网页导入"><label>公开网页 URL<input id="url-import-input" type="url" maxlength="4096" placeholder="https://…"></label><p class="dialog-hint">同一快照复用原文章；内容变化则另存，旧文章和阅读记录保留。必要图片无法保存时整篇失败。关闭此对话会请求取消；未确认结果仍保留编号。</p><label>本资料库的已保存请求<select id="url-import-history"></select></label><div class="row wrap"><button type="button" id="url-import-submit">导入 URL</button><button type="button" id="url-import-check">核对状态</button><button type="button" id="url-import-cancel">请求取消</button><button type="button" id="url-import-new">新请求</button><button type="button" id="url-import-open">打开文章 →</button></div><p id="url-import-state" role="status" aria-live="polite"></p></section>' +
+      '<section aria-label="网页导入"><label>公开网页 URL<input id="url-import-input" type="url" maxlength="4096" placeholder="https://…"></label><p class="dialog-hint">同一快照复用原文章；内容变化则另存，旧文章和阅读记录保留。Wise Reader 不判断网站或内容是否安全，不携带登录信息，也不执行页面脚本。</p><div id="url-import-consent" class="notice" hidden><strong>此网站尚未加入允许列表：<span id="url-import-consent-host"></span></strong><p class="dialog-hint">只会尝试提取公开正文和必要图片。跨网站重定向会停止，请粘贴最终地址重新确认。</p><div class="row wrap"><button type="button" id="url-import-allow-once">仅导入这一次</button><button type="button" id="url-import-allow-always">始终允许这个网站</button><button type="button" id="url-import-decline">取消</button></div></div><label>本资料库的已保存请求<select id="url-import-history"></select></label><div class="row wrap"><button type="button" id="url-import-submit">导入 URL</button><button type="button" id="url-import-check">核对状态</button><button type="button" id="url-import-cancel">请求取消</button><button type="button" id="url-import-new">新请求</button><button type="button" id="url-import-open">打开文章 →</button></div><details><summary>我允许的网站</summary><div class="row wrap"><select id="url-import-allowed-hosts" aria-label="个人允许的网站"></select><button type="button" id="url-import-remove-host">移除</button></div></details><p id="url-import-state" role="status" aria-live="polite"></p></section>' +
       '<div class="row wrap"><label>PDF 处理位置 <select id="pdf-import-engine" aria-describedby="pdf-import-location"><option value="auto" selected>当前电脑（默认）</option><option value="mineru_source" disabled>当前电脑 · 公式与复杂排版（原式优先）（正在检查）</option><option value="omarchy" disabled>Omarchy · GPU OCR（正在检查）</option></select></label><button type="button" id="pdf-import-capabilities-retry" class="text-button">刷新状态</button></div><div id="pdf-import-service-status" class="notice" role="status" aria-live="polite">正在检查 PDF 处理服务…</div><p id="pdf-import-location" class="dialog-hint" role="status">PDF 默认在当前电脑快速处理。公式与复杂排版可选择原式优先模式；此选项仅影响 PDF。</p><label class="dropzone">↥　导入 PDF / EPUB / TXT / Markdown<input id="upload-file" type="file" accept=".pdf,application/pdf,.epub,.zip,.txt,.md,.markdown" aria-label="选择阅读文件"></label><p class="dialog-hint">PDF 最大 256 MiB，原件登记后即保存在书架，阅读版逐步准备；可以关闭这里。<br>EPUB / TXT / Markdown 最大 20 MB，最多 500 章；兼容 Mac EPUB 文件包及其 ZIP。保留标题、段落、列表和代码；旧格式图片显示替代文字。<br><a href="/static/sample.epub" download>下载示例 EPUB ↗</a><br>或直接粘贴英文：</p><div id="upload-state" role="status"></div>';
     const input = $("#upload-file", dialog);
     const engine = $("#pdf-import-engine", dialog);

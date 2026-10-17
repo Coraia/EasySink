@@ -303,9 +303,11 @@ def _hop(target: Target, kind: str, control: Control):
                     control.unbind()
 
 
-def fetch(url: str, kind: str, control: Control, *, secure_parent: bool = False) -> Fetched:
+def fetch(url: str, kind: str, control: Control, *, secure_parent: bool = False,
+          same_host_redirects: bool = False) -> Fetched:
     original = url
     current = normalize_url(url)
+    original_host = current.host
     seen = set()
     try:
         for hop in range(4):
@@ -323,6 +325,8 @@ def fetch(url: str, kind: str, control: Control, *, secure_parent: bool = False)
             following = normalize_url(urljoin(current.url, location))
             if current.secure and not following.secure:
                 raise ImportFailure("https_downgrade")
+            if same_host_redirects and following.host != original_host:
+                raise ImportFailure("redirect_host_changed")
             current = following
     except ssl.SSLCertVerificationError as exc:
         raise ImportFailure("tls_verification") from exc

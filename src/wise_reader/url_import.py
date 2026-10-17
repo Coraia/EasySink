@@ -793,7 +793,7 @@ class URLPreparer:
 
     def prepare(self, url: str, control: transport.Control) -> HTMLPreparation:
         control.remaining()
-        fetched = transport.fetch(url, 'html', control)
+        fetched = transport.fetch(url, 'html', control, same_host_redirects=True)
         root, selected, template = _select_html(fetched, control)
         content = _HTMLReferences(fetched.final_url, control)
         content.walk(selected)
