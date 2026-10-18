@@ -1,5 +1,5 @@
 import { installReadingTrackpad as installWheel } from "./reading-wheel.js";
-import { installNativeReadingTrackpad } from "./reading-native-trackpad.js";
+import { installNativeReadingTrackpad } from "./reading-native-trackpad.js?v=20261018-page-turn-latency-selection";
 
 // Native stages on supported local Macs; legacy wheel is explicitly compatibility.
 export function installReadingTrackpad(ctx) {

@@ -11,10 +11,10 @@ import {
   openDialog,
   busy,
 } from "./core.js";
-import { PluginHost } from "./plugin-host.js?v=20261006-grab1";
-import { Reader } from "./reader.js?v=20261008-paper";
+import { PluginHost } from "./plugin-host.js?v=20261018-import-fixes";
+import { Reader } from "./reader.js?v=20261018-keyboard-paging-tuned";
 import { renderAI } from "./ai-settings.js";
-import { installReadingTrackpad } from "./reading-trackpad.js?v=20261007-native-hd";
+import { installReadingTrackpad } from "./reading-trackpad.js?v=20261018-page-turn-latency-selection";
 import { installDesktopLifecycle } from "./desktop-lifecycle.js";
 installDesktopLifecycle();
 const hooks = new Map(),

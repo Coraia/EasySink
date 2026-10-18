@@ -2,7 +2,7 @@ import { $, e, api, local } from "./core.js";
 import { sourceUrlRanges, overlapsSourceUrl, sourceUrlParts } from "./source-urls.js";
 import { pdfInlineStyles, pdfInlineObjects, renderPdfInline } from "./pdf-inline.js";
 
-import { PageCurlRenderer } from "./page-curl-renderer.js?v=20261008-paper";
+import { PageCurlRenderer } from "./page-curl-renderer.js?v=20261018-page-turn-latency-selection";
 
 import { installReadingEdgeDrag } from "./reading-edge-drag.js?v=20261007-native-hd";
 
@@ -119,7 +119,28 @@ export class ReadingPages {
   }
   leafMarkup(index) {
     const fragments = this.pages[index] || [];
-    return `<section class="page-leaf" data-page-index="${index}"><div class="leaf-heading">${e(this.r.doc.title)}</div><div class="reading-prose">${fragments.map((f) => this.markup(f)).join("")}</div></section>`;
+    return `<section class="page-leaf" data-page-index="${index}"><div class="leaf-heading">${e(this.r.doc.title)}</div><div class="reading-prose">${this.fragmentsMarkup(fragments)}</div></section>`;
+  }
+  fragmentsMarkup(fragments) {
+    let html = "", list = "";
+    for (const fragment of fragments) {
+      const block = this.blocks?.get(fragment.id);
+      if (block?.type === "list-item") {
+        const next = block.ordered ? "ol" : "ul";
+        if (list !== next) {
+          if (list) html += `</${list}>`;
+          list = next;
+          html += `<${list} class="source-list">`;
+        }
+        html += this.markup(fragment);
+      } else {
+        if (list) html += `</${list}>`;
+        list = "";
+        html += this.markup(fragment);
+      }
+    }
+    if (list) html += `</${list}>`;
+    return html;
   }
   invalidatePaint() {
     this.finishAnimation();
@@ -146,7 +167,7 @@ export class ReadingPages {
     this.painter.finish();
     this.animating = false;
   }
-  adjacent(direction) {
+  adjacent(direction, reason = "tap") {
     if (this.r.focus.isOpen() || this.animating || this.displayPending) return;
     const target = this.index > 0
       ? Math.max(0, this.index + direction * this.count)
@@ -155,13 +176,25 @@ export class ReadingPages {
       const next = this.neighbor(direction);
       if (next) {
         const rect = $("#article").getBoundingClientRect();
-        this.beginTurn(direction, rect.top + rect.height * 0.68, true)?.release(true, "tap");
+        const session = this.beginTurn(direction, rect.top + rect.height * 0.68, true);
+        if (reason.startsWith("keyboard-")) session?.prefetchNext();
+        session?.release(true, reason);
       } else this.r.status(this.r.doc.chapter
         ? direction > 0 ? "已到全书末尾" : "已到全书开头"
         : direction > 0 ? "已到本篇末尾" : "已到本篇开头");
       return;
     }
-    return this.turn(Math.max(0, target), true);
+    return this.turn(Math.max(0, target), true, reason);
+  }
+  accelerateTurn(direction, reason = "keyboard-held") {
+    const preview = this.preview;
+    if (!preview || preview.direction !== direction || preview.boundary ||
+        !preview.session || preview.release?.reason !== "tap") return false;
+    const progress = preview.session.resume();
+    if (typeof progress !== "number") return false;
+    preview.session.prefetchNext();
+    preview.session.release(true, reason, { inputAt: performance.now() });
+    return true;
   }
   neighbor(direction) {
     const chapters = this.r.doc.chapters || [];
@@ -426,7 +459,7 @@ export class ReadingPages {
       return `<section class="source-fragment pdf-object-fragment" data-fragment="${e(b.id)}" data-fragment-start="0" data-fragment-end="${b.text.length}"><div class="source-row"><span class="grammar-slot" aria-hidden="true"></span>${figure}</div></section>`;
     }
     const tag =
-      { heading: "h2", quote: "blockquote", code: "pre" }[b.type] || "p";
+      { heading: "h2", quote: "blockquote", code: "pre", "list-item": "div" }[b.type] || "p";
     const text = (this.fragments.get(b.id) || [])
       .filter((f) => f.start < end && f.end > start)
       .map((f) => {
@@ -450,7 +483,8 @@ export class ReadingPages {
       b.type === "heading"
         ? ""
         : `<div class="paragraph-actions"><button data-read-block="${b.id}" type="button" ${this.r.ctx.enabled("tts") ? "" : "hidden"}>听这一段</button><button data-select-block="${b.id}" type="button">选择这一段</button></div>`;
-    return `<section class="source-fragment" data-fragment="${b.id}" data-fragment-start="${start}" data-fragment-end="${end}"><div class="source-row"><span class="grammar-slot" data-grammar-slot="${b.id}"></span>${source}</div>${actions}<section class="inline-grammar" data-grammar-block="${b.id}" hidden></section></section>`;
+    const wrapper = b.type === "list-item" ? "li" : "section";
+    return `<${wrapper} class="source-fragment" data-fragment="${b.id}" data-fragment-start="${start}" data-fragment-end="${end}"><div class="source-row"><span class="grammar-slot" data-grammar-slot="${b.id}"></span>${source}</div>${actions}<section class="inline-grammar" data-grammar-block="${b.id}" hidden></section></${wrapper}>`;
   }
   urlAsset(block) {
     const doc = this.r.doc, snapshot = doc.source?.snapshot_id;
@@ -763,9 +797,8 @@ export class ReadingPages {
       !this.r.grammarInspecting &&
       !this.r.panelId &&
       !this.r.popElement &&
-      !this.r.selection &&
-      !getSelection()?.toString().trim() &&
       !document.querySelector("dialog[open]") &&
+      !$("#reading-stage").inert &&
       $("#translation-pane").hidden &&
       !this.displayPending &&
       (!this.animating || ownPreview)
@@ -814,6 +847,10 @@ export class ReadingPages {
     const setup = this.painter.collectPerformance ? { enteredAt: performance.now(), inputEvents: [] } : null;
     if ((!force && !this.canGrab()) || this.animating || this.displayPending)
       return null;
+    // A page gesture owns navigation. Selection is page-local assistance and
+    // deliberately expires here; returning to this page does not restore it.
+    if (this.r.selection || !getSelection()?.isCollapsed)
+      this.r.clearSelection?.();
     const target = this.index > 0
       ? Math.max(0, this.index + direction * this.count)
       : this.index + direction * this.count;
@@ -924,9 +961,15 @@ export class ReadingPages {
         dy = preview.dy,
         start = performance.now(),
         native = reason.startsWith("native-"),
+        nativeQueued = reason === "native-queued-ended",
         trackpad = reason.startsWith("trackpad-"),
-        duration = native
-          ? Math.max(100, Math.min(180, Math.abs(to - from) * 250))
+        keyboardFast = reason === "keyboard-held" || reason === "keyboard-tap-queued",
+        duration = nativeQueued
+          ? Math.max(20, Math.min(28, Math.abs(to - from) * 36))
+          : native
+          ? Math.max(24, Math.min(32, Math.abs(to - from) * 42))
+          : keyboardFast
+          ? Math.max(44, Math.min(46, Math.abs(to - from) * 54))
           : trackpad
           ? complete
             ? Math.max(160, Math.min(360, Math.abs(to - from) * 450))
@@ -953,7 +996,8 @@ export class ReadingPages {
         const delta = desired - preview.progress;
         preview.progress = native || trackpad
           ? preview.progress +
-            Math.sign(delta) * Math.min(native ? 0.08 : 0.065, Math.abs(delta))
+            Math.sign(delta) *
+              Math.min(nativeQueued ? 0.55 : native ? 0.4 : 0.065, Math.abs(delta))
           : desired;
         preview.dy = dy * (1 - ease);
         // A release may cancel a queued input frame. Preserve that input's
@@ -988,6 +1032,13 @@ export class ReadingPages {
           preview.raf = requestAnimationFrame(draw);
       },
       release: settle,
+      prefetchNext: () => {
+        if (!valid() || boundary || !this.complete) return;
+        const after = target + direction * this.count;
+        for (let offset = 0; offset < this.count; offset++)
+          if (after + offset >= 0 && after + offset < this.pages.length)
+            void this.painter.prepare(after + offset);
+      },
       resume: () => {
         if (!valid()) return null;
         cancelAnimationFrame(preview.raf);
@@ -1003,6 +1054,7 @@ export class ReadingPages {
         if (valid()) this.finishAnimation(reason);
       },
     };
+    preview.session = session;
     const motionOff = local.get("page-motion", "curl") === "off" ||
       matchMedia("(prefers-reduced-motion: reduce)").matches || this.painter.failed;
     if (!boundary && motionOff) { preview.ready = true; return session; }
@@ -1091,7 +1143,7 @@ export class ReadingPages {
     } else prepare(this, target);
     return session;
   }
-  async turn(index, animate = false) {
+  async turn(index, animate = false, reason = "tap") {
     if (
       this.displayPending ||
       this.animating ||
@@ -1122,7 +1174,8 @@ export class ReadingPages {
           rect.top + rect.height * 0.68,
           true,
         );
-      session?.release(true, "tap");
+      if (reason.startsWith("keyboard-")) session?.prefetchNext();
+      session?.release(true, reason);
     } else {
       this.r.emit("before-navigation");
       this.commitPage(index);

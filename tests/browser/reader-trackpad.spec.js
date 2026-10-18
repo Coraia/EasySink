@@ -221,7 +221,7 @@ test("warm-paper inertia keeps a single provisional session until release; reduc
   await expect(page.locator("#page-curl-layer")).toHaveCSS("pointer-events", "none");
 });
 
-test("tools, word card, selection and translation retain ownership of scrolling", async ({
+test("tools, word card and translation retain ownership; selection yields to paging", async ({
   page,
   request,
 }, info) => {
@@ -250,8 +250,15 @@ test("tools, word card, selection and translation retain ownership of scrolling"
   await over(page);
   await wheel(page, 420);
   await quiet(page);
+  const selectedTurn = await pageIndex(page);
+  expect(selectedTurn).toBeGreaterThan(0);
+  await expect(page.locator("#reading-selection")).toBeHidden();
+  expect(await page.evaluate(() => getSelection()?.isCollapsed ?? true)).toBe(true);
+  await wheel(page, -420);
+  await quiet(page);
   await position(page, 0);
-  await expect(page.locator("#reading-selection")).toBeVisible();
+  await expect(page.locator("#reading-selection")).toBeHidden();
+  await selectParagraph(page, 1);
   await request.put("/api/ai/config", {
     data: {
       text: {

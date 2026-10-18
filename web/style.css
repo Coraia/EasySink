@@ -1023,6 +1023,11 @@ body.reading #app {
   padding-left: 1em;
   position: relative;
 }
+#article .source-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
 #article .list-block:before {
   content: "•";
   position: absolute;
@@ -2330,9 +2335,9 @@ body.paged-reading #app {
 }
 .reading-viewport {
   position: absolute;
-  inset: 32px 28px 32px;
-  max-width: 1540px;
-  margin: auto;
+  inset: 0;
+  max-width: none;
+  margin: 0;
   display: flex;
   flex-direction: column;
 }
@@ -2349,13 +2354,13 @@ body.paged-reading #app {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 8px;
-  max-width: var(--reading-width);
-  margin: auto;
+  max-width: none;
+  margin: 0;
 }
 .reading-spread[data-layout="double"] {
   gap: 0;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  max-width: min(1440px, calc(var(--reading-width) * 2));
+  max-width: none;
 }
 .reading-spread[data-layout="double"] .page-leaf {
   padding-inline: 24px;
@@ -2432,13 +2437,21 @@ body.paged-reading #app {
   pointer-events: none !important;
 }
 .paged-reader .reader-page-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 35;
   display: flex;
   gap: 15px;
   justify-content: space-between;
-  padding: 8px 2px 0;
+  padding: 7px 12px 6px;
   font-size: 11px;
   color: var(--muted);
   min-height: 25px;
+  background: var(--paper);
+  border-top: 1px solid var(--border);
+  box-sizing: border-box;
 }
 .caption-title {
   max-width: 65%;
@@ -2668,10 +2681,7 @@ body.paged-reading #app {
 }
 #page-curl-layer {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 25px;
+  inset: 0;
   overflow: hidden;
   pointer-events: none;
   z-index: 30;
@@ -2702,7 +2712,7 @@ body.paged-reading #app {
 }
 @media (max-width: 650px) {
   .reading-viewport {
-    inset: 28px 12px 28px;
+    inset: 0;
   }
   .page-leaf {
     padding: 20px 16px;

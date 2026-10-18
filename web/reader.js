@@ -3,7 +3,7 @@ import { renderDictionaryCard } from "./dictionary-card.js";
 import { anchorFromDOMRange } from "./selection-range.js";
 import { $, $$, e, api, Scope, local, toast, errorBox } from "./core.js";
 import { sourceUrlRanges, overlapsSourceUrl } from "./source-urls.js";
-import { ReadingPages } from "./pagination.js?v=20261008-paper";
+import { ReadingPages } from "./pagination.js?v=20261018-keyboard-paging-tuned";
 import { setupReadingInteractions } from "./reading-interactions.js?v=20261006-grab1";
 import { installReadingTraces } from "./reading-traces.js";
 import {
@@ -11,7 +11,7 @@ import {
   installReaderChrome,
   installCoreReaderTools,
   readerIcon,
-} from "./reader-chrome.js?v=20261006-grab1";
+} from "./reader-chrome.js?v=20261018-keyboard-paging-tuned";
 export class Reader {
   constructor(ctx, scope, doc, handoff = null) {
     this.ctx = ctx;

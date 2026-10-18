@@ -130,6 +130,7 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
     if (!g.waiting) {
       if (g.session) {
         flight = g;
+        if (g.complete) g.session.prefetchNext?.();
         g.session.release(g.complete, reason, { inputAt: g.lastAt });
       } else {
         idle(g.pages);
@@ -197,7 +198,10 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
     if (g.session) flight = g;
     draw(g, performance.now());
     if (g.ended) {
-      if (g.session) g.session.release(g.complete, 'native-queued-ended', { inputAt: g.lastAt });
+      if (g.session) {
+        if (g.complete) g.session.prefetchNext?.();
+        g.session.release(g.complete, 'native-queued-ended', { inputAt: g.lastAt });
+      }
       else { idle(g.pages); if (g.complete) g.pages.adjacent(g.direction); }
     }
   }

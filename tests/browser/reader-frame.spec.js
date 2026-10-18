@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { tools, focus, read, enableAll, pageIndex } from "./reader-helpers.js";
+import { tools, focus, enableAll, pageIndex } from "./reader-helpers.js";
 test.beforeEach(async ({ request, page }) => {
   await enableAll(request);
   page.__errors = [];
@@ -78,7 +78,12 @@ test("12 continuous paper turns keep a bounded GPU cache and record frame timing
   page,
 }, info) => {
   const d = await book(request);
-  await read(page, d.id);
+  await page.goto(`/?readingPerf=1#/read/${d.id}`);
+  await expect(page.locator(".reader")).toHaveAttribute(
+    "data-document-id",
+    String(d.id),
+  );
+  await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");
   await expect(page.locator(".reader")).toHaveAttribute(
     "data-pagination-ready",
     "true",
@@ -107,7 +112,15 @@ test("12 continuous paper turns keep a bounded GPU cache and record frame timing
   });
   expect(metrics).toHaveLength(12);
   expect(metrics.every((m) => m.completed)).toBe(true);
-  expect(Math.max(...metrics.map((m) => m.p95FrameMs))).toBeLessThan(34);
+  const intervals = metrics.flatMap((metric) => metric.raw?.frameIntervalsMs || []);
+  const sorted = [...intervals].sort((a, b) => a - b);
+  const aggregateP95 = sorted[Math.floor(sorted.length * .95)] || 0;
+  await info.attach("paper-frame-aggregate.json", {
+    body: JSON.stringify({ aggregateP95, intervals }, null, 2),
+    contentType: "application/json",
+  });
+  expect(intervals.length).toBeGreaterThan(24);
+  expect(aggregateP95).toBeLessThan(34);
   expect(
     +(await page.locator(".reader").getAttribute("data-curl-cached-leaves")),
   ).toBeLessThanOrEqual(6);

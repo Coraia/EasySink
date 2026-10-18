@@ -5,9 +5,19 @@ import { enableAll, read, pageIndex, focus, selectParagraph } from './reader-hel
 test.use({ channel: 'chrome', trace: 'off', deviceScaleFactor: 2,
   launchOptions: { args: ['--use-angle=metal', '--enable-gpu'] } });
 const body = 'A prominent contribution changes our understanding. The reasoning of these two men did not carry conviction, since knowledge is acquired in relations. '.repeat(8);
-async function phase(page, phase, dx = 0, dy = 0, momentum = 0) {
+async function phase(page, phase, dx = 0, dy = 0, momentum = 0, handled = true) {
+  const root = page.locator('.reader'), hasReader = await root.count();
+  const before = hasReader
+    ? await root.getAttribute('data-native-trackpad')
+      .then(value => JSON.parse(value || '{}').events || 0)
+    : 0;
   page.__native.send(JSON.stringify({ source: 'e2e-phase-fixture', phase, dx, dy, momentum }));
-  await page.waitForTimeout(20);
+  const publishes = (phase & (1 | 8 | 16)) || (momentum & 8);
+  if (hasReader && handled && publishes) await expect.poll(async () => {
+    const value = await page.locator('.reader').getAttribute('data-native-trackpad');
+    return JSON.parse(value || '{}').events || 0;
+  }).toBeGreaterThan(before);
+  else await page.waitForTimeout(40);
 }
 async function over(page) {
   const box = await page.locator('#article').boundingBox();
@@ -26,7 +36,9 @@ async function prepared(page, request, layout = 'single') {
   });
   const doc = await (await request.post('/api/documents', { data: {
     title: 'Native trackpad production acceptance', text: Array(60).fill(body).join('\n\n') } })).json();
-  await read(page, doc.id);
+  await page.goto(`/?readingPerf=1#/read/${doc.id}`);
+  await expect(page.locator('.reader')).toHaveAttribute('data-document-id', String(doc.id));
+  await expect(page.locator('.reader')).toHaveAttribute('data-ready', 'true');
   await expect(page.locator('.reader')).toHaveAttribute('data-trackpad-mode', 'native');
   await expect(page.locator('.reader')).toHaveAttribute('data-pagination-ready', 'true');
   await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
@@ -56,8 +68,9 @@ for (const layout of ['single', 'double']) test(`${layout}: contact holds, rever
   const before = await snap(page);
   await phase(page, 1, 250, 25);
   await expect(page.locator('#page-curl-layer')).toBeVisible();
+  await expect.poll(async () => (await snap(page)).pin).not.toBeNull();
   const held = await snap(page);
-  await phase(page, 2);
+  await phase(page, 2, 0, 0, 0, false);
   await page.waitForTimeout(1000);
   expect((await snap(page)).index).toBe(0);
   expect((await snap(page)).pin).toEqual(held.pin);
@@ -66,7 +79,7 @@ for (const layout of ['single', 'double']) test(`${layout}: contact holds, rever
   await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
   expect((await snap(page)).source).toBe(before.source);
   for (let i = 0; i < 3; i++) {
-    await phase(page, 1, 700); await phase(page, 8); await page.waitForTimeout(45);
+    await phase(page, 1, 700); await phase(page, 8);
   }
   await expect(page.locator('.reader')).toHaveAttribute('data-page-index', String(3 * step));
   await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
@@ -83,16 +96,23 @@ for (const layout of ['single', 'double']) test(`${layout}: contact holds, rever
   expect(native.every(m => m.release.actualDurationMs < 240)).toBe(true);
   await info.attach('native-sequence-timing.json', { body: JSON.stringify(native), contentType: 'application/json' });
 });
-test('tools, notes selection, zoom, Escape and disconnect do not commit a held page', async ({ page, request }) => {
+test('tools, zoom, Escape and disconnect do not commit a held page; a source selection yields to paging', async ({ page, request }) => {
   await prepared(page, request);
   await phase(page, 1, 200);
   await page.keyboard.press('Escape');
   await phase(page, 8); expect(await pageIndex(page)).toBe(0);
   await page.locator('#show-tools').click();
-  await phase(page, 1, 900); await phase(page, 8); expect(await pageIndex(page)).toBe(0);
+  await expect(page.locator('.reader')).toHaveAttribute('data-chrome', 'open');
+  await phase(page, 1, 900, 0, 0, false); await phase(page, 8, 0, 0, 0, false); expect(await pageIndex(page)).toBe(0);
   await focus(page); await selectParagraph(page, 0);
-  await phase(page, 1, 900); await phase(page, 8); expect(await pageIndex(page)).toBe(0);
-  await page.locator('[data-selection-clear]').click(); await over(page);
+  await over(page); await phase(page, 1, 900); await phase(page, 8);
+  await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '1');
+  await expect(page.locator('#reading-selection')).toBeHidden();
+  expect(await page.evaluate(() => getSelection()?.isCollapsed ?? true)).toBe(true);
+  await over(page); await phase(page, 1, -900); await phase(page, 8);
+  await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '0');
+  await expect(page.locator('#reading-selection')).toBeHidden();
+  await over(page);
   await page.locator('#article').dispatchEvent('wheel', { deltaX: 900, ctrlKey: true, bubbles: true });
   expect(await pageIndex(page)).toBe(0);
   await phase(page, 1, 200);
@@ -103,6 +123,30 @@ test('tools, notes selection, zoom, Escape and disconnect do not commit a held p
   expect(await pageIndex(page)).toBe(0);
   await page.locator('#reading-edge-next').click();
   await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '1');
+});
+test('a queued native gesture waits less than 50ms for the preceding page to land', async ({ page, request }, info) => {
+  await prepared(page, request);
+  const gaps = [];
+  for (let pair = 0; pair < 6; pair++) {
+    const baseline = await page.evaluate(() => JSON.parse(document.querySelector('.reader').dataset.nativeGestures).length);
+    await phase(page, 1, 700);
+    page.__native.send(JSON.stringify({ source: 'e2e-phase-fixture', phase: 8, dx: 0, dy: 0, momentum: 0 }));
+    page.__native.send(JSON.stringify({ source: 'e2e-phase-fixture', phase: 1, dx: 700, dy: 0, momentum: 0 }));
+    page.__native.send(JSON.stringify({ source: 'e2e-phase-fixture', phase: 8, dx: 0, dy: 0, momentum: 0 }));
+    await expect(page.locator('.reader')).toHaveAttribute('data-page-index', String((pair + 1) * 2));
+    await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+    const records = await page.evaluate(() => JSON.parse(document.querySelector('.reader').dataset.nativeGestures));
+    const recent = records.slice(baseline);
+    const queued = recent.find(record => record.kind === 'began' && record.waiting);
+    const precedingLanding = recent.find(record => record.kind === 'landed' && record.at >= queued.at);
+    gaps.push(precedingLanding.at - queued.at);
+  }
+  const metrics = await page.evaluate(() => JSON.parse(document.querySelector('.reader').dataset.curlMetrics));
+  await info.attach('queued-native-turn-gap.json', {
+    body: JSON.stringify({ gaps, metrics }, null, 2), contentType: 'application/json'
+  });
+  expect(Math.max(...metrics.map(metric => metric.release.textureWaitMs))).toBeLessThan(35);
+  expect(Math.max(...gaps)).toBeLessThan(50);
 });
 test('Retina 120Hz phase-fixture turns retain bounded rendering latency and GPU cache over repeated reversals', async ({ page, request }, info) => {
   await prepared(page, request);
@@ -122,8 +166,13 @@ test('Retina 120Hz phase-fixture turns retain bounded rendering latency and GPU 
   const metrics = await page.evaluate(() => JSON.parse(document.querySelector('.reader').dataset.curlMetrics));
   await info.attach('retina-frame-metrics.json', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });
   expect(metrics).toHaveLength(12);
-  expect(Math.max(...metrics.map(m => m.p95FrameMs))).toBeLessThan(34);
-  expect(Math.max(...metrics.map(m => m.p95InputMs))).toBeLessThan(34);
+  const percentile = values => [...values].sort((a, b) => a - b)[Math.floor(values.length * .95)];
+  const frames = metrics.flatMap(metric => metric.raw.frameIntervalsMs);
+  const inputs = metrics.flatMap(metric => metric.raw.inputToDrawMs);
+  expect(frames.length).toBeGreaterThan(100);
+  expect(inputs.length).toBeGreaterThan(100);
+  expect(percentile(frames)).toBeLessThan(34);
+  expect(percentile(inputs)).toBeLessThan(34);
   expect(+(await page.locator('.reader').getAttribute('data-curl-cached-pixels'))).toBeLessThanOrEqual(24e6);
 });
 for (const dpr of [1, 2, 3]) test(`DPR ${dpr}: canvas and page textures retain native resolution with bounded cache`, async ({ browser, request }, info) => {

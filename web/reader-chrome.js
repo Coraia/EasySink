@@ -73,12 +73,79 @@ export function installReaderChrome(r) {
     trigger = $("#show-tools"),
     stage = $("#reading-stage");
   let pointer = null,
-    released = null;
+    released = null,
+    heldKey = null,
+    heldDirection = 0,
+    heldContinuous = false,
+    heldTimer = 0,
+    heldFrame = 0,
+    keyboardTapQueue = [],
+    keyboardTapFrame = 0;
   const consume = (ev) => {
     ev.preventDefault();
     ev.stopImmediatePropagation();
   };
   const modal = () => Boolean(document.querySelector("dialog[open]"));
+  const stopHeldPaging = () => {
+    clearTimeout(heldTimer);
+    cancelAnimationFrame(heldFrame);
+    heldKey = null;
+    heldDirection = 0;
+    heldContinuous = false;
+    heldTimer = heldFrame = 0;
+    delete $(".reader")?.dataset.keyboardPaging;
+  };
+  const stopKeyboardPaging = () => {
+    stopHeldPaging();
+    cancelAnimationFrame(keyboardTapFrame);
+    keyboardTapFrame = 0;
+    keyboardTapQueue = [];
+  };
+  const continueKeyboardTaps = () => {
+    keyboardTapFrame = 0;
+    if (r.scope.signal.aborted) {
+      keyboardTapQueue = [];
+      return;
+    }
+    if (!r.pages.animating && keyboardTapQueue.length)
+      r.pages.adjacent(keyboardTapQueue.shift(), "keyboard-tap-queued");
+    if (keyboardTapQueue.length)
+      keyboardTapFrame = requestAnimationFrame(continueKeyboardTaps);
+  };
+  const queueKeyboardTap = (direction) => {
+    if (r.pages.animating) {
+      r.pages.accelerateTurn(direction, "keyboard-tap-queued");
+      // Keep a small, ordered buffer so deliberate rapid taps are not lost,
+      // while an accidental key storm cannot keep turning after input stops.
+      if (keyboardTapQueue.length < 8) keyboardTapQueue.push(direction);
+    } else r.pages.adjacent(direction);
+    if (keyboardTapQueue.length && !keyboardTapFrame)
+      keyboardTapFrame = requestAnimationFrame(continueKeyboardTaps);
+  };
+  const continueHeldPaging = () => {
+    heldFrame = 0;
+    if (!heldContinuous || !heldKey || !heldDirection || r.scope.signal.aborted)
+      return;
+    if (r.pages.animating) r.pages.accelerateTurn(heldDirection);
+    else if (r.pages.canGrab()) r.pages.adjacent(heldDirection, "keyboard-held");
+    heldFrame = requestAnimationFrame(continueHeldPaging);
+  };
+  const startHeldPaging = (key, direction) => {
+    stopHeldPaging();
+    heldKey = key;
+    heldDirection = direction;
+    $(".reader").dataset.keyboardPaging = "pressed";
+    queueKeyboardTap(direction);
+    heldTimer = setTimeout(() => {
+      heldTimer = 0;
+      if (!heldKey || !heldDirection || r.scope.signal.aborted) return;
+      heldContinuous = true;
+      keyboardTapQueue = [];
+      $(".reader").dataset.keyboardPaging = "continuous";
+      r.pages.accelerateTurn(heldDirection);
+      continueHeldPaging();
+    }, 220);
+  };
   const close = (focus = false) => {
     if (r.panelId) r.closePanel();
     chrome.hidden = true;
@@ -91,6 +158,7 @@ export function installReaderChrome(r) {
   };
   const open = () => {
     if (modal()) return;
+    stopKeyboardPaging();
     r.pages?.finishAnimation();
     r.closePop();
     r.closePanel();
@@ -262,6 +330,7 @@ export function installReaderChrome(r) {
     (ev) => {
       if (r.aiSetupOpen || modal()) return;
       if (ev.key === "Escape") {
+        stopKeyboardPaging();
         if (r.panelId) {
           r.dismissPanel();
           consume(ev);
@@ -292,11 +361,21 @@ export function installReaderChrome(r) {
           : 0;
       if (direction) {
         consume(ev);
-        r.pages.adjacent(direction);
+        if (["ArrowLeft", "ArrowRight"].includes(ev.key)) {
+          if (!ev.repeat || heldKey !== ev.key)
+            startHeldPaging(ev.key, direction);
+        } else r.pages.adjacent(direction);
       }
     },
     { capture: true },
   );
+  r.scope.on(document, "keyup", (ev) => {
+    if (ev.key === heldKey) stopHeldPaging();
+  }, { capture: true });
+  r.scope.on(window, "blur", stopKeyboardPaging);
+  r.scope.on(document, "visibilitychange", () => {
+    if (document.hidden) stopKeyboardPaging();
+  });
   r.scope.on($("#panel-dismiss"), "click", () => r.dismissPanel());
   r.scope.on($("#reader-fullscreen"), "click", async () => {
     try {
@@ -314,6 +393,7 @@ export function installReaderChrome(r) {
   r.focus = { open, close, isOpen: () => !chrome.hidden };
   close();
   r.scope.cleanup(() => {
+    stopKeyboardPaging();
     stage.inert = false;
     document.body.classList.remove("paged-reading");
   });

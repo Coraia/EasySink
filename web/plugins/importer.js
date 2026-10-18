@@ -477,6 +477,16 @@ export function install(ctx) {
       serviceStatus.innerHTML = `<div class="pdf-service-summary" data-state="${summaryReady ? "ready" : "attention"}" tabindex="0" title="${e(summaryDetail)}" aria-label="${e(summary)}。${e(summaryDetail)}"><span class="pdf-service-icon" aria-hidden="true">${summaryReady ? "✓" : "!"}</span><strong>${e(summary)}</strong><span class="pdf-service-hover">悬浮查看原因</span></div><details class="pdf-service-details"><summary>诊断详情</summary><div class="pdf-service-detail-list"><div data-pdf-local-state="${available("digital") ? "ready" : "unavailable"}"><strong>当前电脑</strong> · ${e(local)}</div><div data-pdf-formula-state="${available("mineru_source") ? "ready" : "unavailable"}"><strong>复杂排版（原式优先）</strong> · ${e(formulaDetail)}</div><div data-pdf-remote-state="${e(readiness?.state || (available("omarchy") ? "ready" : "unknown"))}"><strong>Omarchy</strong> · ${e(remoteDetail)}</div><div class="dialog-hint">${stamp ? `${e(stamp)} 检查 · ` : ""}提交前会再次核验；EPUB / TXT / Markdown 不受影响。</div></div></details>`;
       const details = serviceStatus.querySelector("details");
       if (details) details.open = detailWasOpen;
+      if (
+        form.dataset.importKind === "pdf" &&
+        input.files[0] &&
+        input.dataset.confirmed !== "true"
+      ) {
+        const selected = engine.value === "auto" ? "digital" : engine.value;
+        primary.hidden = false;
+        primary.textContent = "导入 PDF";
+        primary.disabled = checkingCapabilities || input.disabled || !available(selected);
+      }
     };
     const loadCapabilities = () => {
       if (!current()) return Promise.resolve(null);
@@ -526,6 +536,13 @@ export function install(ctx) {
       if (!document.hidden && current() && !input.disabled && !pdfPanel.hidden) void loadCapabilities();
     });
     scheduleRefresh();
+    scope.on(primary, "click", (event) => {
+      if (form.dataset.importKind !== "pdf" || !input.files[0]) return;
+      event.preventDefault();
+      if (primary.disabled || input.dataset.confirmed === "true") return;
+      input.dataset.confirmed = "true";
+      void input.onchange();
+    });
     input.onchange = async () => {
       if (!current() || input.disabled) return;
       const file = input.files[0];
@@ -541,15 +558,31 @@ export function install(ctx) {
       pdfPanel.hidden = !isPDF;
       detectedTitle.textContent = isPDF ? "已识别为 PDF" : "已识别为阅读文件";
       detectedCopy.textContent = `${file.name} · ${(file.size / (1024 * 1024)).toFixed(file.size >= 1024 * 1024 ? 1 : 2)} MB`;
-      primary.disabled = true;
-      primary.textContent = "正在导入…";
-      primary.hidden = true;
       stopProgress();
       const limit = (isPDF ? 256 : 20) * 1024 * 1024;
       if (file.size > limit) {
         el.innerHTML = `<div class="notice error">${isPDF ? "PDF 超过 256 MiB，请选择较小的文件。" : "文件超过 20 MB，请拆分后导入。"}</div>`;
+        input.value = "";
+        delete input.dataset.confirmed;
+        textInput.disabled = false;
+        primary.disabled = true;
+        primary.hidden = false;
+        primary.textContent = "继续";
         return;
       }
+      if (isPDF && input.dataset.confirmed !== "true") {
+        primary.hidden = false;
+        primary.disabled = true;
+        primary.textContent = "导入 PDF";
+        el.innerHTML = '<div class="notice">请选择处理位置，确认后再导入。文件尚未上传。</div>';
+        if (capabilityRequest) await capabilityRequest;
+        await loadCapabilities();
+        updateLocation();
+        return;
+      }
+      primary.disabled = true;
+      primary.textContent = "正在导入…";
+      primary.hidden = true;
       const selectedEngine = engine.value;
       input.disabled = true;
       engine.disabled = true;
@@ -597,7 +630,7 @@ export function install(ctx) {
             throw new Error("接收响应没有书籍身份，请刷新书架核对登记结果。");
           if (result.pdf?.lifecycle === "recycled") {
             el.innerHTML =
-              '<div class="notice">这份 PDF 在回收站，原件、已有内容和记录仍保留。<p style="margin:12px 0 0"><button id="restore-import" class="primary">恢复书籍</button> <button id="open-pdf-recycle">查看回收站</button> <button id="close-import">关闭</button></p><p id="restore-import-state" role="status"></p></div>';
+              '<div class="notice">这份 PDF 在回收站，原件、已有内容和记录仍保留。<p style="margin:12px 0 0"><button type="button" id="restore-import" class="primary">恢复书籍</button> <button type="button" id="open-pdf-recycle">查看回收站</button> <button type="button" id="close-import">关闭</button></p><p id="restore-import-state" role="status"></p></div>';
             scope.on($("#close-import", el), "click", () => dialog.close());
             scope.on($("#open-pdf-recycle", el), "click", () => {
               dialog.close();
@@ -645,7 +678,7 @@ export function install(ctx) {
             });
             return;
           }
-          el.innerHTML = `<div class="notice pdf-import-notice"><p class="pdf-import-saved">${result.reused ? "这份 PDF 已在书架，已复用同一书籍。" : "PDF 已保存在书架"}</p>${result.reused ? '<p class="dialog-hint">已保留原任务的处理位置；如需改用原式优先模式或 Omarchy，请在 PDF 处理中选择并启动。</p>' : ""}<div data-import-progress></div><div class="row wrap"><button id="open-import" class="primary">查看准备状态 →</button>${result.reused ? '<button id="manage-import">PDF 处理</button>' : ""}<button id="close-import">关闭，留在书架</button></div></div>`;
+          el.innerHTML = `<div class="notice pdf-import-notice"><p class="pdf-import-saved">${result.reused ? "这份 PDF 已在书架，已复用同一书籍。" : "PDF 已保存在书架"}</p>${result.reused ? '<p class="dialog-hint">已保留原任务的处理位置；如需改用原式优先模式或 Omarchy，请在 PDF 处理中选择并启动。</p>' : ""}<div data-import-progress></div><div class="row wrap"><button type="button" id="open-import" class="primary">查看准备状态 →</button>${result.reused ? '<button type="button" id="manage-import">PDF 处理</button>' : ""}<button type="button" id="close-import">关闭，留在书架</button></div></div>`;
           scope.on($("#close-import", el), "click", () => dialog.close());
           scope.on($("#manage-import", el), "click", () => {
             dialog.close();
@@ -662,7 +695,7 @@ export function install(ctx) {
           });
         } else {
           href = "#/read/" + (readingDocument(result.reading_doc_id) || result.chapters[0].doc_id);
-          el.innerHTML = `<div class="notice">${result.reused ? "这本 EPUB 已在书架，已复用已有书籍。" : `已完整导入 ${result.chapters.length} 章。`}${e(result.notice || "")}<p style="margin:12px 0 0"><button id="open-import" class="primary">${result.reused ? "继续阅读" : "开始阅读"} →</button> <button id="close-import">关闭，留在书架</button></p></div>`;
+          el.innerHTML = `<div class="notice">${result.reused ? "这本 EPUB 已在书架，已复用已有书籍。" : `已完整导入 ${result.chapters.length} 章。`}${e(result.notice || "")}<p style="margin:12px 0 0"><button type="button" id="open-import" class="primary">${result.reused ? "继续阅读" : "开始阅读"} →</button> <button type="button" id="close-import">关闭，留在书架</button></p></div>`;
           scope.on($("#close-import", el), "click", () => dialog.close());
         }
         $("#open-import", el).onclick = () => {
@@ -692,6 +725,7 @@ export function install(ctx) {
           retryCapabilities.disabled = false;
           textInput.disabled = false;
           input.value = "";
+          delete input.dataset.confirmed;
         }
       }
     };
@@ -714,12 +748,14 @@ export function install(ctx) {
         pdfPanel.hidden = true;
         uploadState.innerHTML = "";
         input.value = "";
+        delete input.dataset.confirmed;
         primary.hidden = false;
       }
     });
     scope.on(form, "wr:import-clear", () => {
       stopProgress();
       input.value = "";
+      delete input.dataset.confirmed;
       input.disabled = false;
       engine.disabled = false;
       textInput.disabled = false;

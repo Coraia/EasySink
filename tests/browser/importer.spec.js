@@ -59,6 +59,56 @@ test("the unified entry reveals URL consent only after recognizing a link", asyn
   await expect(page.locator("#import-detected-copy")).toContainText("未访问该网站");
 });
 
+test("PDF selection waits for processing location before upload", async ({
+  page,
+}) => {
+  const uploads = [];
+  await page.route("**/api/pdf/capabilities**", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        processing_enabled: true,
+        adapters: [
+          { id: "digital", available: true },
+          { id: "mineru_source", available: true },
+          {
+            id: "omarchy",
+            available: true,
+            readiness: { state: "ready" },
+          },
+        ],
+      }),
+    }),
+  );
+  await page.route("**/api/pdf/imports", async (route) => {
+    uploads.push((await route.request().postDataBuffer()).toString("utf8"));
+    await route.fulfill({
+      status: 422,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "E2E stopped after upload boundary" }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "＋ 添加阅读" }).click();
+  await page.locator("#upload-file").setInputFiles({
+    name: "processing-location.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4\n%E2E\n"),
+  });
+
+  await expect(page.locator("#pdf-import-panel")).toBeVisible();
+  await expect(page.locator("#import-continue")).toBeVisible();
+  await expect(page.locator("#import-continue")).toBeEnabled();
+  expect(uploads).toHaveLength(0);
+
+  await page.locator("#pdf-import-engine").selectOption("omarchy");
+  await page.getByRole("button", { name: "导入 PDF" }).click();
+  await expect.poll(() => uploads.length).toBe(1);
+  expect(uploads[0]).toContain('name="engine"');
+  expect(uploads[0]).toContain("omarchy");
+});
+
 test("EPUB content survives a transport filename without its extension", async ({
   page,
 }, testInfo) => {
@@ -131,6 +181,10 @@ test("a non-EPUB ZIP is rejected and Markdown still imports", async ({
   page,
   request,
 }) => {
+  const consoleErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
   const before = await (await request.get("/api/library/books")).json();
   // Valid empty ZIP, not an EPUB publication.
   await upload(page, {
@@ -147,7 +201,9 @@ test("a non-EPUB ZIP is rejected and Markdown still imports", async ({
   await page.locator("#upload-file").setInputFiles({
     name: "Reading notes.md",
     mimeType: "text/markdown",
-    buffer: Buffer.from("# A fresh start\n\nKeep reading with curiosity."),
+    buffer: Buffer.from(
+      "# A fresh start\n\nKeep reading with curiosity.\n\n- Notice the details\n- Ask a better question",
+    ),
   });
   await expect(page.locator("#upload-state")).toContainText("已完整导入 1 章");
   await page.locator("#open-import").click();
@@ -162,6 +218,14 @@ test("a non-EPUB ZIP is rejected and Markdown still imports", async ({
       }),
     )
     .toContain("Keep reading with curiosity.");
+  await expect(page.locator("#article li")).toHaveCount(2);
+  await expect(page.locator("#article li").first().locator("xpath=..")).toHaveJSProperty(
+    "tagName",
+    "UL",
+  );
+  expect(consoleErrors).not.toContain(
+    "An invalid form control with name='' is not focusable.",
+  );
 });
 
 for (const mode of ["single", "nested"])

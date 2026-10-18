@@ -235,6 +235,7 @@ export class PageCurlRenderer {
   invalidate() {
     this.epoch++;
     cancelAnimationFrame(this.surfaceWarmRaf);
+    delete this.root.dataset.curlWarm;
     this.primedSurface = null;
     this.pendingTextures = [];
     this.surfaceWarm = null;
@@ -373,7 +374,7 @@ export class PageCurlRenderer {
         this.software ? Math.sqrt(SOFTWARE_PIXELS / (document.getElementById("article").getBoundingClientRect().width * rect.height)) : 3,
         this.maxTexture / rect.height,
         this.maxTexture / rect.width,
-        Math.sqrt(6e6 / (rect.width * rect.height)),
+        Math.sqrt(8e6 / (rect.width * rect.height)),
       );
       const vars = [
         "--bg",
@@ -546,6 +547,7 @@ export class PageCurlRenderer {
   }
   warm() {
     clearTimeout(this.warmTimer);
+    delete this.root.dataset.curlWarm;
     const generation = this.pages.generation,
       epoch = this.epoch;
     this.warmTimer = setTimeout(async () => {
@@ -590,14 +592,20 @@ export class PageCurlRenderer {
         });
         this.clearSurface();
         if (setup) this.surfaceWarm = setup;
-        this.primePresentation(width, height, generation, epoch);
+        this.primePresentation(width, height, generation, epoch, () => {
+          if (p === this.pages && generation === p.generation &&
+              epoch === this.epoch && !p.r.scope.signal.aborted && !p.animating)
+            this.root.dataset.curlWarm = "true";
+        });
       }
-      this.root.dataset.curlWarm = "true";
     }, 120);
   }
-  primePresentation(width, height, generation, epoch) {
+  primePresentation(width, height, generation, epoch, ready) {
     const identity = `${width}:${height}`;
-    if (this.primedSurface === identity) return;
+    if (this.primedSurface === identity) {
+      ready?.();
+      return;
+    }
     cancelAnimationFrame(this.surfaceWarmRaf);
     const owner = this.pages;
     let remaining = 4;
@@ -613,7 +621,10 @@ export class PageCurlRenderer {
       this.clearSurface();
       this.gl.flush();
       if (--remaining) this.surfaceWarmRaf = requestAnimationFrame(frame);
-      else this.primedSurface = identity;
+      else {
+        this.primedSurface = identity;
+        ready?.();
+      }
     };
     this.surfaceWarmRaf = requestAnimationFrame(frame);
   }

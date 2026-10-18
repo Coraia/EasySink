@@ -22,7 +22,7 @@ export class PluginHost {
         try {
           const module = await import(
             new URL(
-              `./plugins/${p.id}.js?v=20261005-open3`,
+              `./plugins/${p.id}.js?v=20261018-import-fixes`,
               import.meta.url,
             ).href
           );
