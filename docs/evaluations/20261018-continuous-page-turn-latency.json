@@ -1,0 +1,981 @@
+{
+  "scope": "Continuous page-turn latency follow-up to the preserved test audit; source/current candidate, not installed-client acceptance",
+  "changes": [
+    "Stage the same SVG at unchanged native pixel dimensions through one detached 2D canvas before WebGL upload; release canvas backing and Image source in serialized capture finally.",
+    "Reuse oldest unpinned same-size RGBA texture only under budget pressure; pre-plan eviction, preserve current/pending faces, restore GL binding on success and errors.",
+    "Clamp settling interpolation to [0,1] to prevent rAF frame timestamps before release start from producing negative progress.",
+    "Strengthen existing E2E to 12 ordered pairs, exact predecessor IDs, full failure attachments, bounded GL allocation/RAF/long-task witnesses; add wide DPR3 double-spread regression."
+  ],
+  "unchanged_acceptance": {
+    "max_queued_gap_ms": "strictly <50",
+    "max_texture_wait_ms": "strictly <35",
+    "no_added_per_pair_wait": true,
+    "native_DPR_and_geometry_preserved": true,
+    "gesture_policy_and_release_durations_unchanged": true
+  },
+  "root_cause": {
+    "confirmed": "Synchronous SVG Image conversion inside texImage2D/texSubImage2D blocked release frames. Same-storage reuse still reached62ms and a75.1ms queued gap. Canvas staging reduces the measured Chrome upload call to sub-ms without lowering pixel dimensions.",
+    "mechanism_inference": "Upstream image upload performs SVG draw/extraction; canvas upload can use bitmap/GPU copy. JS evidence does not prove a particular installed-engine internal branch or apportion CPU vs driver time.",
+    "rejected_sufficiency": "Allocation pressure alone was insufficient: reuse candidate sustained24 runs had3 latency failures at92.16MB. All failures and source snapshots remain.",
+    "separate_confirmed_bug": "Negative settling pose reproduced by E2E at -0.098322780874641 before clamp.",
+    "unresolved_historical_observation": "No-GL first-rAF delays of54.9–67.9ms occurred in earlier candidates. Exact scheduling cause remains unproven. Final instrumented24-run canvas sample has zero >50ms queued gaps and zero observed long tasks; this is not an absolute OS scheduling guarantee.",
+    "detail": "raster-root-cause.md"
+  },
+  "checks": {
+    "sustained_Chrome_Metal_phase_fixture": {
+      "runs": 24,
+      "pairs": 288,
+      "max_gap_ms": 49.2,
+      "max_texture_wait_ms": 1.5,
+      "max_API_accounted_texture_bytes": 92160000,
+      "max_upload_call_ms": 0.6
+    },
+    "native_regressions": {
+      "startTime": "2026-10-18T09:17:00.342Z",
+      "duration": 31845.631,
+      "expected": 11,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "system_WKWebView": {
+      "status": "passed",
+      "checks": 20,
+      "queue_gap_ms": 36,
+      "texture_wait_ms": 1,
+      "DPR": 2,
+      "synthetic_desktop_DOM": true,
+      "data_store": "nonpersistent",
+      "backend": "disposable; stopped; temporary DB removed"
+    },
+    "final_whole_product_E2E": {
+      "artifact": "/Users/fish/projects/Personal/APP/wise_reader/.runtime/acceptance/20261018T092215Z",
+      "manifest": {
+        "started_utc": "20261018T092215Z",
+        "finished_utc": "2026-10-18T09:28:16.150287+00:00",
+        "command": [
+          "npm",
+          "run",
+          "test:e2e"
+        ],
+        "working_directory": "/Users/fish/projects/Personal/APP/wise_reader",
+        "exit_code": 0,
+        "source_changed_during_run": [],
+        "baseline_commit": "c8fd561a1d6c5e332c5b03ae9130c87c424ae968",
+        "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+        "versions": {
+          "python": "Python 3.13.11",
+          "node": "v26.0.0",
+          "playwright": "Version 1.63.0"
+        },
+        "lexicon_sha256": "e47b3cf4e4ddef869b3f74b516c8afadf275cde0595117110ddd317b4e168591",
+        "database": "disposable temporary SQLite; real data/user.db not used",
+        "app_port": 18774,
+        "fixture_port": 18775,
+        "ai_scope": "real HTTP and browser chain with deterministic fixture translations/annotations and WAV tone; not real model quality",
+        "stats": {
+          "startTime": "2026-10-18T09:22:16.798Z",
+          "duration": 358336.95,
+          "expected": 120,
+          "skipped": 1,
+          "unexpected": 0,
+          "flaky": 0
+        }
+      },
+      "queued_case": {
+        "runs": 1,
+        "pairs": 12,
+        "max_gap_ms": 44,
+        "max_texture_wait_ms": 1.1,
+        "max_API_accounted_texture_bytes": 92160000,
+        "max_upload_call_ms": 0.5
+      }
+    },
+    "syntax_and_diff": "node --check for both changed production JS files and native E2E; git diff --check passed",
+    "prior_evidence_preserved": {
+      "manifest": "outputs/test-audit-20261018/SHA256SUMS",
+      "verified": 574,
+      "mismatches": []
+    }
+  },
+  "fidelity": {
+    "exact_parity_pass": false,
+    "criterion_unchanged": "zero changed RGBA bytes; every difference remains flagged",
+    "artifact": "/Users/fish/projects/Personal/APP/wise_reader/outputs/continuous-latency-20261018/raster-fidelity/run-2026-10-18T09-21-27-130Z",
+    "offline_review": {
+      "createdAt": "2026-10-18T09:24:09.048372+00:00",
+      "scope": "Offline full-RGBA analysis only; no browser execution or original artifact changes",
+      "originalResultsSha256": "90e65951d2cc7fa4e76bd8f3bad5073e4c6e3114c1dac7ff3dc42afafcfb0ddd",
+      "originalPass": false,
+      "exactParityPass": false,
+      "criterionUnchanged": "Zero changed RGBA bytes; all observed differences remain failures under that criterion",
+      "method": {
+        "arrays": "gzip-decoded full width*height*4 unsigned-byte framebuffer arrays; no pixel subsampling",
+        "regionCoordinates": "CSS x,y,width,height multiplied by DPR; nonoverlapping boxes from the saved fixture",
+        "regions": [
+          {
+            "name": "title",
+            "rect": [
+              34,
+              44,
+              420,
+              32
+            ]
+          },
+          {
+            "name": "P-ALPHA",
+            "rect": [
+              34,
+              90,
+              412,
+              48
+            ]
+          },
+          {
+            "name": "P-BETA-Chinese",
+            "rect": [
+              34,
+              140,
+              412,
+              38
+            ]
+          },
+          {
+            "name": "annotation",
+            "rect": [
+              34,
+              188,
+              380,
+              40
+            ]
+          },
+          {
+            "name": "formula",
+            "rect": [
+              34,
+              228,
+              430,
+              50
+            ]
+          },
+          {
+            "name": "inlinePNG",
+            "rect": [
+              34,
+              278,
+              128,
+              96
+            ]
+          },
+          {
+            "name": "PNG-caption",
+            "rect": [
+              178,
+              286,
+              250,
+              72
+            ]
+          },
+          {
+            "name": "P-GAMMA",
+            "rect": [
+              34,
+              414,
+              410,
+              62
+            ]
+          },
+          {
+            "name": "footer",
+            "rect": [
+              34,
+              490,
+              412,
+              28
+            ]
+          }
+        ],
+        "flatNeighborhood": "Direct-image center RGBA equals all eight immediate neighbors in a 3x3 physical-pixel neighborhood; image outer border excluded",
+        "imageEdgeDistance": "Changed inline-PNG pixel center to nearest known fixture boundary: CSS x=34,98,130,162 or y=278,326,374; includes internal color/alpha transitions",
+        "tolerances": "None for parity; distributions and neighborhood classifications are descriptive, not new acceptance thresholds"
+      },
+      "rows": [
+        {
+          "dpr": 1,
+          "width": 480,
+          "height": 560,
+          "changedPixels": 12482,
+          "changedPixelPercent": 4.643601,
+          "maximumChannelDifference": 3,
+          "changedAlphaPixels": 0,
+          "canvasNewEqualsCanvasReuse": true,
+          "canvasNewVsReuseChangedChannels": 0,
+          "changedPixelsInFlat3x3Neighborhood": 0,
+          "allChangesWithinListedTextOrImageRegions": true,
+          "unclassifiedChangedPixels": 0,
+          "changedPixelsByMaxChannelDifference": {
+            "1": 12201,
+            "2": 280,
+            "3": 1
+          },
+          "regions": [
+            {
+              "name": "title",
+              "changedPixels": 981,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "P-ALPHA",
+              "changedPixels": 1737,
+              "maximumChannelDifference": 3
+            },
+            {
+              "name": "P-BETA-Chinese",
+              "changedPixels": 1662,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "annotation",
+              "changedPixels": 1377,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "formula",
+              "changedPixels": 1155,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "inlinePNG",
+              "changedPixels": 226,
+              "maximumChannelDifference": 1
+            },
+            {
+              "name": "PNG-caption",
+              "changedPixels": 2263,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "P-GAMMA",
+              "changedPixels": 2214,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "footer",
+              "changedPixels": 867,
+              "maximumChannelDifference": 2
+            }
+          ],
+          "inlinePngMaxDistanceToKnownBoundaryPhysicalPixels": 0.5,
+          "allOriginalSolidAlphaMarkersPass": true,
+          "allOriginalInkPresenceChecksPass": true
+        },
+        {
+          "dpr": 2,
+          "width": 960,
+          "height": 1120,
+          "changedPixels": 26614,
+          "changedPixelPercent": 2.47526,
+          "maximumChannelDifference": 3,
+          "changedAlphaPixels": 0,
+          "canvasNewEqualsCanvasReuse": true,
+          "canvasNewVsReuseChangedChannels": 0,
+          "changedPixelsInFlat3x3Neighborhood": 0,
+          "allChangesWithinListedTextOrImageRegions": true,
+          "unclassifiedChangedPixels": 0,
+          "changedPixelsByMaxChannelDifference": {
+            "1": 25915,
+            "2": 698,
+            "3": 1
+          },
+          "regions": [
+            {
+              "name": "title",
+              "changedPixels": 1978,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "P-ALPHA",
+              "changedPixels": 3550,
+              "maximumChannelDifference": 3
+            },
+            {
+              "name": "P-BETA-Chinese",
+              "changedPixels": 3627,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "annotation",
+              "changedPixels": 2929,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "formula",
+              "changedPixels": 2339,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "inlinePNG",
+              "changedPixels": 1176,
+              "maximumChannelDifference": 1
+            },
+            {
+              "name": "PNG-caption",
+              "changedPixels": 4673,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "P-GAMMA",
+              "changedPixels": 4502,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "footer",
+              "changedPixels": 1840,
+              "maximumChannelDifference": 2
+            }
+          ],
+          "inlinePngMaxDistanceToKnownBoundaryPhysicalPixels": 1.5,
+          "allOriginalSolidAlphaMarkersPass": true,
+          "allOriginalInkPresenceChecksPass": true
+        },
+        {
+          "dpr": 3,
+          "width": 1440,
+          "height": 1680,
+          "changedPixels": 42526,
+          "changedPixelPercent": 1.757854,
+          "maximumChannelDifference": 16,
+          "changedAlphaPixels": 0,
+          "canvasNewEqualsCanvasReuse": true,
+          "canvasNewVsReuseChangedChannels": 0,
+          "changedPixelsInFlat3x3Neighborhood": 0,
+          "allChangesWithinListedTextOrImageRegions": true,
+          "unclassifiedChangedPixels": 0,
+          "changedPixelsByMaxChannelDifference": {
+            "1": 38488,
+            "2": 996,
+            "3": 759,
+            "4": 705,
+            "5": 520,
+            "6": 286,
+            "7": 8,
+            "8": 237,
+            "9": 239,
+            "10": 282,
+            "11": 1,
+            "12": 3,
+            "14": 1,
+            "16": 1
+          },
+          "regions": [
+            {
+              "name": "title",
+              "changedPixels": 2842,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "P-ALPHA",
+              "changedPixels": 5249,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "P-BETA-Chinese",
+              "changedPixels": 5551,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "annotation",
+              "changedPixels": 4379,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "formula",
+              "changedPixels": 3555,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "inlinePNG",
+              "changedPixels": 3716,
+              "maximumChannelDifference": 16
+            },
+            {
+              "name": "PNG-caption",
+              "changedPixels": 7335,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "P-GAMMA",
+              "changedPixels": 7217,
+              "maximumChannelDifference": 2
+            },
+            {
+              "name": "footer",
+              "changedPixels": 2682,
+              "maximumChannelDifference": 2
+            }
+          ],
+          "inlinePngMaxDistanceToKnownBoundaryPhysicalPixels": 2.5,
+          "allOriginalSolidAlphaMarkersPass": true,
+          "allOriginalInkPresenceChecksPass": true
+        }
+      ],
+      "assessment": {
+        "measured": "Canvas staging changes raster RGB output at text antialiasing neighborhoods and inline-PNG interpolation boundaries. Alpha is byte-identical everywhere, uniform 3x3 interiors have zero changed pixels, all solid/position markers pass, and canvas allocation versus reuse is byte-identical at all DPRs. DPR 3 differences above 2 channel values occur only in the inline PNG region.",
+        "judgment": "This fixture supports a minor rasterization/interpolation edge difference rather than missing glyphs, lost transparency, a whole-page color shift, cropping or resolution reduction. It is a real pixel-output change, so exact parity remains failed. It does not establish random GPU variation or prove the specific cause of the rounding/interpolation difference.",
+        "reportedVisualReview": "The root agent reported intact glyphs/formula and localized antialiasing/PNG-edge differences in the DPR 3 baseline/candidate/diff images. This offline analysis did not perform an additional browser or visual run.",
+        "limitations": [
+          "Single synthetic page and one Chrome/Metal execution per DPR; no same-path repeated-run variance measurement.",
+          "Ink checks establish presence, not semantic OCR or complete glyph correctness; native-position markers do not prove every subpixel contour unchanged.",
+          "No actual PDF images, scanned text, gradients beyond this fixture, alternate color profiles/fonts, WKWebView or physical device fidelity is established.",
+          "No threshold was relaxed, no original results/source was changed, and no production acceptance is inferred."
+        ]
+      }
+    },
+    "native_visual_review": {
+      "reviewedAt": "2026-10-18T09:25:00.455391+00:00",
+      "scope": "Independent inspection of seven saved WK run02 PNGs and source witnesses, plus read-only final renderer lifetime review. No browser, backend, test or source mutation was performed by this reviewer.",
+      "decision": "No canvas-staging-specific visual identity or lifetime blocker found. Text identity and reverse restoration pass this bounded run. One visible shadow compositing caveat remains; this is not full native/client visual acceptance.",
+      "engine": {
+        "os": "Version 26.6.2 (Build 25G83)",
+        "webKitVersion": "21624.5.1.11.3",
+        "backingScaleFactor": 2,
+        "dataStorePersistent": false,
+        "disposableBackend": true,
+        "nativeInputEvidence": "production desktop DOM phase receiver; synthetic input, not physical NSEvent or fingers"
+      },
+      "sourceBinding": {
+        "rendererSha256": "fde37f4644e96989d056a87a6e04b0a3513770f7ce64588939eb036abe1c9358",
+        "matchesRunBackendIdentity": true,
+        "scope": "Backend identity binds the frozen source renderer; no independent captured HTTP response hash."
+      },
+      "savedRunFacts": {
+        "reportedStatus": "passed",
+        "checkCount": 20,
+        "failedChecks": [],
+        "nativeTurnCount": {
+          "expected": 24,
+          "observed": 24
+        },
+        "maxQueueGapMs": 35.999999999999886,
+        "maxTextureWaitMs": 1,
+        "textureBudget": {
+          "bytes": "84480000",
+          "leaves": "6"
+        },
+        "resolution": {
+          "back": {
+            "height": 1600,
+            "ratio": 2,
+            "width": 2200
+          },
+          "canvas": {
+            "cssHeight": 800,
+            "cssWidth": 1100,
+            "height": 1600,
+            "ratio": 2,
+            "width": 2200
+          },
+          "dpr": 2,
+          "front": {
+            "height": 1600,
+            "ratio": 2,
+            "width": 2200
+          },
+          "pixels": 8000000,
+          "software": false
+        },
+        "visualFixtureUploads": {
+          "texImage2D": 3,
+          "texSubImage2D": 5,
+          "maxUploadCallMs": 19.000000000000455,
+          "thrownUploads": 0
+        },
+        "note": "These are independently read saved-run values, not a new run. WebKit visual-pass upload spans are 12-19 ms; do not substitute Chrome sub-millisecond upload figures."
+      },
+      "sourceComparison": {
+        "documentId": 5,
+        "firstLabels": [
+          "Paragraph 001",
+          "Paragraph 002",
+          "Paragraph 003"
+        ],
+        "eighthLabels": [
+          "Paragraph 022",
+          "Paragraph 023",
+          "Paragraph 024"
+        ],
+        "landedLabels": [
+          "Paragraph 024",
+          "Paragraph 025",
+          "Paragraph 026"
+        ],
+        "forwardRatiosStrictlyIncrease": true,
+        "reverseAnchorExact": true,
+        "reverseTextExact": true,
+        "reversePNGByteIdentical": true,
+        "heldSnapshotsHaveActualDrawWitness": true
+      },
+      "imageReview": [
+        {
+          "image": "outputs/continuous-latency-20261018/webkit/run-02-results/visual-first-page.png",
+          "sourceEvidence": "outputs/continuous-latency-20261018/webkit/run-02-results/visual-first-page-source.json",
+          "pixels": [
+            2200,
+            1600
+          ],
+          "sha256": "61d17cae9a34f53769c3ce1ecc59f54369dae1bb63773a6bc32cbedd0467f486",
+          "documentId": "5",
+          "pageIndex": 0,
+          "labels": [
+            "Paragraph 001",
+            "Paragraph 002",
+            "Paragraph 003"
+          ],
+          "anchor": {
+            "version": "91ff8d0ce64a94eb7a788d95b748188038ef201bcaa3ef2d3a0dc8d3c191ee7a",
+            "block_id": "b-bcd4e1b690bd2070-1",
+            "start": 0,
+            "end": 0,
+            "quote": "",
+            "prefix": "",
+            "suffix": "Paragraph 001, scene 1. Amber lanterns i",
+            "ratio": 0
+          },
+          "drawWitness": null,
+          "visualObservation": "Labels Paragraph 001, 002 and the beginning of 003 are visible, with upright readable text and live inline glosses. Matches source index 0."
+        },
+        {
+          "image": "outputs/continuous-latency-20261018/webkit/run-02-results/visual-page-8-before.png",
+          "sourceEvidence": "outputs/continuous-latency-20261018/webkit/run-02-results/visual-page-8-before-source.json",
+          "pixels": [
+            2200,
+            1600
+          ],
+          "sha256": "b2ed8e818247811fe91a15be6504f465ca5e11d21fe5a32626b4f7f1796ce8d0",
+          "documentId": "5",
+          "pageIndex": 8,
+          "labels": [
+            "Paragraph 022",
+            "Paragraph 023",
+            "Paragraph 024"
+          ],
+          "anchor": {
+            "version": "91ff8d0ce64a94eb7a788d95b748188038ef201bcaa3ef2d3a0dc8d3c191ee7a",
+            "block_id": "b-21a86a490efd6f57-1",
+            "start": 391,
+            "end": 391,
+            "quote": "",
+            "prefix": "ans practice a gentle melody. Paragraph ",
+            "suffix": "021, scene 5. Amber lanterns illuminate ",
+            "ratio": 0.2168141592920354
+          },
+          "drawWitness": null,
+          "visualObservation": "Begins with the continuation 021, scene 5; then Paragraph 022, 023 and 024 scenes 1-2. Matches source index 8 and displayed page 9/37."
+        },
+        {
+          "image": "outputs/continuous-latency-20261018/webkit/run-02-results/visual-page-8-held-forward.png",
+          "sourceEvidence": "outputs/continuous-latency-20261018/webkit/run-02-results/visual-page-8-held-forward-source.json",
+          "pixels": [
+            2200,
+            1600
+          ],
+          "sha256": "2620f8ecdf7ae6dea87cfcb5526cd3acf527aa9f3c36eae12048fffb5530a232",
+          "documentId": "5",
+          "pageIndex": 8,
+          "labels": [
+            "Paragraph 022",
+            "Paragraph 023",
+            "Paragraph 024"
+          ],
+          "anchor": {
+            "version": "91ff8d0ce64a94eb7a788d95b748188038ef201bcaa3ef2d3a0dc8d3c191ee7a",
+            "block_id": "b-21a86a490efd6f57-1",
+            "start": 391,
+            "end": 391,
+            "quote": "",
+            "prefix": "ans practice a gentle melody. Paragraph ",
+            "suffix": "021, scene 5. Amber lanterns illuminate ",
+            "ratio": 0.2168141592920354
+          },
+          "drawWitness": {
+            "firstObservedAt": 4122,
+            "pin": {
+              "dy": 0,
+              "grab": 0.55,
+              "limited": false,
+              "model": [
+                0,
+                0,
+                1,
+                0
+              ],
+              "requested": {
+                "x": 400,
+                "y": 440.00000000000006
+              },
+              "x": 400,
+              "y": 440.00000000000006
+            },
+            "snapshotReadyAt": 4152
+          },
+          "visualObservation": "The remaining left source carries 021-024; the folded paper and uncovered next-page region carry 024 scene 3 through 026, matching the subsequent landed page. Visible texture text is upright and legible outside the deliberately compressed bend."
+        },
+        {
+          "image": "outputs/continuous-latency-20261018/webkit/run-02-results/visual-page-9-landed.png",
+          "sourceEvidence": "outputs/continuous-latency-20261018/webkit/run-02-results/visual-page-9-landed-source.json",
+          "pixels": [
+            2200,
+            1600
+          ],
+          "sha256": "bb9ecafd0ec81cd34d26bca7646987f85cc2bff2a1c2a915177d6798101c49a3",
+          "documentId": "5",
+          "pageIndex": 9,
+          "labels": [
+            "Paragraph 024",
+            "Paragraph 025",
+            "Paragraph 026"
+          ],
+          "anchor": {
+            "version": "91ff8d0ce64a94eb7a788d95b748188038ef201bcaa3ef2d3a0dc8d3c191ee7a",
+            "block_id": "b-5e7a1ebba1711489-1",
+            "start": 201,
+            "end": 201,
+            "quote": "",
+            "prefix": "rn station while a quiet train arrives. ",
+            "suffix": "Paragraph 024, scene 3. Blue kingfishers",
+            "ratio": 0.2437532535137949
+          },
+          "drawWitness": null,
+          "visualObservation": "Begins Paragraph 024, scene 3; then 025 and 026 through scene 5. Matches source index 9 and displayed page 10/37. No blank region or old-page texture survives landing."
+        },
+        {
+          "image": "outputs/continuous-latency-20261018/webkit/run-02-results/visual-page-9-held-reverse.png",
+          "sourceEvidence": "outputs/continuous-latency-20261018/webkit/run-02-results/visual-page-9-held-reverse-source.json",
+          "pixels": [
+            2200,
+            1600
+          ],
+          "sha256": "da29dfd207091c619514b3abf42ec3f1f41e3aa24362e98c2885e58bc330c703",
+          "documentId": "5",
+          "pageIndex": 9,
+          "labels": [
+            "Paragraph 024",
+            "Paragraph 025",
+            "Paragraph 026"
+          ],
+          "anchor": {
+            "version": "91ff8d0ce64a94eb7a788d95b748188038ef201bcaa3ef2d3a0dc8d3c191ee7a",
+            "block_id": "b-5e7a1ebba1711489-1",
+            "start": 201,
+            "end": 201,
+            "quote": "",
+            "prefix": "rn station while a quiet train arrives. ",
+            "suffix": "Paragraph 024, scene 3. Blue kingfishers",
+            "ratio": 0.2437532535137949
+          },
+          "drawWitness": {
+            "firstObservedAt": 4302.000000000001,
+            "pin": {
+              "dy": 0,
+              "grab": 0.55,
+              "limited": false,
+              "model": [
+                0,
+                0,
+                1,
+                0
+              ],
+              "requested": {
+                "x": 700,
+                "y": 440.00000000000006
+              },
+              "x": 700,
+              "y": 440.00000000000006
+            },
+            "snapshotReadyAt": 4335
+          },
+          "visualObservation": "The reverse fold exposes the preceding 021-024 source, while the still-exposed current page corresponds to 024-026. Visible label order agrees with the intended reverse turn."
+        },
+        {
+          "image": "outputs/continuous-latency-20261018/webkit/run-02-results/visual-page-8-reversed.png",
+          "sourceEvidence": "outputs/continuous-latency-20261018/webkit/run-02-results/visual-page-8-reversed-source.json",
+          "pixels": [
+            2200,
+            1600
+          ],
+          "sha256": "b2ed8e818247811fe91a15be6504f465ca5e11d21fe5a32626b4f7f1796ce8d0",
+          "documentId": "5",
+          "pageIndex": 8,
+          "labels": [
+            "Paragraph 022",
+            "Paragraph 023",
+            "Paragraph 024"
+          ],
+          "anchor": {
+            "version": "91ff8d0ce64a94eb7a788d95b748188038ef201bcaa3ef2d3a0dc8d3c191ee7a",
+            "block_id": "b-21a86a490efd6f57-1",
+            "start": 391,
+            "end": 391,
+            "quote": "",
+            "prefix": "ans practice a gentle melody. Paragraph ",
+            "suffix": "021, scene 5. Amber lanterns illuminate ",
+            "ratio": 0.2168141592920354
+          },
+          "drawWitness": null,
+          "visualObservation": "Restores the exact 021 continuation and 022-024 content, layout and displayed 9/37 footer. PNG bytes are identical to visual-page-8-before.png."
+        },
+        {
+          "image": "outputs/continuous-latency-20261018/webkit/run-02-results/moving-paper.png",
+          "sourceEvidence": "outputs/continuous-latency-20261018/webkit/run-02-results/moving-paper-draw.json",
+          "pixels": [
+            2200,
+            1600
+          ],
+          "sha256": "dbcc310e2fda131d4519bf4f0665fc3a4c53fbbc92cff0f2510d8334963d40cf",
+          "documentId": "3",
+          "pageIndex": 24,
+          "labels": [],
+          "anchor": {
+            "version": "a89843d4e62d385cb98016a0926b7263d42dcb72fa83714b1250b6dd03550178",
+            "block_id": "b-f04a435d61233b5a-28",
+            "start": 590,
+            "end": 590,
+            "quote": "",
+            "prefix": "conviction, since knowledge is acquired ",
+            "suffix": "in relations. A prominent contribution c",
+            "ratio": 0.4581401766004415
+          },
+          "drawWitness": {
+            "firstObservedAt": 1802,
+            "pin": {
+              "dy": 0,
+              "grab": 0.55,
+              "limited": false,
+              "model": [
+                0,
+                0,
+                1,
+                0
+              ],
+              "requested": {
+                "x": 940,
+                "y": 440.00000000000006
+              },
+              "x": 940,
+              "y": 440.00000000000006
+            },
+            "snapshotReadyAt": 1835
+          },
+          "visualObservation": "A small right-edge curl is visibly rendered; the repeated source remains readable and corresponds to source index 24. It is no longer a pre-draw blank snapshot; this repeated-text fixture alone is not a page-identity oracle."
+        }
+      ],
+      "observedCaveats": [
+        {
+          "id": "shadow-underlying-text",
+          "status": "visible observation; causality not established",
+          "images": [
+            "visual-page-8-held-forward.png",
+            "visual-page-9-held-reverse.png"
+          ],
+          "observation": "Faint text from the live underlying page is visible through parts of the shaded uncovered area. Main folded and landed text identities are correct; no blank or wrong cached page was observed. Do not claim perfect opacity or complete light/shadow fidelity from this review.",
+          "sourceInference": "The existing shadow plane emits alpha below one; gl.blendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA) also applies those factors to alpha. When blended over an opaque stationary face, output alpha can fall below one and expose the live DOM. This explains the shape of the observation but was not isolated by a before/after render experiment.",
+          "locations": [
+            "web/page-fold.js: shadow plane branch in foldFragment",
+            "web/page-curl-renderer.js: init blendFunc and draw stationary/plane order"
+          ],
+          "relationshipToCandidate": "No evidence that canvas staging introduced this. Renderer source comparison alone does not prove historical pixel equivalence."
+        }
+      ],
+      "lifetimeReview": {
+        "newActionableDefects": [],
+        "findings": [
+          "captureTail serializes each complete capture promise including finally, so only one scratch 2D canvas is active in JavaScript.",
+          "Owner, epoch, generation and aborted-scope checks occur after awaited assets and SVG load. No await occurs between the final validity check and staging/upload/cache publication, preventing route JavaScript from interleaving there.",
+          "Every path after scratch creation reaches finally, which resets both canvas dimensions to zero and clears the SVG Image source. Failure and optional-budget early-return paths share this cleanup.",
+          "Reused storage must have equal pixel dimensions and must be absent from both scene texture keys and pending required keys. Upload errors delete the failed texture and restore GL binding state.",
+          "invalidate aborts capture jobs and clears the cache; dispose also shrinks the main surface before context loss. Saved run02 verifies detached 0x0 old surface and no upload after route departure.",
+          "The new scratch is at most the existing per-leaf eight-million-pixel cap, about 32 MB raw RGBA in addition to texture cache and browser-owned buffers. This is a source-level bound, not measured native peak memory."
+        ],
+        "timingLimit": "captureTrace.finishedAt precedes cache dataset publication and finally dimension reset. Queue/frame outcomes cover the eventual consequence, but this trace cannot separately quantify teardown latency."
+      },
+      "isolationReview": {
+        "windowConstructions": 1,
+        "webViewConstructions": 1,
+        "websiteDataStore": "nonPersistent assigned before WKWebView construction; host.json confirms false persistence",
+        "installedClientOrUserDataUsed": false,
+        "note": "The run uses the owned disposable source backend and one isolated WK window. Routes remain in the same nonpersistent store."
+      },
+      "remainingLimits": [
+        "No physical trackpad gesture, installed application package or personal data path was exercised.",
+        "Text-only labels validate cached page identity; no PDF image, transparency, formula, scan fallback, chapter handoff or mixed-source cross-document range was visually accepted here.",
+        "Held images after eviction contain plain source text; the first page has inline glosses, but this set does not establish annotated held-text fidelity in every style/theme.",
+        "One current system WebKit build and actual DPR 2 display were observed. Other WebKit builds, DPR 3, double-page layout and device pressure remain outside this run.",
+        "Seven still PNGs cannot establish all animation frames, GPU presentation latency or subjective physical feel.",
+        "Native memory peak, OS texture reclamation and timing of scratch teardown are not directly measured.",
+        "The recorded shadow compositing caveat remains unresolved; content correctness is not full paper-lighting acceptance."
+      ]
+    },
+    "rows": [
+      {
+        "DPR": 1,
+        "flags": [
+          "canvas-new:pixel-difference-visual-review-required",
+          "canvas-reuse:pixel-difference-visual-review-required"
+        ],
+        "comparisons": [
+          {
+            "baseline": "direct-image",
+            "candidate": "canvas-new",
+            "exactMatch": false,
+            "changedPixels": 12482,
+            "changedChannels": 21999,
+            "alphaChangedPixels": 0,
+            "totalPixels": 268800,
+            "maxChannelDifference": 3,
+            "meanAbsoluteChannelDifference": 0.020723586309523808,
+            "rmsChannelDifference": 0.14578017738721413,
+            "changedBoundingBox": {
+              "x0": 34,
+              "y0": 48,
+              "x1": 377,
+              "y1": 506
+            }
+          },
+          {
+            "baseline": "direct-image",
+            "candidate": "canvas-reuse",
+            "exactMatch": false,
+            "changedPixels": 12482,
+            "changedChannels": 21999,
+            "alphaChangedPixels": 0,
+            "totalPixels": 268800,
+            "maxChannelDifference": 3,
+            "meanAbsoluteChannelDifference": 0.020723586309523808,
+            "rmsChannelDifference": 0.14578017738721413,
+            "changedBoundingBox": {
+              "x0": 34,
+              "y0": 48,
+              "x1": 377,
+              "y1": 506
+            }
+          }
+        ],
+        "all_markers_pass": true,
+        "all_ink_regions_nonblank": true
+      },
+      {
+        "DPR": 2,
+        "flags": [
+          "canvas-new:pixel-difference-visual-review-required",
+          "canvas-reuse:pixel-difference-visual-review-required"
+        ],
+        "comparisons": [
+          {
+            "baseline": "direct-image",
+            "candidate": "canvas-new",
+            "exactMatch": false,
+            "changedPixels": 26614,
+            "changedChannels": 47419,
+            "alphaChangedPixels": 0,
+            "totalPixels": 1075200,
+            "maxChannelDifference": 3,
+            "meanAbsoluteChannelDifference": 0.01118954613095238,
+            "rmsChannelDifference": 0.10732128000940513,
+            "changedBoundingBox": {
+              "x0": 69,
+              "y0": 96,
+              "x1": 755,
+              "y1": 1012
+            }
+          },
+          {
+            "baseline": "direct-image",
+            "candidate": "canvas-reuse",
+            "exactMatch": false,
+            "changedPixels": 26614,
+            "changedChannels": 47419,
+            "alphaChangedPixels": 0,
+            "totalPixels": 1075200,
+            "maxChannelDifference": 3,
+            "meanAbsoluteChannelDifference": 0.01118954613095238,
+            "rmsChannelDifference": 0.10732128000940513,
+            "changedBoundingBox": {
+              "x0": 69,
+              "y0": 96,
+              "x1": 755,
+              "y1": 1012
+            }
+          }
+        ],
+        "all_markers_pass": true,
+        "all_ink_regions_nonblank": true
+      },
+      {
+        "DPR": 3,
+        "flags": [
+          "canvas-new:pixel-difference-visual-review-required",
+          "canvas-reuse:pixel-difference-visual-review-required"
+        ],
+        "comparisons": [
+          {
+            "baseline": "direct-image",
+            "candidate": "canvas-new",
+            "exactMatch": false,
+            "changedPixels": 42526,
+            "changedChannels": 79466,
+            "alphaChangedPixels": 0,
+            "totalPixels": 2419200,
+            "maxChannelDifference": 16,
+            "meanAbsoluteChannelDifference": 0.010452215608465609,
+            "rmsChannelDifference": 0.15186029524693667,
+            "changedBoundingBox": {
+              "x0": 103,
+              "y0": 144,
+              "x1": 1133,
+              "y1": 1519
+            }
+          },
+          {
+            "baseline": "direct-image",
+            "candidate": "canvas-reuse",
+            "exactMatch": false,
+            "changedPixels": 42526,
+            "changedChannels": 79466,
+            "alphaChangedPixels": 0,
+            "totalPixels": 2419200,
+            "maxChannelDifference": 16,
+            "meanAbsoluteChannelDifference": 0.010452215608465609,
+            "rmsChannelDifference": 0.15186029524693667,
+            "changedBoundingBox": {
+              "x0": 103,
+              "y0": 144,
+              "x1": 1133,
+              "y1": 1519
+            }
+          }
+        ],
+        "all_markers_pass": true,
+        "all_ink_regions_nonblank": true
+      }
+    ],
+    "interpretation": "Exact byte comparison remains failed; edge differences are retained, not waived or relabelled a machine pass. Visual review found intended text, Chinese glyphs, formulas, image/alpha and labels present. Distinct real-app WebKit traversal restores exact source/anchors after texture reuse and reverse."
+  },
+  "remaining_limits": [
+    "Physical trackpad-to-screen timing, human feel, installed bundle packaging and real model/PDF OCR fidelity are not accepted by these generated phase/text-fixture runs.",
+    "Exact raster byte identity is not met; retained edge differences require the documented visual interpretation and remain visible in the report.",
+    "Wide DPR3 double-spread mandatory four-face set retains the pre-existing103.68MB soft-byte-budget exception. Optional prefetch cannot expand it; normal DPR2 measured texture peak is92.16MB.96MB is not total process/GPU memory.",
+    "Historical no-upload first-rAF scheduling cause remains unknown; no claim of a hard bound under arbitrary host scheduling."
+  ],
+  "reproduce": [
+    ".venv/bin/python outputs/continuous-latency-20261018/run_targeted.py NEW_LABEL --repeat 24",
+    "node outputs/continuous-latency-20261018/raster-fidelity/probe.mjs",
+    "WR_E2E_PORT=18774 WR_E2E_PROVIDER_PORT=18775 .venv/bin/python scripts/e2e_acceptance.py",
+    "System WebKit compile/run protocol: webkit/README.md (use fresh output names)"
+  ],
+  "source_identity": {
+    "web/page-curl-renderer.js": "fde37f4644e96989d056a87a6e04b0a3513770f7ce64588939eb036abe1c9358",
+    "web/pagination.js": "816a34a61e35dce267c5c4541044cbc1405192c92ca5be9928170a2320a486ce",
+    "tests/browser/reader-native.spec.js": "a1ce11fc4d4c18ff21487f81069e9837554e95a30d2a72182ff73d7b7858a6cd"
+  },
+  "no_commit_or_push": true
+}

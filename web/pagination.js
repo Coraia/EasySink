@@ -986,7 +986,9 @@ export class ReadingPages {
       };
       const frame = (now) => {
         if (!valid()) return;
-        const t = Math.min(1, (now - start) / duration),
+        // A frame timestamp may precede a release handled in that same frame.
+        // Never extrapolate the settling pose backwards before its start.
+        const t = Math.max(0, Math.min(1, (now - start) / duration)),
           // Smooth in both directions; cancel no longer snaps with a short
           // ease-out. Confirmation is separate from this reversible preview.
           ease = trackpad ? t * t * (3 - 2 * t) : 1 - Math.pow(1 - t, 3);

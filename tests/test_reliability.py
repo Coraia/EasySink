@@ -72,21 +72,41 @@ def test_invalid_import_is_explicit_and_atomic(c, monkeypatch):
         c.post("/api/import", files={"file": ("huge.epub", epub(501))}).status_code
         == 400
     )
-    original = c.app.state.engine.ingest
-    calls = 0
+    payload = epub(2)
+    for boundary in ("prepare_import", "persist_import"):
+        original = getattr(c.app.state.engine, boundary)
+        calls = 0
 
-    def fail(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise ValueError("simulated parser failure")
-        return original(*args, **kwargs)
+        def fail(*args, **kwargs):
+            nonlocal calls
+            result = original(*args, **kwargs)
+            calls += 1
+            if calls == 2:
+                # Persistence has already written both chapters: prove that
+                # the enclosing book transaction rolls those writes back.
+                raise ValueError(f"simulated {boundary} failure")
+            return result
 
-    monkeypatch.setattr(c.app.state.engine, "ingest", fail)
-    with pytest.raises(ValueError):
-        c.post("/api/import", files={"file": ("book.epub", epub(2))})
-    assert c.get("/api/documents").json() == []
-    assert c.get("/api/library/books").json() == []
+        with monkeypatch.context() as patch:
+            patch.setattr(c.app.state.engine, boundary, fail)
+            with pytest.raises(ValueError, match=f"simulated {boundary} failure"):
+                c.post("/api/import", files={"file": ("book.epub", payload)})
+        assert calls == 2
+        assert c.get("/api/documents").json() == []
+        assert c.get("/api/library/books").json() == []
+        for table in ("document", "wr_book", "wr_chapter", "wr_content",
+                      "wr_import_source", "wr_source_analysis"):
+            assert c.app.state.store.query(f"SELECT * FROM {table}") == [], table
+
+    retry = c.post("/api/import", files={"file": ("book.epub", payload)})
+    assert retry.status_code == 200, retry.text
+    assert len(retry.json()["chapters"]) == 2
+    assert not retry.json()["reused"]
+    repeated = c.post("/api/import", files={"file": ("book.epub", payload)})
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["reused"]
+    assert repeated.json()["book_id"] == retry.json()["book_id"]
+    assert len(c.get("/api/documents").json()) == 2
 
 
 def test_library_plugin_can_be_physically_unregistered(tmp_path, monkeypatch):
@@ -130,7 +150,8 @@ def test_model_invalid_difficulty_does_not_crash_and_failed_cache_retries(
         d,
     )
     assert kept == [] and dropped == 1
-    llm = Mock()
+    llm = Mock(spec=["base_url", "model", "complete"])
+    llm.base_url = "https://fixture.invalid/v1"
     llm.model = "test-v1"
     llm.complete.side_effect = [TimeoutError(), {"annotations": []}]
     store = Store(tmp_path / "cache.db")
@@ -147,7 +168,7 @@ def test_model_invalid_difficulty_does_not_crash_and_failed_cache_retries(
     store.close()
 
 
-def test_punctuation_semantic_rules_and_expression_feedback(c):
+def test_punctuation_dictionary_candidates_and_expression_feedback(c):
     assert ", " in parse("Let's eat, Grandma!").numbered_sentences()[0]
     assert (
         parse("Let's eat, Grandma!").numbered_sentences()
@@ -159,6 +180,7 @@ def test_punctuation_semantic_rules_and_expression_feedback(c):
     annos = [f for b in d["blocks"] for f in b["fragments"] if f["type"] == "anno"]
     phrase = next(a for a in annos if a["kind"] == "phrase")
     assert phrase["target"].startswith("phrase:")
+    assert phrase["source"] == "dictionary-phrase"
     assert (
         c.post(
             "/api/feedback", json={"target": phrase["target"], "verdict": "known"}
@@ -181,8 +203,18 @@ def test_punctuation_semantic_rules_and_expression_feedback(c):
         ).status_code
         == 200
     )
-    d = c.get("/api/documents/" + str(d["id"])).json()
-    assert any(f.get("note") == "重划选区" for b in d["blocks"] for f in b["fragments"])
+    dictionary = c.post(
+        "/api/lookup", json={"word": "redistricting", "mark_unknown": False}
+    ).json()
+    assert dictionary["found"] and not dictionary["contextual"]
+    d = c.get("/api/documents/" + str(d["id"]), params={"density": 0}).json()
+    annos = [f for b in d["blocks"] for f in b["fragments"] if f["type"] == "anno"]
+    word = next(a for a in annos if a["target"] == "redistricting")
+    assert word["source"] == "dictionary"
+    assert word["note"] == dictionary["note"]
+    assert word["detail"] == dictionary["detail"]
+    assert d["forced_count"] >= 1
+    assert all(a["source"] != "context-rule" for a in annos)
 
 
 def test_forced_function_word_and_zero_density(c):

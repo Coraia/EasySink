@@ -197,6 +197,14 @@ test("AI config masks keys, hot-enables models, validates errors and translates 
   page,
   request,
 }, testInfo) => {
+  const reset = await request.put("/api/ai/config", {
+    data: { text: { enabled: false, clear_key: true } },
+  });
+  expect(reset.ok()).toBeTruthy();
+  expect((await reset.json()).text).toMatchObject({
+    enabled: false, has_api_key: false, available: false,
+  });
+  expect((await (await request.get("/api/profile")).json()).l1_available).toBe(false);
   await page.goto("/#/ai");
   await expect(page.locator("#ai-text-form")).toBeVisible();
   await page.locator("#ai-text-url").fill(provider + "/v1");
@@ -206,6 +214,8 @@ test("AI config masks keys, hot-enables models, validates errors and translates 
   await expect(page.locator("#ai-text-status")).toContainText("连接成功");
   const config = await (await request.get("/api/ai/config")).json();
   expect(JSON.stringify(config)).not.toContain(key);
+  expect(config.text.enabled).toBe(true);
+  expect(config.text.available).toBe(true);
   expect(config.text.has_api_key).toBeTruthy();
   expect(
     (await (await request.get("/api/profile")).json()).l1_available,

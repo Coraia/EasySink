@@ -141,10 +141,6 @@ def is_epub_upload(data, filename, content_type):
         return False
 
 
-def html_to_text(raw):
-    return "\n\n".join(b["text"] for b in content.html_blocks(raw))
-
-
 def _local(tag):
     return tag.split("}")[-1]
 

@@ -5,13 +5,11 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
-from wise_reader.jobs import chunks as _chunks
 from wise_reader.plugins.runtime import PluginContext, require_plugin
 from wise_reader.store import Store
 from wise_reader.reading_assist import SelectionIn, assist
 
 PLUGIN_ID = "translate"
-SYS = "将下面英文译为流畅中文。只输出译文，不要解释，不要加标题。"
 
 
 class TranslateIn(BaseModel):
@@ -39,7 +37,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-__all__ = ["_chunks", "migrate", "register"]
+__all__ = ["migrate", "register"]
 
 
 def register(app: FastAPI, ctx: PluginContext) -> None:

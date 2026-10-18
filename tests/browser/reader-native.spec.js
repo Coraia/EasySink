@@ -125,26 +125,293 @@ test('tools, zoom, Escape and disconnect do not commit a held page; a source sel
   await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '1');
 });
 test('a queued native gesture waits less than 50ms for the preceding page to land', async ({ page, request }, info) => {
-  await prepared(page, request);
-  const gaps = [];
-  for (let pair = 0; pair < 6; pair++) {
-    const baseline = await page.evaluate(() => JSON.parse(document.querySelector('.reader').dataset.nativeGestures).length);
-    await phase(page, 1, 700);
-    page.__native.send(JSON.stringify({ source: 'e2e-phase-fixture', phase: 8, dx: 0, dy: 0, momentum: 0 }));
-    page.__native.send(JSON.stringify({ source: 'e2e-phase-fixture', phase: 1, dx: 700, dy: 0, momentum: 0 }));
-    page.__native.send(JSON.stringify({ source: 'e2e-phase-fixture', phase: 8, dx: 0, dy: 0, momentum: 0 }));
-    await expect(page.locator('.reader')).toHaveAttribute('data-page-index', String((pair + 1) * 2));
-    await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
-    const records = await page.evaluate(() => JSON.parse(document.querySelector('.reader').dataset.nativeGestures));
-    const recent = records.slice(baseline);
-    const queued = recent.find(record => record.kind === 'began' && record.waiting);
-    const precedingLanding = recent.find(record => record.kind === 'landed' && record.at >= queued.at);
-    gaps.push(precedingLanding.at - queued.at);
-  }
-  const metrics = await page.evaluate(() => JSON.parse(document.querySelector('.reader').dataset.curlMetrics));
-  await info.attach('queued-native-turn-gap.json', {
-    body: JSON.stringify({ gaps, metrics }, null, 2), contentType: 'application/json'
+  await page.addInitScript(() => {
+    const limit = 2048, records = [], installed = [];
+    const contexts = new WeakMap(), states = [];
+    let counts = {}, dropped = 0, resetAt = performance.now(), probeErrors = 0;
+    let serial = 0, liveBytes = 0, liveCount = 0, allocatedCount = 0;
+    let peakBytes = 0, peakCount = 0, lifetimePeakBytes = 0, lifetimePeakCount = 0;
+    let unsupportedUploads = 0, unknownBindings = 0, glErrors = 0, resetAllocation;
+    const rafLimit = 2048, longTaskLimit = 256, rafRecords = [], longTaskRecords = [];
+    let rafRequests = 0, rafCallbacks = 0, rafDropped = 0, longTaskCount = 0, longTaskDropped = 0;
+    let schedulerErrors = 0, rafInstalled = false, longTaskStatus = 'unsupported', longTaskObserver;
+    const collectLongTasks = entries => {
+      try {
+        const observedAt = performance.now();
+        for (const entry of entries) {
+          if (entry.startTime + entry.duration < resetAt) continue;
+          longTaskCount++;
+          if (longTaskRecords.length >= longTaskLimit) longTaskDropped++;
+          else longTaskRecords.push({ startTime: entry.startTime, duration: entry.duration,
+            name: entry.name, observedAt, startedBeforeReset: entry.startTime < resetAt });
+        }
+      } catch { schedulerErrors++; }
+    };
+    try {
+      let owner = window, descriptor;
+      while (owner && !(descriptor = Object.getOwnPropertyDescriptor(owner, 'requestAnimationFrame')))
+        owner = Object.getPrototypeOf(owner);
+      if (typeof descriptor?.value === 'function') {
+        const original = descriptor.value;
+        Object.defineProperty(owner, 'requestAnimationFrame', { ...descriptor, value: function (...args) {
+          const callback = args[0];
+          if (typeof callback !== 'function') return Reflect.apply(original, this, args);
+          const callRequestedAt = performance.now();
+          let requestId;
+          const wrapped = function (...callbackArgs) {
+            const entryPerformanceNow = performance.now();
+            let threw = false;
+            try { return Reflect.apply(callback, this, callbackArgs); }
+            catch (error) { threw = true; throw error; }
+            finally {
+              const exitPerformanceNow = performance.now();
+              try {
+                rafCallbacks++;
+                if (rafRecords.length >= rafLimit) rafDropped++;
+                else rafRecords.push({ requestId, callRequestedAt, rafTimestamp: callbackArgs[0],
+                  entryPerformanceNow, exitPerformanceNow, requestedBeforeReset: callRequestedAt < resetAt, threw });
+              } catch { schedulerErrors++; }
+            }
+          };
+          requestId = Reflect.apply(original, this, [wrapped, ...args.slice(1)]);
+          rafRequests++;
+          return requestId; // Native IDs remain valid for the untouched cancelAnimationFrame.
+        } });
+        rafInstalled = true;
+      }
+    } catch { schedulerErrors++; }
+    if (window.PerformanceObserver?.supportedEntryTypes?.includes('longtask')) {
+      try {
+        longTaskObserver = new PerformanceObserver(list => collectLongTasks(list.getEntries()));
+        longTaskObserver.observe({ type: 'longtask', buffered: true });
+        longTaskStatus = 'observing';
+      } catch { longTaskStatus = 'unavailable'; schedulerErrors++; }
+    }
+    const schedulerSnapshot = () => {
+      if (longTaskObserver) collectLongTasks(longTaskObserver.takeRecords());
+      return {
+        scope: 'all observed post-reset JS rAF callbacks and browser long tasks; excludes physical input and GPU presentation',
+        rafInstalled, rafLimit, rafRequests, rafCallbacks, rafDropped, rafRecords,
+        longTaskStatus, longTaskLimit, longTaskCount, longTaskDropped, longTaskRecords, schedulerErrors,
+      };
+    };
+    const allocation = () => ({ liveBytes, liveTextureCount: liveCount, allocatedTextureCount: allocatedCount });
+    const stateFor = gl => {
+      let state = contexts.get(gl);
+      if (!state) {
+        state = { id: states.length + 1, unit: 33984, bindings: new Map(), textures: new WeakMap(), live: new Map() };
+        contexts.set(gl, state); states.push(state);
+      }
+      return state;
+    };
+    const notePeak = () => {
+      peakBytes = Math.max(peakBytes, liveBytes); peakCount = Math.max(peakCount, liveCount);
+      lifetimePeakBytes = Math.max(lifetimePeakBytes, liveBytes);
+      lifetimePeakCount = Math.max(lifetimePeakCount, liveCount);
+    };
+    const uploadInfo = (stage, args) => {
+      const image = stage === 'texImage2D', sourceOverload = args.length === (image ? 6 : 7);
+      const source = sourceOverload ? args.at(-1) : args[8];
+      // Intrinsic source dimensions only; no document queries or layout reads.
+      return {
+        target: args[0], level: args[1],
+        sourceType: source?.constructor?.name || (source === null ? 'null' : typeof source),
+        width: sourceOverload ? (source?.naturalWidth ?? source?.videoWidth ?? source?.width ?? null) : args[image ? 3 : 4],
+        height: sourceOverload ? (source?.naturalHeight ?? source?.videoHeight ?? source?.height ?? null) : args[image ? 4 : 5],
+        format: args[sourceOverload ? (image ? 3 : 4) : 6],
+        type: args[sourceOverload ? (image ? 4 : 5) : 7],
+        ...(image ? { internalFormat: args[2] } : { xoffset: args[2], yoffset: args[3] }),
+      };
+    };
+    window.__wrQueuedGLWitness = {
+      reset() {
+        records.length = 0; counts = {}; dropped = 0; resetAt = performance.now();
+        rafRecords.length = 0; longTaskRecords.length = 0;
+        rafRequests = rafCallbacks = rafDropped = longTaskCount = longTaskDropped = 0;
+        // Warm-up textures and binding identities remain live across this reset.
+        resetAllocation = allocation(); peakBytes = liveBytes; peakCount = liveCount;
+      },
+      snapshot() { return {
+        limit, installed, resetAt, timeOrigin: performance.timeOrigin, counts, dropped, probeErrors, records,
+        scheduler: schedulerSnapshot(),
+        textureLifetime: {
+          scope: 'API-accounted uncompressed RGBA/UNSIGNED_BYTE 2D texture storage; excludes drawing buffers, decoded images, driver copies and deferred GPU deletion',
+          referenceBudgetBytes: 96_000_000, referenceLeafLimit: 6,
+          atReset: resetAllocation, current: allocation(), peakBytes, peakTextureCount: peakCount,
+          lifetimePeakBytes, lifetimePeakTextureCount: lifetimePeakCount,
+          unsupportedUploads, unknownBindings, glErrors,
+          textures: states.flatMap(state => [...state.live.values()].map(texture => ({
+            id: texture.id, contextId: state.id, bytes: texture.bytes, levels: [...texture.levels.values()],
+          }))),
+        },
+      }; },
+    };
+    for (const name of ['WebGLRenderingContext', 'WebGL2RenderingContext']) {
+      const prototype = window[name]?.prototype;
+      for (const stage of ['createTexture', 'deleteTexture', 'bindTexture', 'activeTexture',
+        'texImage2D', 'texSubImage2D', 'getError', 'getParameter']) {
+        const descriptor = prototype && Object.getOwnPropertyDescriptor(prototype, stage);
+        if (typeof descriptor?.value !== 'function') continue;
+        const original = descriptor.value;
+        installed.push(`${name}.${stage}`);
+        Object.defineProperty(prototype, stage, { ...descriptor, value: function (...args) {
+          const startedAt = performance.now();
+          let threw = false, result;
+          try { result = Reflect.apply(original, this, args); return result; }
+          catch (error) { threw = true; throw error; }
+          finally {
+            const finishedAt = performance.now();
+            try {
+              counts[stage] = (counts[stage] || 0) + 1;
+              const state = stateFor(this);
+              const entry = { stage, context: name, startedAt, finishedAt,
+                contextId: state.id, durationMs: finishedAt - startedAt, threw };
+              if (stage === 'getParameter') entry.parameter = args[0];
+              if (stage === 'getError') {
+                entry.result = typeof result === 'number' ? result : null;
+                if (!threw && result !== 0) glErrors++;
+              }
+              if (!threw && stage === 'createTexture' && result) {
+                const texture = { id: ++serial, bytes: 0, levels: new Map() };
+                state.textures.set(result, texture); state.live.set(texture.id, texture);
+                liveCount++; entry.textureId = texture.id;
+              }
+              if (!threw && stage === 'activeTexture') state.unit = args[0];
+              if (!threw && stage === 'bindTexture') {
+                state.bindings.set(`${state.unit}:${args[0]}`, args[1]);
+                entry.textureId = state.textures.get(args[1])?.id ?? null;
+                entry.unit = state.unit; entry.target = args[0];
+                if (args[1] && !state.textures.has(args[1])) unknownBindings++;
+              }
+              if (stage === 'deleteTexture') {
+                const texture = state.textures.get(args[0]);
+                entry.textureId = texture?.id ?? null; entry.allocationBefore = allocation();
+                entry.deletedBytes = texture?.bytes ?? 0;
+                if (!threw && texture) {
+                  liveBytes -= texture.bytes; liveCount--; if (texture.bytes) allocatedCount--;
+                  state.textures.delete(args[0]); state.live.delete(texture.id);
+                  for (const [binding, value] of state.bindings) if (value === args[0]) state.bindings.set(binding, null);
+                }
+                entry.allocationAfter = allocation();
+              }
+              if (stage === 'texImage2D' || stage === 'texSubImage2D') {
+                Object.assign(entry, uploadInfo(stage, args));
+                const texture = state.textures.get(state.bindings.get(`${state.unit}:${entry.target}`));
+                entry.textureId = texture?.id ?? null; entry.unit = state.unit;
+                entry.allocationBefore = allocation(); entry.textureBytesBefore = texture?.bytes ?? null;
+                const supported = entry.target === 3553 && entry.format === 6408 && entry.type === 5121 &&
+                  Number.isInteger(entry.width) && entry.width >= 0 && Number.isInteger(entry.height) && entry.height >= 0;
+                if (!threw) {
+                  if (!texture) unknownBindings++;
+                  if (!supported) unsupportedUploads++;
+                  if (texture && supported && stage === 'texImage2D') {
+                    const key = `${entry.target}:${entry.level}`, bytes = entry.width * entry.height * 4;
+                    const previous = texture.levels.get(key)?.bytes || 0, before = texture.bytes;
+                    texture.levels.set(key, { target: entry.target, level: entry.level, width: entry.width,
+                      height: entry.height, format: entry.format, type: entry.type, bytes });
+                    texture.bytes += bytes - previous; liveBytes += bytes - previous;
+                    if (!before && texture.bytes) allocatedCount++;
+                    else if (before && !texture.bytes) allocatedCount--;
+                  }
+                }
+                // Sub-image uploads replace pixels inside existing storage; no new allocation.
+                entry.textureBytesAfter = texture?.bytes ?? null; entry.allocationAfter = allocation();
+              }
+              notePeak();
+              // Draw-time binding churn updates state but cannot exhaust the evidence ring.
+              if (stage !== 'bindTexture' && stage !== 'activeTexture') {
+                if (records.length >= limit) dropped++;
+                else records.push(entry);
+              }
+            } catch {
+              // Observation must never replace the original GL result or exception.
+              probeErrors++;
+            }
+          }
+        } });
+      }
+    }
   });
+  await prepared(page, request);
+  await page.evaluate(() => window.__wrQueuedGLWitness.reset());
+  const gaps = [], pairs = [];
+  let metrics = [], glStages;
+  try {
+    expect(+(await page.locator('.reader').getAttribute('data-page-count'))).toBeGreaterThan(24);
+    for (let pair = 0; pair < 12; pair++) {
+      const baseline = await page.evaluate(() => ({
+        gestureId: Math.max(0, ...JSON.parse(document.querySelector('.reader').dataset.nativeGestures).map(record => record.id || 0)),
+        metricSequence: JSON.parse(document.querySelector('.reader').dataset.curlMetrics || '[]').at(-1)?.sequence || 0,
+      }));
+      await phase(page, 1, 700);
+      page.__native.send(JSON.stringify({ source: 'e2e-phase-fixture', phase: 8, dx: 0, dy: 0, momentum: 0 }));
+      page.__native.send(JSON.stringify({ source: 'e2e-phase-fixture', phase: 1, dx: 700, dy: 0, momentum: 0 }));
+      page.__native.send(JSON.stringify({ source: 'e2e-phase-fixture', phase: 8, dx: 0, dy: 0, momentum: 0 }));
+      await expect(page.locator('.reader')).toHaveAttribute('data-page-index', String((pair + 1) * 2));
+      await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+      const sample = await page.evaluate(() => ({
+        records: JSON.parse(document.querySelector('.reader').dataset.nativeGestures),
+        metrics: JSON.parse(document.querySelector('.reader').dataset.curlMetrics),
+        pageIndex: +document.querySelector('.reader').dataset.pageIndex,
+        visibility: document.visibilityState, focused: document.hasFocus(),
+      }));
+      const recent = sample.records.filter(record => record.id > baseline.gestureId);
+      const queuedBegins = recent.filter(record => record.kind === 'began' && record.waiting);
+      const queued = queuedBegins[0];
+      const precedingLandings = recent.filter(record => record.kind === 'landed' && record.id === queued?.id - 1);
+      const queuedLandings = recent.filter(record => record.kind === 'landed' && record.id === queued?.id);
+      const pairMetrics = sample.metrics.filter(metric => metric.sequence > baseline.metricSequence);
+      const gap = precedingLandings[0]?.at - queued?.at;
+      pairs.push({ pair, baseline, queuedId: queued?.id, precedingId: queued?.id - 1,
+        gapMs: gap, pageIndex: sample.pageIndex, visibility: sample.visibility, focused: sample.focused,
+        records: recent, metrics: pairMetrics });
+      expect(queuedBegins, `pair ${pair}: exactly one queued begin`).toHaveLength(1);
+      expect(queued.id).toBe(baseline.gestureId + 2);
+      expect(precedingLandings, `pair ${pair}: exact predecessor landing`).toHaveLength(1);
+      expect(queuedLandings, `pair ${pair}: exact queued landing`).toHaveLength(1);
+      expect(Number.isFinite(gap)).toBe(true);
+      expect(gap).toBeGreaterThanOrEqual(0);
+      expect(queuedLandings[0].at).toBeGreaterThanOrEqual(precedingLandings[0].at);
+      expect(pairMetrics).toHaveLength(2);
+      expect(pairMetrics.map(metric => metric.reason)).toEqual(['native-ended', 'native-queued-ended']);
+      expect(pairMetrics.every(metric => metric.completed)).toBe(true);
+      for (const metric of pairMetrics) if (metric.lastInputPose) {
+        const progress = metric.lastInputPose.progress;
+        expect(Number.isFinite(progress), `pair ${pair}: finite input pose progress`).toBe(true);
+        expect(progress, `pair ${pair}: input pose stays above zero`).toBeGreaterThanOrEqual(0);
+        expect(progress, `pair ${pair}: input pose stays below one`).toBeLessThanOrEqual(1);
+      }
+      gaps.push(gap);
+    }
+  } finally {
+    const evidence = await page.evaluate(() => ({
+      metrics: JSON.parse(document.querySelector('.reader').dataset.curlMetrics || '[]'),
+      records: JSON.parse(document.querySelector('.reader').dataset.nativeGestures || '[]'),
+      glStages: window.__wrQueuedGLWitness.snapshot(),
+    }));
+    metrics = evidence.metrics; glStages = evidence.glStages;
+    await info.attach('queued-native-turn-gap.json', {
+      body: JSON.stringify({ scope: 'queued begin to predecessor JS landed event; excludes subsequent DOM commit and GPU presentation',
+        gaps, pairs, metrics, records: evidence.records }, null, 2), contentType: 'application/json'
+    });
+    await info.attach('queued-native-gl-stages.json', {
+      body: JSON.stringify(glStages, null, 2), contentType: 'application/json'
+    });
+  }
+  expect(gaps).toHaveLength(12);
+  expect(metrics).toHaveLength(24);
+  expect(glStages.dropped).toBe(0);
+  expect(glStages.probeErrors).toBe(0);
+  expect(glStages.scheduler.rafInstalled).toBe(true);
+  expect(glStages.scheduler.schedulerErrors).toBe(0);
+  expect(glStages.scheduler.rafDropped).toBe(0);
+  expect(glStages.scheduler.longTaskDropped).toBe(0);
+  expect(glStages.records.some(record => ['texImage2D', 'texSubImage2D'].includes(record.stage))).toBe(true);
+  expect(glStages.textureLifetime.glErrors).toBe(0);
+  expect(glStages.textureLifetime.unsupportedUploads).toBe(0);
+  expect(glStages.textureLifetime.unknownBindings).toBe(0);
+  expect(glStages.textureLifetime.lifetimePeakBytes).toBeLessThanOrEqual(96e6);
+  expect(glStages.textureLifetime.lifetimePeakTextureCount).toBeLessThanOrEqual(6);
   expect(Math.max(...metrics.map(metric => metric.release.textureWaitMs))).toBeLessThan(35);
   expect(Math.max(...gaps)).toBeLessThan(50);
 });
@@ -188,11 +455,56 @@ for (const dpr of [1, 2, 3]) test(`DPR ${dpr}: canvas and page textures retain n
   expect(value.resolution.back.ratio).toBeCloseTo(dpr, 3);
   await info.attach(`retina-${dpr}-held.png`, { body: await page.screenshot(), contentType: 'image/png' });
   await info.attach('resolution.json', { body: JSON.stringify(value), contentType: 'application/json' });
+  await phase(page, 4, 700);
   await phase(page, 8);
+  await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '1');
   await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
   expect(+(await page.locator('.reader').getAttribute('data-curl-cached-leaves'))).toBeLessThanOrEqual(6);
   expect(+(await page.locator('.reader').getAttribute('data-curl-cached-pixels'))).toBeLessThanOrEqual(24e6);
+  // Idle lookahead must keep the current leaf resident at high DPR. A cache
+  // budget can remain bounded while evicting the page the next turn needs.
+  await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
+  await phase(page, 1, 700, 20);
+  await expect(page.locator('#page-curl-layer')).toBeVisible();
+  await phase(page, 8);
+  await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '2');
+  await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+  const metrics = await page.evaluate(() => JSON.parse(document.querySelector('.reader').dataset.curlMetrics));
+  const last = metrics.at(-1);
+  await info.attach('second-turn-cache.json', { body: JSON.stringify(last), contentType: 'application/json' });
+  expect(last.raw.captureTrace.filter(capture => capture.index === 1)).toEqual([]);
+  expect(+(await page.locator('.reader').getAttribute('data-curl-cached-bytes'))).toBeLessThanOrEqual(96e6);
   await context.close();
+});
+test('wide DPR 3 double spread keeps all required faces at native resolution', async ({ browser, request }, info) => {
+  const context = await browser.newContext({ deviceScaleFactor: 3, viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage(), errors = [];
+  page.on('pageerror', error => errors.push(error.stack || error.message));
+  try {
+    await prepared(page, request, 'double');
+    await phase(page, 1, 700);
+    await expect(page.locator('#page-curl-layer')).toBeVisible();
+    await expect.poll(async () => (await snap(page)).resolution).not.toBeNull();
+    const held = await snap(page);
+    await info.attach('wide-double-retina.json', { body: JSON.stringify(held), contentType: 'application/json' });
+    await info.attach('wide-double-held.png', { body: await page.screenshot(), contentType: 'image/png' });
+    expect(held.resolution.front.ratio).toBeCloseTo(3, 3);
+    expect(held.resolution.back.ratio).toBeCloseTo(3, 3);
+    await phase(page, 8);
+    await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '2');
+    await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+    await phase(page, 1, -700);
+    await expect(page.locator('#page-curl-layer')).toBeVisible();
+    await phase(page, 8);
+    await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '0');
+    await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+    await expect(page.locator('.reader')).not.toHaveAttribute('data-curl-fallback', /.+/);
+    expect(errors).toEqual([]);
+  } finally {
+    await info.attach('wide-double-state.json', { body: JSON.stringify({ errors,
+      data: await page.evaluate(() => ({ ...document.querySelector('.reader')?.dataset })) }), contentType: 'application/json' });
+    await context.close();
+  }
 });
 test('native end crosses a chapter; old momentum and route cleanup never move the new chapter', async ({ page, request }) => {
   await prepared(page, request);

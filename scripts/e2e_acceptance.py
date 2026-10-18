@@ -130,12 +130,12 @@ Command: `.venv/bin/python scripts/e2e_acceptance.py` from `{ROOT}`.
 Exit code: {code}. Source changes during run: {changed}.
 
 - `report/index.html`: browser report, screenshots and attachments.
-- `results/`: every scenario's Playwright trace and final screenshot.
+- `results/`: scenario attachments and final screenshots; traces where enabled. Rendering and performance scenarios disable tracing to avoid measurement interference.
 - `results.json`, `run.log`, `manifest.json`: test outcomes and environment.
 - `source.zip`, `source.sha256.json`: exact tested source snapshot and hashes.
 
 Reproduce in this checkout, with the same lexicon hash from manifest:
-1. Run `uv sync --extra dev`, `npm ci`, `npx playwright install chromium`.
+1. Run `uv sync --extra dev`, `npm ci`, `npx playwright install chromium`. The GPU scenarios also require installed Google Chrome on macOS (they explicitly use the Chrome channel and Metal).
 2. Ensure the manifest's app/provider ports are free (defaults: 18767/18768), or set `WR_E2E_PORT` and `WR_E2E_PROVIDER_PORT`. Run the command above.
 3. Read the newly generated manifest and HTML report. No production database is used.
 

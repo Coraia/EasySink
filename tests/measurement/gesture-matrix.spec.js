@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { enableAll, read, pageIndex } from "../browser/reader-helpers.js";
 
@@ -13,11 +14,30 @@ const rates = smoke
       ["fast", 3],
     ];
 const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
-const backup = "outputs/wise-reader-trackpad-release-20261007/before/";
+const selection = process.env.WR_MATRIX_VERSION || "compare";
+if (!["current", "previous", "compare"].includes(selection))
+  throw new Error("WR_MATRIX_VERSION must be current, previous, or compare");
+const versions = selection === "compare" ? ["current", "previous"] : [selection];
+const backup = path.resolve(
+  process.env.WR_MATRIX_BASELINE_DIR ||
+    "outputs/wise-reader-trackpad-release-20261007/before",
+);
+const baseline = new Map();
+if (versions.includes("previous")) {
+  for (const module of ["pagination.js", "reading-trackpad.js"]) {
+    try {
+      baseline.set(module, fs.readFileSync(path.join(backup, module)));
+    } catch (error) {
+      throw new Error(
+        `Previous-version measurement requires baseline ${path.join(backup, module)}. ` +
+          "Set WR_MATRIX_BASELINE_DIR to the restored baseline, or WR_MATRIX_VERSION=current for current-only measurement.",
+        { cause: error },
+      );
+    }
+  }
+}
 
-for (const version of process.env.WR_MATRIX_VERSION === "current"
-  ? ["current"]
-  : ["current", "previous"])
+for (const version of versions)
   for (const layout of ["single", "double"]) {
     test(`${version} ${layout} speed and gesture matrix`, async ({
       page,
@@ -43,7 +63,7 @@ for (const version of process.env.WR_MATRIX_VERSION === "current"
             ),
             (route) =>
               route.fulfill({
-                body: fs.readFileSync(backup + module),
+                body: baseline.get(module),
                 contentType: "text/javascript",
               }),
           );
@@ -168,6 +188,7 @@ for (const version of process.env.WR_MATRIX_VERSION === "current"
         arch: os.arch(),
         release: os.release(),
         viewport: page.viewportSize(),
+        baselineDirectory: version === "previous" ? backup : null,
       };
       fs.writeFileSync(
         info.outputPath("environment.json"),

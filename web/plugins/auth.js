@@ -1,4 +1,4 @@
-import { $, e, api, toast, busy } from "../core.js";
+import { $, e, api, busy } from "../core.js";
 export function install(ctx) {
   const login = async (scope) => {
     const status = await api("/auth/status", { signal: scope.signal });

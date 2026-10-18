@@ -1,0 +1,289 @@
+{
+  "date": "2026-10-18",
+  "baseline_commit": "c8fd561a1d6c5e332c5b03ae9130c87c424ae968",
+  "baseline_worktree": "clean main",
+  "status": "Audit complete; final functional suites pass with one optional-input skip; native continuous latency performance gate remains open.",
+  "scope": {
+    "inventory": {
+      "production_python": 81,
+      "browser_specs_before": 18,
+      "python_test_files": 7,
+      "measurement_specs": 1,
+      "standalone_smokes": [
+        "wise_reader.collections_smoke",
+        "wise_reader.collections_repair_smoke"
+      ],
+      "notes": [
+        "No tests were removed. One unreferenced historical shader fixture retired after replacement proof.",
+        "Third-party PDF.js assets, independent approved paper oracle, CLI, migration and durable job resume retained."
+      ]
+    },
+    "audit_axes": [
+      "Backend imports, dynamic plugin entry points, schema and stored-data compatibility",
+      "Frontend ES-module/plugin reachability, dictionary and adopted-explanation paths",
+      "Pytest discovery, stale contracts, browser isolation and fixture-oracle ownership",
+      "Standalone API smokes, cache-restart runner and gesture measurement reproducibility"
+    ],
+    "evidence_boundary": "Current source checkout; temporary data and deterministic loopback provider. No installed-client release, real model quality, physical trackpad, OCR or production migration acceptance."
+  },
+  "proven_removals": [
+    {
+      "items": [
+        "plugins.importer.html_to_text",
+        "plugins.translate.SYS",
+        "plugins.translate._chunks alias/export"
+      ],
+      "proof": "No repository callers; active structured import/selection translation and durable jobs use their own paths. Historical references and replacement trace captured before deletion.",
+      "evidence": "backend/dead-helper-removal-rationale.md"
+    },
+    {
+      "items": [
+        "Unreachable collection-owned dictionary/member fallback and private styles",
+        "Permanently hidden data-word-adopt control, candidate scan and handler",
+        "Four unused frontend import bindings"
+      ],
+      "proof": "Only caller supplies a Reader that always implements renderDictionary. Current dictionary-card/member handler remains. b6196b3 permanently hid the old adoption control; current data-context-adopt/pop.adoptContext remains. Two real browser scenarios passed before and after removal, then were strengthened.",
+      "evidence": "frontend/RESULT.md"
+    },
+    {
+      "items": [
+        "tests/browser/fixtures/bound-spine-reference.vert"
+      ],
+      "proof": "No runtime/test references; docs/49 explicitly retired incompatible old shader oracle. Current reader-paper independent approved reference and spine/twist/prototype scenarios retained. Original bytes/hash/history preserved.",
+      "evidence": "harness/fixture-retirement-proof.json"
+    }
+  ],
+  "fixed_failures": [
+    {
+      "issue": "Six stale pytest failures",
+      "change": "Keep all tests: exact current catalog, preserve notes/source snapshots on source deletion while clearing navigation, test versioned and legacy static assets, inject importer failures at prepare/persist boundaries with six-table rollback and retry/dedup, give the Mock its real string identity contract, check dictionary provenance instead of retired contextual heuristics.",
+      "before": "42 passed / 6 failed",
+      "after": "49 passed (48 existing + one new storage-failure route regression)."
+    },
+    {
+      "issue": "Disabling evidence plugin returned 500 after optional Evidence initialization failed",
+      "change": "Guard unavailable service while persisting the disabled plugin flag. Real SQLite path obstruction failed before the fix; repeated disable passes afterward. Independently verify normal initialized capture disable/epoch behavior.",
+      "evidence": [
+        "evidence-storage-before.log",
+        "evidence-storage-after.log",
+        "backend/evidence-initialized-disable-review.json"
+      ]
+    },
+    {
+      "issue": "Browser and pytest harness inherited credentials/dotenv/PDF storage or devices",
+      "change": "Disable dotenv and explicitly establish temporary business/PDF storage, empty credentials and disabled LLM/native input. Browser factory requires an owned test directory. Synthetic sentinel probes go red-to-green without reading personal dotenv.",
+      "evidence": [
+        "harness/before.json",
+        "harness/after.json",
+        "pytest-isolation-before.log",
+        "pytest-isolation-after.log"
+      ]
+    },
+    {
+      "issue": "SIGTERM bypassed test service outer cleanup",
+      "change": "Test-process-only signal handler permits context unwinding after Uvicorn shutdown. Verify temporary library removal, provider release, and nonzero app/provider port-collision failures.",
+      "evidence": [
+        "harness/startup-smoke-before.json",
+        "harness/startup-smoke.json",
+        "harness/port-collision-smoke.json"
+      ]
+    },
+    {
+      "issue": "Current-only measurement analysis required missing historical baseline and could publish partial reports first",
+      "change": "Only previous samples require explicit/restored baseline; preflight before publication, validate current/previous/compare mode, preserve comparison coverage and include current split input modules in hashes. Seven synthetic CLI/collection checks pass; existing output preservation verified.",
+      "evidence": [
+        "harness/measurement-before.json",
+        "harness/measurement-after.json"
+      ]
+    },
+    {
+      "issue": "Browser tests could pass from inherited enabled AI and did not inspect second occurrence directly",
+      "change": "New E2E finally clears credentials/disables AI and verifies cleanup. Hot-enable scenario explicitly establishes disabled/no-key state. Directly inspect second occurrence after adoption and reload, then return to adopted first occurrence.",
+      "evidence": "frontend/strengthened-corrected/report/index.html"
+    },
+    {
+      "issue": "Single-page idle warm list duplicated spread endpoints, leaving first queued leaf cold",
+      "change": "Optionally warm that leaf while idle only when existing core leaves plus the extra fit six-leaf/96MB budgets. Unconditional trial evicted current at DPR3; a red-capable committed-second-page regression preceded the budget guard. Final guard passes all six DPR repeats. First queued cold capture disappears, but continuous upload latency is unresolved.",
+      "evidence": [
+        "native-repair-comparison.json",
+        "native-budget-red/run.log",
+        "native-budget-after/run.log",
+        "native-budget-after/queued-summary.json"
+      ],
+      "status": "bounded improvement; no performance acceptance claim"
+    }
+  ],
+  "coverage_preserved": {
+    "deleted_tests": 0,
+    "pytest_before": 48,
+    "pytest_after": 49,
+    "browser_before": 118,
+    "browser_after": 120,
+    "added": [
+      "Real SQLite unavailable-service API route regression written before fix",
+      "Two Reader browser E2Es for dictionary/member lookup and independent adoption/undo/personal meaning"
+    ],
+    "strengthened": [
+      "Actual import preparation/persistence failure rollback and retry",
+      "Explicit AI disabled-to-enabled transition and teardown",
+      "DPR1/2/3 committed page1->idle warm->page2 cache residency and budget"
+    ],
+    "retained_legacy": [
+      "Translation history GET/PUT, durable job resume/chunks and stored data migrations",
+      "semantics.contextualize documented compatibility no-op",
+      "prepare_html used by retained offline replay probes",
+      "e2e_book_open.py unique restart/corruption/stale cache checks",
+      "PDF.js vendor assets, browser wheel fallback and independent approved paper oracle"
+    ]
+  },
+  "checks": {
+    "pytest_final": {
+      "passed": 49,
+      "failed": 0,
+      "warning": "Existing Starlette/httpx deprecation; dependency change not attempted",
+      "log": "pytest-final.log"
+    },
+    "collection_api_smoke": {
+      "api_checks": 94,
+      "passed": true,
+      "log": "collections_smoke.log"
+    },
+    "collection_repair_smoke": {
+      "checks": 19,
+      "requests": 80,
+      "failed": 0,
+      "log": "collections_repair_smoke.log"
+    },
+    "evidence_initialized_review": {
+      "checks": 10,
+      "passed": true
+    },
+    "measurement_tooling": {
+      "checks": 7,
+      "passed": true,
+      "scope": "synthetic analyzer/collection, not a GPU measurement rerun"
+    },
+    "first_complete_browser": {
+      "passed": 118,
+      "failed": 1,
+      "skipped": 1,
+      "path": "../../.runtime/acceptance/20261018T082334Z",
+      "failure": "queued native gap57.2ms >=50ms; source unchanged throughout"
+    },
+    "native_targeted_after_first_warm_trial": {
+      "passed": 4,
+      "failed": 0,
+      "maximum_gap_ms": 47.3,
+      "scope": "incomplete trial; later continuous stress still failed"
+    },
+    "native_final_budget_targeted": {
+      "DPR_passed": 6,
+      "queue_failed": 2,
+      "failed_gap_ms": [
+        62,
+        83.2
+      ],
+      "path": "native-budget-after"
+    },
+    "final_complete_browser": {
+      "path": "../../.runtime/acceptance/20261018T083930Z",
+      "passed": 119,
+      "failed": 0,
+      "skipped": 1,
+      "flaky": 0,
+      "duration_seconds": 360.997,
+      "source_changed_during_run": [],
+      "queued_gesture": [
+        {
+          "status": "passed",
+          "gaps_ms": [
+            44.3,
+            42.1,
+            26.7,
+            39.3,
+            38.1,
+            33.5
+          ],
+          "max_gap_ms": 44.3,
+          "max_texture_wait_ms": 1,
+          "first_capture_trace": []
+        }
+      ]
+    },
+    "syntax_and_whitespace": {
+      "checks": 20,
+      "failed": 0,
+      "artifact": "static-final-source.json"
+    }
+  },
+  "remaining_blockers": [
+    {
+      "severity": "performance gate",
+      "issue": "Continuous native-phase queue latency remains reproducibly above unchanged50ms gate (62/83.2ms after budget guard). Later-page texture uploads overlap53.5/73.6ms draw intervals; exact remaining scheduling/upload fix not established. A final green run cannot erase these observations.",
+      "evidence": "native-budget-after/queued-summary.json"
+    },
+    {
+      "severity": "optional input",
+      "issue": "Python Pocket Reference package scenario requires WR_E2E_EPUB_PACKAGE; no supplied archive in this audit. The test remains intact and conditionally skipped."
+    },
+    {
+      "severity": "historical baseline",
+      "issue": "Previous-version measurement requires restored pagination.js/reading-trackpad.js via WR_MATRIX_BASELINE_DIR. Current-only tooling works; full GPU matrix was not rerun."
+    },
+    {
+      "severity": "manual legacy runner",
+      "issue": "e2e_book_open.py kept for unique cache/restart/corruption coverage, but defaults to machine-specific real document10/read-only library copy and inherits PDF/native startup settings. Not executed; isolate its bootstrap and provide a suitable source before reuse."
+    },
+    {
+      "severity": "separate acceptance",
+      "issue": "Real provider/OCR quality, physical Mac trackpad, installed candidate, personal-library migration and existing handoff URL connection-establishment cancel/deadline gap were not accepted or revalidated by this audit."
+    }
+  ],
+  "reproduce": [
+    ".venv/bin/python -m pytest -q --tb=short",
+    "PYTHONPATH=src .venv/bin/python -B -m wise_reader.collections_smoke",
+    "PYTHONPATH=src .venv/bin/python -B -m wise_reader.collections_repair_smoke",
+    "WR_E2E_PORT=18774 WR_E2E_PROVIDER_PORT=18775 .venv/bin/python scripts/e2e_acceptance.py",
+    "Use audit-source.zip/source-sha256.json and matching lexicon hash. Full E2E requires Chromium plus installed Chrome/Metal; all owned ports must be free."
+  ],
+  "handling": "First failures, intermediate test-assumption failures, red/green probes, source identities, raw measurements and screenshots retained. No thresholds relaxed; no tests skipped to hide failures; no commit, push, installation or user-data cleanup performed.",
+  "environment": {
+    "versions": {
+      "python": "Python 3.13.11",
+      "node": "v26.0.0",
+      "playwright": "Version 1.63.0"
+    },
+    "lexicon_sha256": "e47b3cf4e4ddef869b3f74b516c8afadf275cde0595117110ddd317b4e168591",
+    "app_port": 18774,
+    "fixture_port": 18775,
+    "ai_scope": "real HTTP and browser chain with deterministic fixture translations/annotations and WAV tone; not real model quality"
+  },
+  "artifacts": {
+    "complete_source": "audit-source.zip",
+    "source_hashes": "source-sha256.json",
+    "complete_tracked_diff": "changes.diff",
+    "first_browser_failure": "../../.runtime/acceptance/20261018T082334Z/report/index.html",
+    "final_browser_report": "../../.runtime/acceptance/20261018T083930Z/report/index.html",
+    "checksum_manifest": "SHA256SUMS"
+  },
+  "owned_service_cleanup": [
+    {
+      "port": 18772,
+      "released": true
+    },
+    {
+      "port": 18773,
+      "released": true
+    },
+    {
+      "port": 18774,
+      "released": true
+    },
+    {
+      "port": 18775,
+      "released": true
+    }
+  ],
+  "evidence_root": "outputs/test-audit-20261018",
+  "path_convention": "All evidence-relative paths in this report resolve from evidence_root."
+}

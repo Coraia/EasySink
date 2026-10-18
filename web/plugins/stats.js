@@ -1,4 +1,4 @@
-import { $, e, api, date } from "../core.js";
+import { $, e, api } from "../core.js";
 export function install(ctx) {
   const read = ctx.hook("read", (r) => {
     let elapsed = 0,

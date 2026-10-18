@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import io
+import json
+import re
 import zipfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from wise_reader.app import create_app
+from wise_reader.settings import Settings
 
 
 def client(tmp_path: Path, monkeypatch) -> TestClient:
@@ -54,15 +57,15 @@ def tiny_epub() -> bytes:
     return buf.getvalue()
 
 
-def test_plugin_catalog_has_fifteen(tmp_path, monkeypatch):
+def test_current_plugin_catalog(tmp_path, monkeypatch):
     c = client(tmp_path, monkeypatch)
     data = c.get("/api/plugins").json()
     ids = [p["id"] for p in data["plugins"]]
-    assert len(ids) == 15
     assert ids == [
-        "auth", "library", "importer", "immersive", "notes",
-        "translate", "bookmarks", "progress", "export", "tts",
-        "theme", "typography", "search", "stats", "shortcuts",
+        "auth", "library", "importer", "pdf", "immersive", "notes",
+        "collections", "translate", "grammar", "bookmarks", "progress",
+        "export", "tts", "theme", "typography", "search", "stats",
+        "evidence", "shortcuts",
     ]
     assert all(p["enabled"] for p in data["plugins"])
 
@@ -78,6 +81,28 @@ def test_toggle_hides_api(tmp_path, monkeypatch):
     c.patch("/api/plugins/notes", json={"enabled": True})
     on = c.post("/api/notes", json={"doc_id": doc["id"], "body": "again"})
     assert on.status_code == 200
+
+
+def test_unavailable_evidence_can_be_disabled_without_blocking_reading(tmp_path, monkeypatch):
+    # Exercise a real SQLite open failure, while keeping all files disposable.
+    # Optional startup failure must preserve reading, and repeated disable must
+    # persist the flag without assuming that the evidence service was created.
+    (tmp_path / "user.evidence.sqlite3").mkdir()
+    monkeypatch.setenv("WR_PDF_DATA_DIR", str(tmp_path / "user-pdf"))
+    monkeypatch.setenv("WR_NATIVE_TRACKPAD", "0")
+    app = create_app(Settings(_env_file=None, wr_user_db=str(tmp_path / "user.db"),
+                              wr_llm_enabled=False, wr_llm_api_key=""))
+    with TestClient(app, raise_server_exceptions=False) as c:
+        assert not hasattr(app.state, "evidence")
+        assert c.get("/api/profile").status_code == 200
+        assert c.get("/api/evidence/status").status_code == 404
+        for _ in range(2):
+            result = c.patch("/api/plugins/evidence", json={"enabled": False})
+            assert result.status_code == 200, result.text
+            evidence = next(p for p in result.json()["plugins"] if p["id"] == "evidence")
+            assert evidence["enabled"] is False
+            assert c.get("/api/profile").status_code == 200
+        assert app.state.store.plugin_flags()["evidence"] is False
 
 
 def test_epub_import_and_library(tmp_path, monkeypatch):
@@ -111,14 +136,25 @@ def test_auth_locks_after_register(tmp_path, monkeypatch):
     assert other.patch("/api/plugins/notes", json={"enabled": False}).status_code == 200
 
 
-def test_delete_document_cascades_plugin_rows(tmp_path, monkeypatch):
+def test_delete_source_preserves_notes_and_clears_navigation(tmp_path, monkeypatch):
     c = client(tmp_path, monkeypatch)
     doc = c.post("/api/documents", json={"text": "Hello ubiquitous serendipity.", "title": "x"}).json()
-    c.post("/api/notes", json={"doc_id": doc["id"], "body": "keep?"})
+    note = c.post("/api/notes", json={"doc_id": doc["id"], "body": "keep my thought", "quote": "ubiquitous"}).json()
     c.post("/api/bookmarks", json={"doc_id": doc["id"], "label": "here"})
     c.put(f"/api/documents/{doc['id']}/progress", json={"scroll_ratio": 0.5})
     assert c.delete(f"/api/documents/{doc['id']}").status_code == 200
-    assert c.get("/api/notes").json() == []
+    assert c.get(f"/api/documents/{doc['id']}").status_code == 404
+    retained = c.get("/api/notes").json()
+    assert len(retained) == 1
+    assert retained[0]["id"] == note["id"]
+    assert retained[0]["body"] == "keep my thought"
+    assert retained[0]["quote"] == "ubiquitous"
+    assert retained[0]["title"] == "x"
+    assert retained[0]["source_available"] is False
+    snapshot = json.loads(retained[0]["source_snapshot"])
+    assert snapshot["title"] == "x"
+    assert snapshot["quote"] == "ubiquitous"
+    assert snapshot["source_identity"]["text_sha256"]
     assert c.get("/api/bookmarks").json() == []
     assert c.get("/api/progress").json() == []
 
@@ -160,10 +196,17 @@ def test_frontend_plugin_files(tmp_path, monkeypatch):
     c = client(tmp_path, monkeypatch)
     page = c.get("/")
     assert 'href="#/labs"' in page.text
-    assert "/static/plugin-host.js" in page.text
+    asset = re.search(r'href="(/assets/[0-9a-f]{16})/plugin-host\.js"', page.text)
+    assert asset, page.text
+    prefix = asset[1]
+    assert f'src="{prefix}/app.js?' in page.text
+    assert c.get(f"{prefix}/plugin-host.js").status_code == 200
+    assert "renderLabs" in c.get(f"{prefix}/app.js").text
+    # Cached clients still use the unversioned alias.
     assert c.get("/static/plugin-host.js").status_code == 200
     assert "renderLabs" in c.get("/static/app.js").text
     for spec in PLUGINS:
         js = ROOT / "web" / "plugins" / f"{spec.id}.js"
         assert js.is_file(), spec.id
+        assert c.get(f"{prefix}/plugins/{spec.id}.js").status_code == 200
         assert c.get(f"/static/plugins/{spec.id}.js").status_code == 200

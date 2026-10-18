@@ -1,4 +1,4 @@
-import { $, e, local } from "../core.js";
+import { $, local } from "../core.js";
 export function install(ctx) {
   const apply = (theme) => (document.documentElement.dataset.theme = theme);
   apply(local.get("theme", "paper"));

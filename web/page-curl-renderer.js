@@ -355,7 +355,7 @@ export class PageCurlRenderer {
     const capture = new AbortController();
     this.captures.add(capture);
     const previousCapture = this.captureTail;
-    let rasterImage = null;
+    let rasterImage = null, rasterCanvas = null;
     const job = (async () => {
       // A texture count limit cannot bound concurrent decoded SVG surfaces.
       // Keep one capture active; abort also releases its decoder on route leave.
@@ -456,46 +456,85 @@ export class PageCurlRenderer {
         this.failed
       )
         return null;
+      // SVG onload leaves direct WebGL uploads doing expensive vector raster
+      // work. Stage through a native-size 2D surface before the pixel upload;
+      // its backing store is released with the serialized capture below.
+      const rasterStartedAt = performance.now();
+      rasterCanvas = document.createElement("canvas");
+      rasterCanvas.width = w;
+      rasterCanvas.height = h;
+      const rasterContext = rasterCanvas.getContext("2d");
+      if (!rasterContext) throw new Error("Page raster context unavailable");
+      rasterContext.drawImage(image, 0, 0);
       const uploadStartedAt = performance.now();
       const gl = this.gl,
-        active = gl.getParameter(gl.ACTIVE_TEXTURE),
-        bound = gl.getParameter(gl.TEXTURE_BINDING_2D),
-        texture = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      if (this.anisotropy && !this.software)
-        gl.texParameterf(
-          gl.TEXTURE_2D,
-          this.anisotropy.TEXTURE_MAX_ANISOTROPY_EXT,
-          Math.min(
-            4,
-            gl.getParameter(this.anisotropy.MAX_TEXTURE_MAX_ANISOTROPY_EXT),
-          ),
-        );
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.RGBA,
-        gl.RGBA,
-        gl.UNSIGNED_BYTE,
-        image,
-      );
-      if (gl.getError() !== gl.NO_ERROR) {
-        gl.deleteTexture(texture);
-        throw new Error("Texture upload failed");
+        bytes = w * h * 4,
+        bytesBefore = [...this.cache.values()].reduce((n, value) => n + value.bytes, 0),
+        pinned = new Set([...(this.scene?.textures || []), ...(this.pendingTextures || [])]),
+        needsRoom = this.cache.size + 1 > 6 || bytesBefore + bytes > TEXTURE_BYTES,
+        reusable = needsRoom && [...this.cache.entries()].find(([oldKey, value]) =>
+          !pinned.has(oldKey) && value.pixelWidth === w && value.pixelHeight === h);
+      // Reserve room before allocation. Under continuous paging, reuse an old
+      // unreferenced leaf's storage instead of allocating a fifth Retina image
+      // and deleting it again after the upload has stalled the active release.
+      const victims = reusable ? [reusable] : [];
+      let plannedBytes = bytesBefore + bytes - (reusable ? reusable[1].bytes : 0),
+        plannedCount = this.cache.size + 1 - (reusable ? 1 : 0);
+      for (const entry of this.cache) {
+        if (plannedBytes <= TEXTURE_BYTES && plannedCount <= 6) break;
+        if (pinned.has(entry[0]) || entry[0] === reusable?.[0]) continue;
+        victims.push(entry);
+        plannedBytes -= entry[1].bytes;
+        plannedCount--;
       }
-      gl.bindTexture(gl.TEXTURE_2D, bound);
-      gl.activeTexture(active);
+      // A wide DPR 3 double spread can need four pinned faces larger than the
+      // soft byte target. Preserve that existing required working set; optional
+      // prefetch cannot add to it, and no referenced face may be overwritten.
+      if (plannedBytes > TEXTURE_BYTES && !pinned.has(key)) return null;
+      if (plannedCount > 6)
+        throw new Error("Page texture cache budget exhausted");
+      for (const [oldKey, old] of victims) {
+        this.cache.delete(oldKey);
+        if (old !== reusable?.[1]) gl.deleteTexture(old.texture);
+      }
+      // Deletion can clear an idle binding. Snapshot only after eviction, and
+      // restore on upload errors as well as success.
+      const active = gl.getParameter(gl.ACTIVE_TEXTURE),
+        bound = gl.getParameter(gl.TEXTURE_BINDING_2D),
+        texture = reusable ? reusable[1].texture : gl.createTexture();
+      let uploaded = false;
+      try {
+        if (!texture) throw new Error("Texture allocation failed");
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        if (reusable) {
+          gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, rasterCanvas);
+        } else {
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          if (this.anisotropy && !this.software)
+            gl.texParameterf(
+              gl.TEXTURE_2D,
+              this.anisotropy.TEXTURE_MAX_ANISOTROPY_EXT,
+              Math.min(4, gl.getParameter(this.anisotropy.MAX_TEXTURE_MAX_ANISOTROPY_EXT)),
+            );
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, rasterCanvas);
+        }
+        if (gl.getError() !== gl.NO_ERROR) throw new Error("Texture upload failed");
+        uploaded = true;
+      } finally {
+        if (!uploaded) gl.deleteTexture(texture);
+        gl.activeTexture(active);
+        gl.bindTexture(gl.TEXTURE_2D, !uploaded && bound === texture ? null : bound);
+      }
       const value = {
         texture,
         embeddedImages,
         width: rect.width,
         height: rect.height,
         pixels: w * h,
-        bytes: w * h * 4,
+        bytes,
         pixelWidth: w,
         pixelHeight: h,
         ratio,
@@ -503,22 +542,11 @@ export class PageCurlRenderer {
       };
       if (this.collectPerformance) {
         this.captureTrace ??= [];
-        this.captureTrace.push({startedAt: captureStartedAt, uploadStartedAt, finishedAt: performance.now(), moving: Boolean(this.scene), index, documentId: source.r.doc.id});
+        this.captureTrace.push({startedAt: captureStartedAt, rasterStartedAt, uploadStartedAt, finishedAt: performance.now(), moving: Boolean(this.scene), index, documentId: source.r.doc.id,
+          uploadMethod: reusable ? "texSubImage2D" : "texImage2D", bytesBefore, bytesAfter: plannedBytes});
         this.captureTrace = this.captureTrace.slice(-24);
       }
       this.cache.set(key, value);
-      // Preserve native raster density and the existing six-leaf / 96MB budget.
-      while (
-        this.cache.size > 6 ||
-        [...this.cache.values()].reduce((n, v) => n + v.bytes, 0) > TEXTURE_BYTES
-      ) {
-        const pinned = [...(this.scene?.textures || []), ...(this.pendingTextures || [])];
-        const oldest = [...this.cache.keys()].find((k) => !pinned.includes(k));
-        if (!oldest) break;
-        if (oldest === key && this.cache.size === 1) break;
-        gl.deleteTexture(this.cache.get(oldest).texture);
-        this.cache.delete(oldest);
-      }
       this.root.dataset.curlCachedLeaves = String(this.cache.size);
       this.root.dataset.curlCachedPixels = String(
         [...this.cache.values()].reduce((n, v) => n + v.pixels, 0),
@@ -533,6 +561,10 @@ export class PageCurlRenderer {
         return null;
       })
       .finally(() => {
+        if (rasterCanvas) {
+          rasterCanvas.width = rasterCanvas.height = 0;
+          rasterCanvas = null;
+        }
         if (rasterImage) {
           rasterImage.onload = rasterImage.onerror = null;
           rasterImage.removeAttribute("src");
@@ -561,6 +593,9 @@ export class PageCurlRenderer {
           p.index + p.count * 2 - 1,
           p.index - p.count,
         ];
+      // In single-page mode the spread endpoints above are duplicates. Warm
+      // the queued turn's leaf while idle instead of uploading it mid-release.
+      if (p.count === 1) indices.push(p.index + 2);
       for (const i of new Set(indices)) {
         if (
           p !== this.pages || p.index !== index ||
@@ -570,6 +605,14 @@ export class PageCurlRenderer {
           p.animating
         )
           return;
+        if (p.count === 1 && i === index + 2 && !this.cache.has(this.key(i))) {
+          const current = this.cache.get(this.key(index));
+          const bytes = [...this.cache.values()].reduce((n, value) => n + value.bytes, 0);
+          // Lookahead is optional: never evict the current/next leaves merely
+          // to label a high-DPR reader warm. All leaves share this layout size.
+          if (!current || this.cache.size >= 6 || bytes + current.bytes > TEXTURE_BYTES)
+            continue;
+        }
         await this.prepare(i);
         await new Promise((resolve) => setTimeout(resolve, 20));
       }

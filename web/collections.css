@@ -1,8 +1,7 @@
 .collections-view,
 .collections-dialog,
 .collections-resurface,
-.collections-word,
-.collections-dictionary {
+.collections-word {
   --collection-soft: var(--accent-soft, #e7ede2);
   --collection-line: var(--border, #dddfd5);
   color: var(--ink, #29342e);
@@ -354,40 +353,6 @@
 }
 .collections-word .collections-status:empty {
   display: none;
-}
-.collections-members {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
-  border-top: 1px solid var(--collection-line);
-  padding-top: 10px;
-}
-.collections-members button {
-  font-size: 13px;
-}
-.collections-dictionary {
-  margin-top: 14px;
-}
-.collections-dictionary:empty {
-  display: none;
-}
-.collections-sense {
-  padding: 8px 0;
-}
-.collections-sense p {
-  margin: 2px 0;
-  line-height: 1.65;
-  white-space: pre-wrap;
-  font-size: 14px;
-}
-.collections-sense-meta {
-  font-size: 11px;
-  color: var(--muted, #778075);
-}
-.collections-dictionary summary {
-  font-size: 12px;
-  cursor: pointer;
 }
 .collections-word .collections-actions {
   margin-bottom: 0;

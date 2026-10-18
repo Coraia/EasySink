@@ -87,9 +87,10 @@ def mount_plugins(app: FastAPI, ctx: PluginContext) -> None:
         if plugin_id not in BY_ID:
             raise HTTPException(404, "unknown plugin")
         if plugin_id == "evidence" and not body.enabled:
-            evidence = app.state.evidence
-            state = await run_in_threadpool(evidence.status)
-            await run_in_threadpool(evidence.control, "disable", state["epoch"])
+            evidence = getattr(app.state, "evidence", None)
+            if evidence is not None:
+                state = await run_in_threadpool(evidence.status)
+                await run_in_threadpool(evidence.control, "disable", state["epoch"])
         await run_in_threadpool(ctx.store.set_plugin_enabled, plugin_id, body.enabled)
         if plugin_id == "pdf" and hasattr(app.state, "pdf"):
             await app.state.pdf.set_processing_enabled(body.enabled)

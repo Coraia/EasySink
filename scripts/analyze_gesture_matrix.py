@@ -6,8 +6,12 @@ import csv
 import hashlib
 import json
 import math
+import os
 from collections import defaultdict
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_BASELINE = ROOT / 'outputs/wise-reader-trackpad-release-20261007/before'
 
 
 def percentile(values, q=0.95):
@@ -127,6 +131,8 @@ def summarize(row):
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('evidence',type=Path)
+    parser.add_argument('--baseline-dir', type=Path,
+                        help='Previous-version source directory (or set WR_MATRIX_BASELINE_DIR)')
     args=parser.parse_args(); out=args.evidence
     report_path=out/'matrix/results.json'
     report=json.loads(report_path.read_text()) if report_path.exists() else {'stats':{'pending':True}}
@@ -138,7 +144,30 @@ def main():
         if saved and (saved[0]['version'],saved[0]['layout']) not in complete:
             raw.append({'version':saved[0]['version'],'layout':saved[0]['layout'],'environment':json.loads(envfile.read_text()),'rows':saved,'partial':len(saved)<28})
     if not raw: raise SystemExit('No completed samples yet')
+    source_paths = {name: ROOT / name for name in [
+        'web/reading-trackpad.js', 'web/reading-wheel.js',
+        'web/reading-native-trackpad.js', 'web/reading-edge-drag.js',
+        'web/reading-gesture-policy.js', 'web/pagination.js',
+        'web/page-curl-renderer.js', 'web/page-fold.js', 'web/paper-model.js',
+        'playwright.config.js', 'playwright.measure.config.js', 'scripts/test_server.py',
+        'tests/browser/reader-helpers.js', 'tests/measurement/gesture-matrix.spec.js',
+        'scripts/analyze_gesture_matrix.py', 'docs/34-gesture-matrix-contract.md',
+    ]}
+    if any(w['version'] == 'previous' for w in raw):
+        baseline = Path(args.baseline_dir or os.environ.get('WR_MATRIX_BASELINE_DIR', DEFAULT_BASELINE)).expanduser().resolve()
+        missing = [str(baseline / name) for name in ('pagination.js', 'reading-trackpad.js')
+                   if not (baseline / name).is_file()]
+        if missing:
+            raise SystemExit('Previous-version samples require baseline source files. '
+                             'Set --baseline-dir or WR_MATRIX_BASELINE_DIR to the restored baseline. '
+                             'Missing: ' + ', '.join(missing))
+        source_paths.update({str(baseline / name): baseline / name
+                             for name in ('pagination.js', 'reading-trackpad.js')})
+    # Validate and read all required sources before publishing any analysis files.
+    manifest = {name: hashlib.sha256(path.read_bytes()).hexdigest()
+                for name, path in source_paths.items()}
     rows=[summarize(row) for w in raw for row in w['rows']]
+    if not rows: raise SystemExit('No completed samples yet')
     (out/'raw').mkdir(exist_ok=True)
     for w in raw: (out/'raw'/f"{w['version']}-{w['layout']}.json").write_text(json.dumps(w,ensure_ascii=False))
     fields=[k for k in rows[0] if not k.startswith('_')]
@@ -167,12 +196,6 @@ def main():
       'normal_failures':sum(r['valid'] and not r['functional_ok'] and r['gap_ms']==600 for r in rows),
       'pressure_failures':sum(r['valid'] and not r['functional_ok'] and r['gap_ms']<600 for r in rows),
       'summary':summary},indent=2))
-    manifest={}
-    for name in ['web/reading-trackpad.js','web/pagination.js','web/page-curl-renderer.js','playwright.measure.config.js',
-                 'tests/measurement/gesture-matrix.spec.js','scripts/analyze_gesture_matrix.py','docs/34-gesture-matrix-contract.md']:
-        p=Path(name); manifest[name]=hashlib.sha256(p.read_bytes()).hexdigest()
-    for name in ['pagination.js','reading-trackpad.js']:
-        p=Path('outputs/wise-reader-trackpad-release-20261007/before')/name; manifest[str(p)]=hashlib.sha256(p.read_bytes()).hexdigest()
     (out/'source-sha256.json').write_text(json.dumps(manifest,indent=2))
 
 if __name__=='__main__': main()

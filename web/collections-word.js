@@ -25,83 +25,21 @@ export function mountCollectionWord(
   const section = document.createElement("section");
   section.className = "collections-word";
   section.innerHTML =
-    '<div class="collections-independent" role="group" aria-label="此处的独立阅读记录"><button type="button" data-collection-word>收藏词语</button><button type="button" data-understood>已掌握</button><button type="button" data-retained>保留注释</button></div><p class="collections-help">只记录这一次用法；收藏、掌握反馈和保留注释各自独立。</p><p class="collections-status" role="status"></p><div class="collections-actions"><button type="button" data-word-edit hidden>我的释义 / 已存解释</button><button type="button" data-word-adopt hidden>预览并采用解释</button><button type="button" data-state-retry hidden>重新加载记录</button></div>';
-  const dictionary = document.createElement("section");
-  dictionary.className = "collections-dictionary";
+    '<div class="collections-independent" role="group" aria-label="此处的独立阅读记录"><button type="button" data-collection-word>收藏词语</button><button type="button" data-understood>已掌握</button><button type="button" data-retained>保留注释</button></div><p class="collections-help">只记录这一次用法；收藏、掌握反馈和保留注释各自独立。</p><p class="collections-status" role="status"></p><div class="collections-actions"><button type="button" data-word-edit hidden>我的释义 / 已存解释</button><button type="button" data-state-retry hidden>重新加载记录</button></div>';
   const meaning = $(".meaning", pop),
     detail = meaning?.nextElementSibling?.matches("p.muted")
       ? meaning.nextElementSibling
       : null;
-  const originalMeaningHidden = meaning?.hidden,
-    originalDetailHidden = detail?.hidden;
   ($(".dictionary-candidates", pop) || meaning || $("h3", pop)).after(
-    dictionary,
     section,
   );
   let busy = false,
-    candidate = null,
     saved = null,
     feedback = null,
-    lastDictionary = null,
-    managedDictionary = false,
     suppressedMeaning = null;
   const status = $("[role=status]", section);
-  const renderDictionary = () => {
-    if (reader.renderDictionary) {
-      dictionary.hidden = true;
-      return;
-    }
-    const value = item.dictionary;
-    if (!value || value === lastDictionary) return;
-    lastDictionary = value;
-    managedDictionary = true;
-    const senses = value.senses || [];
-    const source =
-      value.source?.name ||
-      (typeof value.source === "string" ? value.source : "词典");
-    dictionary.innerHTML = `<p class="collections-source">${e(source)} · 通用释义候选</p>${value.chinese_missing ? `<p class="collections-help">${senses.some((sense) => sense.language === "en") ? "可靠中文释义暂缺，先提供已有英文。" : "这项词条暂无可用释义。"}</p>` : ""}${senses.map((sense) => `<div class="collections-sense"><span class="collections-sense-meta">${e([sense.pos, ...(sense.labels || sense.domains || []), sense.language === "en" ? "英文候选" : ""].filter(Boolean).join(" · "))}</span><p lang="${sense.language === "en" ? "en" : "zh"}">${e(sense.text || sense.raw)}</p></div>`).join("")}<p class="collections-help">这些义项尚未确定在当前句子中的含义。</p><details><summary>词典来源</summary><p class="collections-source">${e(source)}${value.source?.version ? ` · ${e(value.source.version)}` : ""}${value.source?.license ? ` · ${e(value.source.license)}` : ""}</p></details>`;
-    if (meaning) meaning.hidden = true;
-    if (detail) detail.hidden = true;
-  };
-  const members = [
-    ...(anchor.quote || "").matchAll(
-      /[A-Za-z\uFB00-\uFB06]+(?:['’-][A-Za-z\uFB00-\uFB06]+)*/g,
-    ),
-  ];
-  if (
-    !reader.renderDictionary &&
-    members.length > 1 &&
-    !anchor.segments?.length
-  ) {
-    const actions = document.createElement("div");
-    actions.className = "collections-members";
-    actions.innerHTML = `<span class="collections-source">也可单独查词</span>${members.map((member, i) => `<button type="button" data-member="${i}">${e(member[0])}</button>`).join("")}`;
-    section.append(actions);
-    scope.on(actions, "click", (event) => {
-      const button = event.target.closest("[data-member]");
-      if (!button) return;
-      const member = members[+button.dataset.member],
-        start = anchor.start + member.index;
-      const part = reader.anchorFor(
-        anchor.block_id,
-        start,
-        start + member[0].length,
-      );
-      const source = [
-        ...document.querySelectorAll("#article .source-unit"),
-      ].find(
-        (node) =>
-          node.dataset.sourceBlock === anchor.block_id &&
-          +node.dataset.sourceStart <= start &&
-          +node.dataset.sourceEnd > start,
-      );
-      if (source && part) void reader.lookup(member[0], source, part);
-      else toast("这个词目前不在可见原文中，请先回到该处。");
-    });
-  }
   const render = () => {
     if (scope.signal.aborted) return;
-    renderDictionary();
     saved = controller.state.items.find(
       (value) => value.kind === "word" && sameSelection(value.anchor, anchor),
     );
@@ -125,15 +63,6 @@ export function mountCollectionWord(
       // A dictionary may have arrived while the adopted gloss was visible.
       reader.renderDictionary?.(pop, item);
     }
-    candidate = [
-      pop.contextRecord,
-      ...[...(reader.assists || [])].reverse(),
-    ].find(
-      (value) =>
-        value?.kind === "context" &&
-        !value.historical &&
-        sameSelection(value.anchor, anchor),
-    );
     for (const [selector, active, label] of [
       [
         "[data-collection-word]",
@@ -157,7 +86,6 @@ export function mountCollectionWord(
       button.disabled = busy || !controller.loaded;
     }
     $("[data-word-edit]", section).hidden = !saved;
-    $("[data-word-adopt]", section).hidden = true;
     $("[data-state-retry]", section).hidden = !controller.error;
     if (!busy)
       status.textContent = controller.error
@@ -166,22 +94,13 @@ export function mountCollectionWord(
   };
   scope.on(section, "click", async (event) => {
     const button = event.target.closest(
-      "[data-collection-word],[data-understood],[data-retained],[data-word-edit],[data-word-adopt],[data-state-retry]",
+      "[data-collection-word],[data-understood],[data-retained],[data-word-edit],[data-state-retry]",
     );
     if (!button || button.disabled || busy) return;
-    if (
-      button.hasAttribute("data-word-edit") ||
-      button.hasAttribute("data-word-adopt")
-    ) {
+    if (button.hasAttribute("data-word-edit")) {
       if (saved) {
         reader.closePop();
-        editCollection(
-          ctx,
-          store,
-          saved,
-          reader.scope,
-          button.hasAttribute("data-word-adopt") ? candidate : null,
-        );
+        editCollection(ctx, store, saved, reader.scope);
       }
       return;
     }
@@ -303,10 +222,7 @@ export function mountCollectionWord(
     old.forEach(({ node, hidden }) => {
       node.hidden = hidden;
     });
-    if (managedDictionary && meaning) meaning.hidden = originalMeaningHidden;
-    if (managedDictionary && detail) detail.hidden = originalDetailHidden;
     section.remove();
-    dictionary.remove();
     currentMeaning.remove();
     delete pop.adoptContext;
   });

@@ -1,4 +1,4 @@
-import { $, e, local } from "../core.js";
+import { $, local } from "../core.js";
 export function install(ctx) {
   let prefs = local.get("typography", {
     size: 22,
