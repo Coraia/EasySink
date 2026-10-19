@@ -1,0 +1,52 @@
+{
+  "tool": "built-in image_gen",
+  "date": "2026-10-19",
+  "jobs": [
+    {
+      "key": "planet-stage",
+      "transparent_background": false,
+      "prompt": "Use case: illustration-story. Create a single portrait 2:3 richly hand-painted storybook background plate for the Little Prince rose chapter, matching the warm gouache, watercolor and visible golden paper texture of the reference atlas BOTTOM LEFT illustration. This is an EMPTY STAGE for compositing separate animated characters. Show a gently rounded tiny asteroid surface with ochre rocks, moss, sparse tiny cream wildflowers and two small smooth bare soil patches across the lower half for a rose on the left and a kneeling boy on the right. Eye level low like reference, the ground occupies lower 35 percent and broad open sky upper 65 percent; keep landing areas unobstructed. Luminous soft golden morning sky with creamy clouds, pale azure above, warm subtle sun glow upper left (no hard sun disk), distant curved horizon. Detailed painterly ground yet uncluttered midground. ABSOLUTELY NO boy, humans, fox, large rose, flowers with large heads, watering can, glass globe or text. One continuous painting, no panels, no margins. Preserve reference visual world and hand-painted beauty.",
+      "referenced_image_paths": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-05.webp"
+      ],
+      "outputHint": "Generated images are saved to /Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39 as /Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-ef39eb8e-cf0f-474e-9a0e-17c26425522a.png by default.\nIf you need to use a generated image at another path, copy it and leave the original in place unless the user explicitly asks you to delete it.\nThe generated image is already displayed to the user. There is no need to render it in the final response as a Markdown image or file link."
+    },
+    {
+      "key": "prince-seated",
+      "transparent_background": true,
+      "prompt": "Use case: illustration-story. Create one transparent full-body character cutout for an animated Little Prince picture book. Reference 1 is the exact approved boy identity and material style: curly golden blond hair, expressive brown eyes, small nose, subtle freckles, forest green textured coat with brass buttons, ochre trousers, brown boots, long golden yellow scarf. Reference 2 BOTTOM LEFT gives the desired pose. Boy seated/kneeling on folded legs, body and face in three-quarter profile facing LEFT, looking lovingly at a flower that is NOT in this image. Both elbows rest on knees, hands lightly under cheeks, gentle warm smile; keep both hands anatomically clear and expressive. Scarf trails elegantly to the RIGHT with space from head and coat, individual soft fabric ends. Match the existing exquisite gouache and watercolor texture, warm dawn rim light, hand-painted fine detail, no plastic 3D. Whole boy visible from hair to boots with generous transparent padding. NO ground, no rock, no plant, no rose, no shadows baked into a background, no text. True transparent RGBA background; one boy only.",
+      "referenced_image_paths": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png",
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-05.webp"
+      ],
+      "outputHint": "Generated images are saved to /Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39 as /Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-c568a122-8f3b-44df-af75-70a4f5ea8b87.png by default.\nIf you need to use a generated image at another path, copy it and leave the original in place unless the user explicitly asks you to delete it.\nThe generated image is already displayed to the user. There is no need to render it in the final response as a Markdown image or file link."
+    },
+    {
+      "key": "prince-watering",
+      "transparent_background": true,
+      "prompt": "Use case: illustration-story. Make a single full-body transparent character cutout of precisely the reference boy, for a hand-painted animated picture book. Keep exact curly golden blond hair, expressive brown eyes, freckles, green coat brass buttons, ochre trousers, brown boots and long golden scarf. Kneeling on his RIGHT knee, three-quarter profile facing LEFT, tender focused expression looking down-left. He holds a small beautifully painted warm blue-green metal watering can with both hands, extended out towards the LEFT at waist level, its long spout pointing diagonally DOWN-LEFT, can already gently tipped to pour. Keep the can, spout, both hands, elbows and shoulder unobscured and anatomically correct. Scarf streams to RIGHT. Pose clearly different from sitting with chin on hands. Entire boy plus entire watering can visible with generous alpha padding, no clipping. Warm gouache watercolor and fine brushed texture same as reference; no plastic 3D. NO water stream (will be animated), NO rose, NO landscape, NO ground, NO platform, NO text. True transparent RGBA. One character and his can only.",
+      "referenced_image_paths": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "outputHint": "Generated images are saved to /Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39 as /Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-49c00f91-e7c0-492b-aa55-3406424fe740.png by default.\nIf you need to use a generated image at another path, copy it and leave the original in place unless the user explicitly asks you to delete it.\nThe generated image is already displayed to the user. There is no need to render it in the final response as a Markdown image or file link."
+    },
+    {
+      "key": "rose-bud",
+      "transparent_background": true,
+      "prompt": "Use case: illustration-story. Use the supplied beautiful hand-painted red rose as exact botanical and material reference. Create the SAME single rose plant but BEFORE BLOOMING: a tall tightly closed deep coral-red bud with green sepals held upward, at the same location as the original blossom; same slender green stem, four small visible thorns, same side leaves, same small mossy soil root clump. Keep complete plant top to root and generous transparent padding. The flower head is a closed upright tear-shaped bud, not a partially open rose. Exquisite warm gouache watercolor brush texture, golden rim lighting consistent with original, no anthropomorphic eyes or mouth, no plastic. True transparent RGBA; no background, no other plants, no text.",
+      "referenced_image_paths": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-fox-reading/rose.png"
+      ],
+      "outputHint": "Generated images are saved to /Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39 as /Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-6be33557-09e6-434f-9eb4-0286a51aaadd.png by default.\nIf you need to use a generated image at another path, copy it and leave the original in place unless the user explicitly asks you to delete it.\nThe generated image is already displayed to the user. There is no need to render it in the final response as a Markdown image or file link."
+    },
+    {
+      "key": "rose-shelters",
+      "transparent_background": true,
+      "prompt": "Use case: illustration-story. Transparent sprite atlas containing TWO separate props for a richly painted Little Prince storybook, no characters or flowers. Match the supplied rose illustration's warm gouache watercolor texture and golden edges. Canvas landscape 2:1 divided into two equal square cells WITHOUT visible borders or labels. LEFT cell: a clear open-bottom bell-shaped glass cloche, slender graceful rounded dome, small glass knob at top, subtle cream/gold rim highlights, pale blue reflections, translucent fully transparent interior, thin bottom elliptical glass lip. Whole cloche centered within left cell with 10 percent padding on every side. It will be placed over an independently animated rose, so do NOT put any flower or object inside it. RIGHT cell: a small tasteful folding wind screen with THREE narrow hinged panels, greenish woven fabric stretched on dark honey-colored wooden frames, hand-painted fine wood and cloth detail, perspective slight shallow zigzag, whole screen centered within right cell with 10 percent padding. Both props equal overall height. True transparent RGBA background and transparent space between the props. No ground, no people, no lettering, no shadows behind, no realism/plastic CGI.",
+      "referenced_image_paths": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-fox-reading/rose.png"
+      ],
+      "outputHint": "Generated images are saved to /Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39 as /Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-a389465c-0730-4fce-a128-f6d3d70cb7e7.png by default.\nIf you need to use a generated image at another path, copy it and leave the original in place unless the user explicitly asks you to delete it.\nThe generated image is already displayed to the user. There is no need to render it in the final response as a Markdown image or file link."
+    }
+  ]
+}

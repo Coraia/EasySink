@@ -1,0 +1,693 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>狐狸与小王子 · 绘本角色样片</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f7f4ec;
+        --ink: #344b40;
+        --muted: #7c8375;
+        --line: #dadccf;
+        --gold: #ab8143;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family:
+          system-ui,
+          -apple-system,
+          "PingFang SC",
+          sans-serif;
+      }
+      button,
+      a {
+        -webkit-tap-highlight-color: transparent;
+      }
+      button {
+        font: inherit;
+        color: inherit;
+        cursor: pointer;
+      }
+      button:focus-visible,
+      a:focus-visible {
+        outline: 2px solid var(--gold);
+        outline-offset: 4px;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      main {
+        max-width: 1600px;
+        margin: auto;
+        padding: 24px 40px 30px;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 18px;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand {
+        font:
+          20px Georgia,
+          serif;
+        letter-spacing: 1px;
+      }
+      .edition {
+        font-size: 10px;
+        letter-spacing: 2.5px;
+        color: var(--muted);
+      }
+      .intro {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        padding: 26px 0 24px;
+      }
+      .overline {
+        color: var(--gold);
+        font-size: 9px;
+        letter-spacing: 3px;
+      }
+      h1 {
+        font:
+          400 30px "Songti SC",
+          Georgia,
+          serif;
+        letter-spacing: 2px;
+        margin: 9px 0 10px;
+      }
+      .intro p {
+        color: var(--muted);
+        font-size: 12px;
+        margin: 0;
+        line-height: 1.7;
+      }
+      .tabs {
+        display: flex;
+        gap: 4px;
+        padding: 5px;
+        background: #eceee3;
+        border: 1px solid #dfe2d5;
+        border-radius: 30px;
+        flex-shrink: 0;
+      }
+      .tabs button {
+        border: 0;
+        background: transparent;
+        border-radius: 24px;
+        padding: 11px 20px;
+        font-size: 12px;
+      }
+      .tabs button[aria-pressed="true"] {
+        background: #3e5b47;
+        color: #fffdf4;
+        box-shadow: 0 2px 6px #22382018;
+      }
+      .spread {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+      }
+      .panel {
+        min-width: 0;
+        margin: 0;
+      }
+      .panel-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        height: 36px;
+        margin-bottom: 8px;
+      }
+      .panel-head h2 {
+        font-size: 14px;
+        font-weight: 500;
+        margin: 0;
+      }
+      .number {
+        font:
+          italic 15px Georgia,
+          serif;
+        color: #acaa8e;
+        margin-right: 10px;
+      }
+      .label {
+        font-size: 10px;
+        letter-spacing: 0.4px;
+        color: var(--muted);
+      }
+      .frame {
+        position: relative;
+        aspect-ratio: 1;
+        overflow: hidden;
+        background: #f1e7cf;
+        border: 1px solid #d9d5c4;
+        border-radius: 5px;
+        box-shadow: 0 10px 30px #283b2010;
+      }
+      .source {
+        position: absolute;
+        inset: 0;
+        background-image: url("./assets/picturebook-full/key-events-11.webp");
+        background-size: 200% 200%;
+        background-position: left top;
+      }
+      .frame-note {
+        position: absolute;
+        bottom: 13px;
+        left: 14px;
+        z-index: 5;
+        background: #f9f5e6e6;
+        backdrop-filter: blur(8px);
+        color: #4c5b42;
+        font-size: 9px;
+        letter-spacing: 1px;
+        border-radius: 3px;
+        padding: 7px 10px;
+        pointer-events: none;
+      }
+      .previous-art {
+        display: none;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        background: radial-gradient(ellipse at 50% 35%, #fff9e8, #eee2c6);
+      }
+      .previous-pair {
+        position: absolute;
+        inset: 0;
+        display: none;
+      }
+      .previous-pair img {
+        position: absolute;
+        height: 85%;
+        width: 64%;
+        object-fit: contain;
+        bottom: 2%;
+      }
+      .previous-pair img:first-child {
+        left: 0;
+      }
+      .previous-pair img:last-child {
+        right: 0;
+        height: 62%;
+        width: 52%;
+      }
+      #reference.previous .source {
+        display: none;
+      }
+      #reference.previous .previous-art {
+        display: block;
+      }
+      body[data-view="scene"] #reference.previous .previous-art {
+        display: none;
+      }
+      body[data-view="scene"] #reference.previous .previous-pair {
+        display: block;
+        background: #f5ecd7;
+      }
+      body[data-view="fox"] .source {
+        background-size: auto 560%;
+        background-position: 29% 28%;
+      }
+      body[data-view="prince"] .source {
+        background-size: auto 390%;
+        background-position: 7.5% 10%;
+      }
+      body[data-view="fox"][data-close="true"] .source {
+        background-size: auto 800%;
+        background-position: 29% 26.5%;
+      }
+      body[data-view="prince"][data-close="true"] .source {
+        background-size: auto 850%;
+        background-position: 11% 10.5%;
+      }
+      body[data-view="prince"] #old-fox,
+      body[data-view="fox"] #old-prince {
+        display: none !important;
+      }
+      body[data-view="scene"] #reference .frame-note::after {
+        content: "第 21 章 · 苹果树下的相遇";
+      }
+      body[data-view="fox"] #reference .frame-note::after {
+        content: "原绘本局部 · 狐狸";
+      }
+      body[data-view="prince"] #reference .frame-note::after {
+        content: "原绘本局部 · 小王子";
+      }
+      #reference.previous .frame-note::after {
+        content: "第一轮真实 Blender 渲染" !important;
+      }
+      #stage {
+        background: radial-gradient(ellipse at 50% 38%, #fffbec, #e9dfc6);
+      }
+      #stage canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+        z-index: 2;
+        touch-action: pan-y;
+      }
+      .fallback {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: end;
+        background: url("./assets/picturebook-lookdev-v2/meadow.png")
+          center/cover;
+      }
+      .fallback img {
+        position: absolute;
+        object-fit: contain;
+        bottom: 8%;
+        width: 52%;
+        height: 78%;
+        left: 3%;
+      }
+      .fallback img + img {
+        left: 48%;
+        height: 42%;
+      }
+      .ready .fallback {
+        display: none;
+      }
+      body[data-view="fox"] .fallback,
+      body[data-view="prince"] .fallback {
+        background: none;
+      }
+      body[data-view="fox"] .fallback img:first-child,
+      body[data-view="prince"] .fallback img + img {
+        display: none;
+      }
+      body[data-view="fox"] .fallback img + img,
+      body[data-view="prince"] .fallback img:first-child {
+        left: 3%;
+        width: 94%;
+        height: 94%;
+        bottom: 3%;
+      }
+      #stage.portrait::after {
+        content: "";
+        position: absolute;
+        width: 55%;
+        height: 8%;
+        left: 23%;
+        bottom: 5%;
+        background: radial-gradient(ellipse, #98815522, transparent 70%);
+        pointer-events: none;
+      }
+      .panel-foot {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 12px;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .plain {
+        border: 0;
+        padding: 3px 0;
+        background: none;
+        color: #5b7052;
+        font-size: 11px;
+        text-decoration: underline;
+        text-underline-offset: 4px;
+      }
+      .tools {
+        display: flex;
+        gap: 12px;
+      }
+      .tools button {
+        border: 0;
+        background: none;
+        padding: 3px 0;
+        font-size: 11px;
+        color: #5b7052;
+      }
+      .tools button:disabled {
+        color: #b2b6a6;
+        cursor: default;
+      }
+      .reading {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        padding: 24px 0 20px;
+        border-bottom: 1px solid var(--line);
+      }
+      .line {
+        font:
+          21px Georgia,
+          serif;
+        color: #596144;
+        line-height: 1.8;
+      }
+      .word {
+        font: inherit;
+        border: 0;
+        border-bottom: 1px dashed #a9a580;
+        padding: 0 5px;
+        background: none;
+        border-radius: 4px;
+      }
+      .word[aria-pressed="true"] {
+        background: #e5eacb;
+        border-color: #809362;
+        color: #345b39;
+      }
+      .micro {
+        font-size: 10px;
+        color: var(--muted);
+        margin-top: 7px;
+      }
+      .wind {
+        border: 1px solid #d8d9c9;
+        background: #eeedde;
+        border-radius: 20px;
+        padding: 9px 15px;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .wind[aria-pressed="true"] {
+        background: #e1e9cd;
+        border-color: #a8b987;
+      }
+      #cue {
+        font-size: 11px;
+        color: var(--muted);
+        margin: 11px 0 0;
+        min-height: 17px;
+      }
+      footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        align-items: center;
+        padding-top: 20px;
+        font-size: 10px;
+        color: #838776;
+      }
+      footer a {
+        text-decoration: underline;
+        text-underline-offset: 4px;
+      }
+      details {
+        max-width: 800px;
+        color: #7c8375;
+        font-size: 11px;
+        line-height: 1.8;
+        margin: 20px 0 0;
+      }
+      summary {
+        cursor: pointer;
+      }
+      details p {
+        margin: 8px 0;
+      }
+      #status {
+        font-size: 12px;
+        color: #845d30;
+      }
+      #status:empty {
+        display: none;
+      }
+      @media (min-width: 1450px) {
+        main {
+          padding-left: 65px;
+          padding-right: 65px;
+        }
+        .frame {
+          max-height: 620px;
+          aspect-ratio: auto;
+          height: 620px;
+        }
+      }
+      @media (max-width: 850px) {
+        main {
+          padding: 20px;
+        }
+        .intro {
+          align-items: start;
+          flex-direction: column;
+          gap: 18px;
+        }
+        h1 {
+          font-size: 27px;
+        }
+        .tabs button {
+          padding: 10px 18px;
+        }
+        .spread {
+          gap: 14px;
+        }
+        .panel-head {
+          align-items: start;
+          flex-direction: column;
+          gap: 3px;
+        }
+        .reading {
+          align-items: start;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .line {
+          font-size: 19px;
+        }
+        .panel-foot {
+          align-items: start;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .tools {
+          gap: 12px;
+        }
+      }
+      @media (max-width: 560px) {
+        main {
+          padding: 18px 15px;
+        }
+        .edition {
+          font-size: 8px;
+          letter-spacing: 1px;
+        }
+        .intro {
+          padding: 23px 0 20px;
+        }
+        .intro p {
+          font-size: 11px;
+        }
+        .spread {
+          grid-template-columns: 1fr;
+        }
+        .frame {
+          aspect-ratio: 1;
+        }
+        .panel-head {
+          flex-direction: row;
+          align-items: center;
+          height: auto;
+          margin: 0 0 10px;
+        }
+        .panel-foot {
+          flex-direction: row;
+          margin-bottom: 12px;
+        }
+        .frame-note {
+          font-size: 8px;
+          padding: 6px 8px;
+        }
+        .line {
+          font-size: 19px;
+        }
+        .tabs {
+          width: 100%;
+        }
+        .tabs button {
+          flex: 1;
+          padding: 10px 12px;
+        }
+        .reading {
+          padding: 16px 0;
+        }
+        footer {
+          line-height: 1.7;
+          align-items: start;
+        }
+        .label {
+          font-size: 9px;
+        }
+        h1 {
+          font-size: 26px;
+        }
+        .panel-head h2 {
+          font-size: 13px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          scroll-behavior: auto;
+        }
+      }
+    </style>
+  </head>
+  <body data-view="scene" data-close="false">
+    <main>
+      <header>
+        <a class="brand" href="/#/read/22">✦ wise reader</a
+        ><span class="edition">THE LITTLE PRINCE · CHARACTER STUDY 02</span>
+      </header>
+      <section class="intro">
+        <div>
+          <div class="overline">THE FOX & THE LITTLE PRINCE</div>
+          <h1>让画里的朋友，轻轻动起来。</h1>
+          <p>金色的卷发，蓬松的尾巴，还有吹过麦田的风。把角色放回绘本里看。</p>
+        </div>
+        <nav class="tabs" aria-label="选择样片">
+          <button data-view="scene" aria-pressed="true">同一画页</button
+          ><button data-view="fox" aria-pressed="false">狐狸</button
+          ><button data-view="prince" aria-pressed="false">小王子</button>
+        </nav>
+      </section>
+      <section class="spread" aria-label="原绘本与新角色并排对比">
+        <figure class="panel">
+          <div class="panel-head">
+            <h2>
+              <span class="number">01</span
+              ><span id="reference-title">原绘本</span>
+            </h2>
+            <span class="label">造型 / 配色 / 笔触对照</span>
+          </div>
+          <div
+            class="frame"
+            id="reference"
+            role="img"
+            aria-label="原绘本 · 同一画页"
+          >
+            <div class="source"></div>
+            <img
+              id="old-fox"
+              class="previous-art"
+              src="./assets/picturebook-lookdev/fox-three-quarter-painted.png?v=2"
+              alt="上一轮狐狸模型"
+            /><img
+              id="old-prince"
+              class="previous-art"
+              src="./assets/picturebook-lookdev/prince-three-quarter-painted.png?v=2"
+              alt="上一轮小王子模型"
+            />
+            <div class="previous-pair">
+              <img
+                src="./assets/picturebook-lookdev/prince-three-quarter-painted.png?v=2"
+                alt="上一轮小王子"
+              /><img
+                src="./assets/picturebook-lookdev/fox-three-quarter-painted.png?v=2"
+                alt="上一轮狐狸"
+              />
+            </div>
+            <span class="frame-note"></span>
+          </div>
+          <figcaption class="panel-foot">
+            <span>保留原绘本像素，便于直接比较。</span
+            ><button class="plain" id="reference-switch" aria-pressed="false">
+              对照上一轮
+            </button>
+          </figcaption>
+        </figure>
+        <figure class="panel">
+          <div class="panel-head">
+            <h2><span class="number">02</span>重做的角色样片</h2>
+            <span class="label">2.5D 绘画角色 · 实时局部动作</span>
+          </div>
+          <div class="frame" id="stage">
+            <div class="fallback">
+              <img
+                src="./assets/picturebook-lookdev-v2/prince.png"
+                alt="重做的小王子绘画角色"
+              /><img
+                src="./assets/picturebook-lookdev-v2/fox.png"
+                alt="重做的狐狸绘画角色"
+              />
+            </div>
+            <span class="frame-note">卷发 · 毛色 · 衣料 · 温暖的光</span>
+          </div>
+          <figcaption class="panel-foot">
+            <span>悬浮或点按词语，看看它们的回应。</span>
+            <div class="tools">
+              <button id="closeup" disabled aria-pressed="false">
+                看面部细节</button
+              ><button id="pause" aria-pressed="false">暂停动作</button
+              ><button id="reset">复位</button>
+            </div>
+          </figcaption>
+        </figure>
+      </section>
+      <p id="status" role="status">正在展开画页…</p>
+      <section class="reading" aria-label="词语与角色互动">
+        <div>
+          <div class="line">
+            “<button class="word" data-action="greeting" aria-pressed="false">
+              Good morning</button
+            >,” said the
+            <button class="word" data-action="fox" aria-pressed="false">
+              fox</button
+            >.<br />“Good morning,” the little
+            <button class="word" data-action="prince" aria-pressed="false">
+              prince
+            </button>
+            replied.
+          </div>
+          <p id="cue" aria-live="polite">
+            移动指针看轻微景深；悬浮或点按下面的词。
+          </p>
+        </div>
+        <button class="wind" data-action="wind" aria-pressed="false">
+          让风吹过 · wind ↝
+        </button>
+      </section>
+      <div style="text-align: center; padding: 24px 0 4px">
+        <a
+          href="/#/fox-story/22"
+          style="
+            display: inline-block;
+            background: #3e5b47;
+            color: #fff8e5;
+            padding: 13px 24px;
+            border-radius: 6px;
+            font-size: 13px;
+          "
+          >✦ 进入完整章节：小王子与狐狸 →</a
+        >
+      </div>
+      <footer>
+        <a href="/#/read/22">← 回到《小王子》阅读页</a
+        ><span>第 21 章 · 苹果树下的相遇</span
+        ><a href="./picturebook-lookdev-v1.html">查看第一轮样片 ↗</a>
+      </footer>
+      <details>
+        <summary>这份样片的制作方式与范围</summary>
+        <p>
+          角色原画依据现有绘本重新生成，映射到带深度的网格；尾巴、耳朵、头部和围巾由代码做局部变形。它是面向固定阅读镜头的
+          2.5D
+          样片，保留绘画质感，支持有限视差；不等同于能从背面观看、具有完整骨骼的
+          360° 三维模型。旧模型与原绘本保留，未替换正文阅读页。
+        </p>
+      </details>
+    </main>
+    <script type="module" src="./picturebook-lookdev-v2.js"></script>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "tool": "built-in image_gen",
+  "date": "2026-10-19",
+  "prompt": "Create one transparent full-body botanical sprite for the Little Prince picture-book. Reference is for exquisite warm gouache and watercolor brush texture ONLY. Subject is NOT a rose: one very simple small wildflower, with exactly ONE ring of FIVE broad ivory cream petals around a small golden yellow center, front-facing flower head so the single ring is unmistakable; absolutely no overlapping second petal layer. Thin short green stem, two small leaves, modest tiny mossy earth root clump. Entire plant top to roots centered in a square canvas, 12 percent transparent padding. The flower head occupies upper 35 percent, center at x 50%, y 27%, stem down to y 85%. Delicate hand-painted edges, fine golden dawn rim lighting matching reference, understated simple humble plant, beautiful illustrated storybook look, no plastic 3D. TRUE transparent RGBA background. Exactly one plant, no other flowers, no scenery, no text or symbols.",
+  "reference": "web/assets/picturebook-fox-reading/rose.png",
+  "transparent_background": true,
+  "output": "web/assets/picturebook-rose-actors/simple-flower.png",
+  "original": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-fa99f4b4-5bac-40ad-bfba-dfadd2a102fc.png"
+}

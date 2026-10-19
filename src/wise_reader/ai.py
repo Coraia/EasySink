@@ -147,6 +147,7 @@ class ProviderPatch(BaseModel):
 class ConfigPatch(BaseModel):
     text: ProviderPatch | None = None
     speech: ProviderPatch | None = None
+    illustration: ProviderPatch | None = None
 
 
 def provider_error(exc):
@@ -186,6 +187,12 @@ class AIConfig:
                 api_key="",
                 mode="local",
                 local_voice="Samantha",
+            ),
+            "illustration": dict(
+                enabled=False,
+                base_url="https://api.openai.com/v1",
+                model="",
+                api_key="",
             ),
         }
         if self.path.exists():

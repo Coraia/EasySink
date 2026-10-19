@@ -1,0 +1,20 @@
+{
+  "tool": "built-in image_gen",
+  "date": "2026-10-19",
+  "assets": [
+    {
+      "file": "rose-garden.png",
+      "source": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-6913dc23-fd48-4d37-84c5-59917d2ce3cc.png",
+      "prompt": "Use case: illustration-story. Asset type: wide 3:2 background plate for the approved Little Prince living picturebook. Reference image 1 is the definitive visual style, color, perspective and painterly detail; image 2 is the character style reference only, DO NOT include him. Paint a beautiful rose garden in the SAME warm golden afternoon, richly layered watercolor and gouache brushwork, olive foliage, creamy gold light, lilac distant hills and pastel blue sky. A gently curving earth path clears the lower center/left for a separately composited child character; abundant natural pink and crimson rose bushes on right foreground and both sides recede towards a distant low stone garden wall. Roses should have fine petal brushwork, luminous edges, natural green leaves. Horizon at upper third. Keep central lower 50 percent uncluttered ground for character compositing; surround with roses without covering that area. Same refined children's storybook look as reference, painterly not plastic. NO people, NO fox, no text, no border, no labels. Entire canvas painted opaque."
+    },
+    {
+      "file": "rose.png",
+      "source": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-ad618307-02c8-45f6-add9-fc8b17c249c5.png",
+      "prompt": "Use case: illustration-story. Create one isolated exquisite crimson rose plant for the Little Prince story, on a truly transparent background. Reference image 1 is the exact painterly golden light and detailed layered watercolor/gouache style; reference image 2 is character/style only DO NOT include the boy. One beautiful open red rose flower, delicate layered curved petals with warm luminous edges and soft violet shadows, a graceful slender green stem with four leaves, rooted in one tiny rounded mossy earth clump. Full plant visible with generous empty transparent padding, square composition, flower upper middle, stem visible below. Richly hand-painted storybook texture matching reference; natural botanical charm, no cartoon face, no glass dome, no typography, no border, no paper rectangle, no glow, no ground plane, no cast shadow, no extra objects."
+    }
+  ],
+  "references": [
+    "../picturebook-lookdev-v2/meadow.png",
+    "../picturebook-lookdev-v2/prince.png"
+  ]
+}

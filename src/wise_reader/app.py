@@ -22,6 +22,7 @@ from wise_reader.native_input import register as register_native_input
 from wise_reader.plugins import PluginContext, mount_plugins
 from wise_reader.plugins.importer import start_url_import
 from wise_reader.profile import DOMAINS, EXAM_VOCAB
+from wise_reader.picturebook import register_picturebook
 from wise_reader.reading_assist import close_assistance, register as register_reading_assist
 from wise_reader.settings import ROOT, Settings
 from wise_reader.store import Store, _now
@@ -142,6 +143,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.ai = ai
     register_native_input(app, ROOT)
     register_ai(app, ai)
+    register_picturebook(app, store, ai)
 
     @app.get("/health")
     def health():

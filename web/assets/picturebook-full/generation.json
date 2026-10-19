@@ -1,0 +1,216 @@
+{
+  "tool": "built-in image_gen",
+  "original_generation": [
+    {
+      "number": 1,
+      "file": "key-events-01.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch01-01",
+        "ch01-02",
+        "ch02-01",
+        "ch02-03"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or text. Each panel is a finished different key event in The Little Prince, not camera variations. Reference image is STYLE and CHARACTER DESIGN ONLY: luminous detailed watercolor/gouache on paper, warm gold and sage palette; Little Prince blond curly hair, green coat, long golden scarf; pilot dark tousled hair short beard brown flying jacket cream scarf. PANEL TOP LEFT: Chapter 1, narrator as a six-year-old brown-haired boy indoors drawing a boa constrictor swallowing an elephant with crayons on paper, jungle book nearby, show elephant bulge; no prince. TOP RIGHT: Chapter 1 later, adult narrator flying a vintage propeller airplane high above clouds, no prince. BOTTOM LEFT: Chapter 2, adult pilot alone repairing his broken vintage biplane engine in vast Sahara dunes, toolkit beside him, no prince. BOTTOM RIGHT: Chapter 2, golden dawn, blond Little Prince requests a sheep; pilot kneeling draws a small wooden box with three air holes on paper and child delighted points at it, plane distant. Distinct scene staging and actions. Gentle, beautiful children-book illustration. No writing, labels, speech bubbles, watermark.",
+      "original_png": "exec-b342fe4b-88fa-49fc-b006-a9c58387f505.png"
+    },
+    {
+      "number": 2,
+      "file": "key-events-02.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch02-02",
+        "ch03-01",
+        "ch03-02",
+        "ch04-01"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Little Prince unexpectedly appears at dawn facing astonished pilot beside the broken plane, asks for a lamb, pilot holds pencil; no box yet. TOP RIGHT: Prince laughing and pointing at pilot’s airplane, pilot gestures at wings, dunes. BOTTOM LEFT: Prince sitting on sand lovingly studies paper drawing of crate, pilot beside him offering a little rope, thoughtful conversation. BOTTOM RIGHT: Prince stands on tiny round asteroid about size of a house, starry space, no giant buildings.",
+      "original_png": "exec-62445393-9d0f-4d87-b232-02c813ee4112.png"
+    },
+    {
+      "number": 3,
+      "file": "key-events-03.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch04-02",
+        "ch04-03",
+        "ch05-01",
+        "ch05-02"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Turkish astronomer in traditional clothing studies stars through brass telescope at observatory, no prince. TOP RIGHT: Adult narrator at wooden desk with paints and colored pencils carefully painting memory of blond child, quiet thoughtful room. BOTTOM LEFT: Prince examines tiny shoots on small home asteroid, gardening tools, distinguishing rose shoots from weeds. BOTTOM RIGHT: Cautionary imagined tiny planet cracked by roots of THREE huge baobab trees, no human figures, dramatic yet gentle storybook image.",
+      "original_png": "exec-6476dece-0a83-4fad-8c0e-e981dcf7d56e.png"
+    },
+    {
+      "number": 4,
+      "file": "key-events-04.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch05-03",
+        "ch06-01",
+        "ch07-01",
+        "ch07-02"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Prince kneeling carefully pulls small baobab seedlings from soil of tiny asteroid, little volcanoes beyond. TOP RIGHT: Lonely Prince seated on simple small chair near curved edge of home asteroid watching enormous glowing sunset, wistful golden light. BOTTOM LEFT: Pilot frustrated working on stubborn engine bolt with wrench, prince asking serious question nearby, desert daylight. BOTTOM RIGHT: Prince stands angry and tearful in Sahara, clenched hands, pilot stops with hammer lowered, distinct emotional confrontation.",
+      "original_png": "exec-16bc9cf0-74d4-4aa4-b96a-e2e078ebe735.png"
+    },
+    {
+      "number": 5,
+      "file": "key-events-05.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch07-03",
+        "ch08-01",
+        "ch08-02",
+        "ch09-01"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Night desert, pilot has dropped tools and holds sobbing Prince tenderly in his arms, scattered tools in sand, reassuring. TOP RIGHT: Prince kneeling beside a still closed rosebud on his tiny asteroid, soft predawn light, no open petals yet. BOTTOM LEFT: Single magnificent red rose opens in morning sunlight, prince admires her with wonder, small green asteroid. BOTTOM RIGHT: Prince cleans his three tiny volcanoes with a brush, migrating birds overhead ready for departure, home asteroid.",
+      "original_png": "exec-6abc4251-5f21-43b1-81d3-301f91003cf4.png"
+    },
+    {
+      "number": 6,
+      "file": "key-events-06.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch09-02",
+        "ch10-01",
+        "ch10-02",
+        "ch11-01"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Prince holding removed glass globe beside uncovered red rose, sorrowful farewell on asteroid, wind softly blows scarf, birds distant. TOP RIGHT: Prince arrives at tiny asteroid, elderly king with crown purple ermine cloak covering most ground sits on simple throne, absurd gentle humor. BOTTOM LEFT: Prince walks away from throne while old king stretches hand after him with grand commanding gesture, purple cloak and stars. BOTTOM RIGHT: Prince greets conceited man alone on tiny planet, man wears extravagant tall hat and proudly poses, no other people.",
+      "original_png": "exec-b7730e65-d384-4db2-ad21-2262d9109dfb.png"
+    },
+    {
+      "number": 7,
+      "file": "key-events-07.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch11-02",
+        "ch12-01",
+        "ch12-02",
+        "ch13-01"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Prince claps hands as conceited man lifts tall hat and bows grandly, same tiny planet, theatrical action. TOP RIGHT: Prince gently approaches sad adult man seated among plain empty and full glass bottles on small gray planet, no glamour, no child drinking. BOTTOM LEFT: Prince walking sadly away from small planet’s seated withdrawn adult and bottles, lonely wide space. BOTTOM RIGHT: Prince visits bespectacled businessman hunched over cluttered desk counting stars with abacus and papers, tiny asteroid, no readable writing.",
+      "original_png": "exec-f74410d1-a081-4aba-8c4e-6e1976791c62.png"
+    },
+    {
+      "number": 8,
+      "file": "key-events-08.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch13-02",
+        "ch14-01",
+        "ch14-02",
+        "ch15-01"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Businessman locks a small paper in desk drawer while Prince watches skeptically; real stars twinkle freely overhead, no text. TOP RIGHT: Prince watches tired lamplighter lighting one tall street lamp on very tiny asteroid at dusk, barely room for two people. BOTTOM LEFT: Sweaty lamplighter lowers long lighting pole and wipes forehead with red checked handkerchief, glowing lamp, prince concerned, rapid sunset sky. BOTTOM RIGHT: Prince sits on large desk before elderly bearded geographer and huge open atlas, globes and books fill study, no legible text.",
+      "original_png": "exec-32b72c4d-60fc-48a8-b361-f502543e53bf.png"
+    },
+    {
+      "number": 9,
+      "file": "key-events-09.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch15-02",
+        "ch16-01",
+        "ch17-01",
+        "ch17-02"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Prince leaves geographer’s study, face worried, delicate translucent memory of single rose above his cupped hands, clearly a remembered thought. TOP RIGHT: Wide storybook globe Earth under starry space, chain of little lamplighters lighting golden street lamps as night moves across continents; no labels. BOTTOM LEFT: Prince alone in vast African desert at twilight, tiny golden snake near a stone, no pilot, immense empty dunes. BOTTOM RIGHT: Prince stands calmly on sand and looks down at slender golden snake loosely curled around his boot ankle like bracelet, non-threatening, no injury.",
+      "original_png": "exec-c8a8dd12-613f-4a82-8eee-f5cd043bee64.png"
+    },
+    {
+      "number": 10,
+      "file": "key-events-10.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch18-01",
+        "ch19-01",
+        "ch20-01",
+        "ch20-02"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Prince kneels politely beside one tiny three-petaled desert flower in empty sand, sparse pebbles, wide open space, no rose or fox. TOP RIGHT: Prince on high sharp rocky mountain summit cups hands and calls into empty misty valleys, repeated ridgelines suggest echo, no people or words. BOTTOM LEFT: Prince discovers abundant garden of thousands of blooming red roses beside country path, astonished, green landscape. BOTTOM RIGHT: Prince lying face down on soft grass crying beside vast rose garden, golden scarf curled on grass, tender not melodramatic.",
+      "original_png": "exec-785ebbf6-2318-4a0e-8d07-0731b1725ed6.png"
+    },
+    {
+      "number": 11,
+      "file": "key-events-11.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch21-01",
+        "ch21-02",
+        "ch21-03",
+        "ch21-04"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Prince encounters small red fox under apple tree, both stand at respectful distance, golden wheat beyond. TOP RIGHT: Prince sits quietly on grass some distance from red fox, patient friendship ritual under apple tree beside golden wheat, soft afternoon. BOTTOM LEFT: Prince kneels beside trusted fox at edge of golden wheat field, fox looks sorrowful as departure approaches, intimate gentle farewell. BOTTOM RIGHT: Prince stands confidently before many roses and touches his heart, recognizes his own rose’s uniqueness, fox absent.",
+      "original_png": "exec-350e8be8-4f76-4c05-9ad5-43dffa2531cd.png"
+    },
+    {
+      "number": 12,
+      "file": "key-events-12.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch21-05",
+        "ch22-01",
+        "ch22-02",
+        "ch23-01"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Prince bends close to fox under apple tree for final secret and goodbye, golden wheat sways, quiet trust, no text. TOP RIGHT: Prince talks to railway switchman in small cabin beside railway tracks, signal lever and approaching lit train, evening. BOTTOM LEFT: Express train passes, sleepy adult silhouettes and curious children with faces at glowing windows, Prince on safe platform looking up, switchman nearby. BOTTOM RIGHT: Prince faces merchant offering a tiny tin of pills at simple market stall, dusty road, no child swallowing pills.",
+      "original_png": "exec-2832acec-6634-4bf1-aac5-5eb662f50a49.png"
+    },
+    {
+      "number": 13,
+      "file": "key-events-13.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch23-02",
+        "ch24-01",
+        "ch24-02",
+        "ch24-03"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Dreamlike imagined scene Prince strolling leisurely toward fresh clear spring among soft grasses, thoughtlike soft vignette, no merchant, no tablets. TOP RIGHT: Thirsty pilot tips empty water flask beside prince and broken plane in Sahara, harsh day, both tired. BOTTOM LEFT: Pilot carries sleeping Prince through moonlit Sahara dunes, golden hair and scarf lit by stars, tender fragile feeling. BOTTOM RIGHT: Pilot holding sleeping child discovers a stone village-style well with pulley and rope amid dawn dunes, hopeful sunrise.",
+      "original_png": "exec-ce322327-4dbd-4202-a399-7c34595e8a69.png"
+    },
+    {
+      "number": 14,
+      "file": "key-events-14.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch25-01",
+        "ch25-02",
+        "ch26-01",
+        "ch26-02"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Prince touches rope and turns wooden pulley while pilot helps hoist bucket at stone well at dawn, desert peaceful. TOP RIGHT: Pilot raises wooden bucket to Prince’s lips; child drinks eyes closed, stone well and golden dawn sand, clear caring action. BOTTOM LEFT: Prince seated atop ruined low stone wall near desert well at evening, feet dangling, small yellow snake at wall base, pilot approaching far away. BOTTOM RIGHT: Pilot catches frightened pale Prince in his arms beside old stone wall, water flask nearby, snake retreating, gentle protective action.",
+      "original_png": "exec-d1ac6db6-1a6f-44be-885f-6d7a49d5d6f3.png"
+    },
+    {
+      "number": 15,
+      "file": "key-events-15.webp",
+      "reference": "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook/chapter-04-story-v2.webp",
+      "frames": [
+        "ch26-03",
+        "ch26-04",
+        "ch27-01",
+        "ch27-02"
+      ],
+      "prompt": "Create ONE square 2-by-2 story illustration atlas, four equal square panels exactly touching at x=50%, y=50%, no gutters or borders, no captions or lettering. Four different key story events, not camera variations. Reference image supplies STYLE AND CHARACTER DESIGN only. Rich luminous watercolor/gouache on textured paper, warm gold and sage, gentle detailed children's picture book. Maintain Little Prince: small blond curly-haired child, green coat, long golden scarf, brown boots. Pilot: brown tousled hair, short beard, brown flying jacket, cream scarf. Depict only the requested characters per panel, not all characters in reference. Every panel fills its own square. No text, labels, watermarks, panel numbers. TOP LEFT: Prince and pilot sitting close together look up at many sparkling stars over dunes, Prince points upward and smiles sadly, intimate farewell. TOP RIGHT: Wide gentle moonlit desert scene: Prince standing unsteadily, small yellow glint of snake beside boot, pilot a few steps away helpless and sad, no bite detail, no blood, no injury, quiet symbolic farewell. BOTTOM LEFT: Older same pilot alone at open window listens to twinkling night stars, sketch of little prince and single rose on desk, bittersweet hopeful memory. BOTTOM RIGHT: Empty Sahara dunes beneath one brilliant star, two low soft sand hills and faint footprints, no people, serene open ending inviting a possible return.",
+      "original_png": "exec-f18b11df-86b3-4de1-a29b-4f2b59dd41f7.png"
+    }
+  ],
+  "revisions": [
+    {
+      "tool": "built-in image_gen",
+      "reason": "Differentiate the tippler from the pilot",
+      "prompt": "Edit this 2x2 atlas. Preserve the four-panel layout, watercolor/gouache style, all scenery, and the blond green-coated Little Prince. Preserve TOP LEFT and BOTTOM RIGHT panels unchanged. In TOP RIGHT and BOTTOM LEFT ONLY, replace the seated drinker character: he must be clearly a different person from the pilot. Make him an elderly balding man with a short gray beard, round face, faded blue tunic and plain charcoal trousers, NO scarf, NO brown aviator jacket, NO flight boots, no pilot likeness. TOP RIGHT he is seated sadly with face in his hands surrounded by bottles while prince approaches. BOTTOM LEFT show the same elderly blue-clothed man from behind among bottles as prince leaves. No glamorization, no child drinking. Keep composition and lighting. No words or captions.",
+      "original_png": "exec-a5e2a2b1-7a33-45e9-a256-92bc8850c30b.png",
+      "file": "key-events-07-v2.webp"
+    },
+    {
+      "tool": "built-in image_gen",
+      "reason": "Remove non-source village behind isolated desert well",
+      "prompt": "Edit this square 2x2 atlas. Preserve TOP LEFT, TOP RIGHT, BOTTOM LEFT panels unchanged. In BOTTOM RIGHT panel only, keep the same pilot carrying sleeping blond Little Prince, stone well, wooden pulley, rope and bucket, golden dawn lighting and watercolor style. Remove ALL distant buildings, village, castle, walls and human settlement from the background. Replace the background behind the well with vast empty Sahara sand dunes extending to the horizon. The story well is isolated in the desert, with no village anywhere. Preserve exact panel grid and character designs. No captions or letters.",
+      "original_png": "exec-2f2a2eb7-2306-41ee-b1f7-78c35a778bd3.png",
+      "file": "key-events-13-v2.webp"
+    }
+  ]
+}

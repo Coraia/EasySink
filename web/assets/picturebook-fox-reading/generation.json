@@ -1,0 +1,10 @@
+{
+  "tool": "built-in image_gen",
+  "kind": "2.5D illustrated texture",
+  "prompt": "Use case: illustration-story. These two images are definitive character identity and hand-painted style references. Make one clean transparent-background illustration of these SAME two friends sitting quietly facing each other, full bodies visible. The Little Prince occupies the LEFT HALF: same 7-8 year old boy, exact golden curly hair, delicate curious face, warm brown eyes, moss green long coat, mustard yellow scarf with tails flowing left, beige trousers and brown leather boots. He is sitting on the ground with knees bent up comfortably, his forearms resting on his knees, smiling gently toward the fox. The fox occupies the RIGHT HALF: exact graceful red fox, long narrow muzzle, amber eyes, dark ear edges, white throat and warm russet fur, sitting upright on its haunches, tail curled around the front paws with ivory tip on the far right, looking up to the prince. Same golden afternoon light, beautifully layered watercolor and gouache brush strokes, fine directional fur and hair, warm cream and pale lavender shadows. NOT plastic, not flat vector. Full figures including all boots, ears, scarf ends, tail inside frame with 6% padding. Landscape 3:2 layout. For animation compositing keep the prince and all his clothing entirely within the left 55% of the image and the fox entirely within the right 40%, with a narrow CLEAR TRANSPARENT GAP between them around x=58%. Both subjects sit on the same ground baseline near y=90%; prince sitting height about 80% of frame and fox about 57% of frame. No actual ground, no grass, no floor shadow, no paper rectangle, no scenery, no atmospheric glow, no text. Both friends should look naturally relaxed, exactly the approved illustrated style. This is an illustration texture for 2.5D animation, not a rendered 3D model.",
+  "source": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-70a11871-2110-43af-b97f-e9a64345535f.png",
+  "references": [
+    "../picturebook-lookdev-v2/prince.png",
+    "../picturebook-lookdev-v2/fox.png"
+  ]
+}

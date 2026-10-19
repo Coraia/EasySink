@@ -1,0 +1,336 @@
+.pb3d-modes {
+  position: absolute;
+  z-index: 8;
+  left: 22px;
+  right: 22px;
+  top: 18px;
+  display: flex;
+  gap: 4px;
+  width: max-content;
+  max-width: calc(100% - 44px);
+  padding: 4px;
+  border: 1px solid #ffffff80;
+  border-radius: 999px;
+  background: #fffaf0eb;
+  box-shadow: 0 5px 20px #5c492014;
+  backdrop-filter: blur(12px);
+}
+.pb3d-modes button {
+  min-height: 29px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: 11px/1.4 inherit;
+  color: #777b68;
+  white-space: nowrap;
+}
+.pb3d-modes button[aria-pressed="true"] {
+  background: #4e6950;
+  color: #fffaf0;
+}
+.picturebook:has(.pb3d-modes) .pb-art-badge {
+  top: 78px;
+}
+.pb3d-entry {
+  display: block;
+  margin-top: 14px;
+  border: 1px solid #d5ddc6;
+  border-radius: 6px;
+  background: #f0f3e6;
+  padding: 9px 12px;
+  font-size: 11px;
+  color: #5a7555;
+  box-shadow: none;
+}
+.pb3d-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: hidden;
+  background: radial-gradient(
+    ellipse at 12% 20%,
+    #ffebbd,
+    #f3dcc1 45%,
+    #e6d2bb 90%
+  );
+  color: #526347;
+}
+.pb3d-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: pan-y;
+}
+.pb3d-canvas:active {
+  cursor: grabbing;
+}
+.pb3d-heading {
+  position: absolute;
+  top: 90px;
+  left: 30px;
+  right: 25px;
+  pointer-events: none;
+}
+.pb3d-heading > span {
+  font:
+    8px/1.5 Georgia,
+    serif;
+  letter-spacing: 2.8px;
+  color: #9a875d;
+}
+.pb3d-heading h2 {
+  font-size: 23px;
+  font-weight: 400;
+  letter-spacing: 2px;
+  margin: 9px 0 9px;
+}
+.pb3d-heading p {
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: #8b8f72;
+  margin: 0;
+}
+.pb3d-ground-label {
+  position: absolute;
+  bottom: 169px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  pointer-events: none;
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: #846f4b;
+}
+.pb3d-ground-label > span {
+  color: #c0954c;
+  margin-right: 6px;
+}
+.pb3d-card {
+  position: absolute;
+  bottom: 53px;
+  left: 23px;
+  right: 23px;
+  border: 1px solid #ffffffd9;
+  border-radius: 13px;
+  padding: 17px 20px;
+  background: #fffcf0d9;
+  box-shadow: 0 10px 32px #755f2510;
+  backdrop-filter: blur(9px);
+  pointer-events: none;
+}
+.pb3d-card > div {
+  display: flex;
+  align-items: baseline;
+  gap: 13px;
+}
+.pb3d-card strong {
+  font:
+    italic 27px/1.1 Georgia,
+    serif;
+  color: #4d684a;
+  font-weight: 400;
+}
+.pb3d-card span {
+  font-size: 12px;
+  color: #7b876b;
+}
+.pb3d-card p {
+  font-size: 11px;
+  line-height: 1.7;
+  color: #8b8c71;
+  margin: 9px 0 0;
+}
+.pb3d-tools {
+  position: absolute;
+  bottom: 16px;
+  left: 24px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pb3d-tools button {
+  border: 0;
+  background: transparent;
+  color: #7d795d;
+  box-shadow: none;
+  min-height: 23px;
+  padding: 4px 0;
+  font-size: 10px;
+}
+.pb3d-tools > span {
+  margin-left: auto;
+  font-size: 8px;
+  color: #a29573;
+}
+.picturebook[data-visual="3d"] .pb-art-grain,
+.picturebook[data-visual="3d"] .pb-art-badge,
+.picturebook[data-visual="3d"] .pb-art-caption,
+.picturebook[data-visual="3d"] .pb-art-note {
+  visibility: hidden;
+}
+.picturebook[data-visual="3d"] .pb-art-controls {
+  display: none;
+}
+.pb3d-reading-hint {
+  margin: 0 0 10px;
+  padding: 9px 12px;
+  color: #8d9379;
+  background: #f4f2e6;
+  font-size: 10px;
+  line-height: 1.6;
+  border-radius: 5px;
+}
+.pb3d-reading-hint strong {
+  color: #667e5a;
+  font-weight: 500;
+}
+.picturebook .pb3d-word {
+  display: inline;
+  padding: 0 1px;
+  min-height: 0;
+  border: 0;
+  border-bottom: 1.5px dashed #a4b18c;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
+  color: #526f4b;
+  line-height: inherit;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.picturebook .pb3d-word:hover,
+.picturebook .pb3d-word.is-word-active {
+  background: #e2e9c6;
+  color: #365e32;
+  border-color: #738958;
+  border-radius: 3px;
+}
+.picturebook .pb3d-word:focus-visible {
+  outline: 2px solid #b49959;
+  outline-offset: 3px;
+}
+.pb3d-stage[hidden],
+.pb3d-entry[hidden],
+.pb3d-reading-hint[hidden] {
+  display: none;
+}
+@media (max-width: 760px) {
+  .pb3d-heading {
+    top: 76px;
+    left: 22px;
+  }
+  .pb3d-heading h2 {
+    font-size: 19px;
+  }
+  .pb3d-heading p {
+    font-size: 9px;
+  }
+  .pb3d-modes {
+    left: 14px;
+    right: 14px;
+    top: 13px;
+  }
+  .pb3d-modes button {
+    font-size: 10px;
+    padding: 5px 10px;
+  }
+  .pb3d-card {
+    bottom: 45px;
+    left: 14px;
+    right: 14px;
+    padding: 12px 15px;
+  }
+  .pb3d-card strong {
+    font-size: 23px;
+  }
+  .pb3d-card p {
+    font-size: 10px;
+  }
+  .pb3d-ground-label {
+    bottom: 145px;
+  }
+  .pb3d-tools {
+    left: 17px;
+    right: 17px;
+    bottom: 10px;
+  }
+  .pb3d-tools > span {
+    display: none;
+  }
+  .picturebook[data-visual="3d"] .pb-art-wrap {
+    min-height: 490px;
+  }
+  .pb3d-reading-hint {
+    font-size: 10px;
+  }
+}
+
+/* Hidden overflow can scroll a fractional-height stage when its controls focus. */
+.picturebook[data-visual="3d"] .pb-art-wrap {
+  overflow: clip;
+}
+@media (max-width: 760px) {
+  .picturebook[data-visual="3d"] .pb-spread {
+    display: block;
+    overflow: clip;
+  }
+  .picturebook[data-visual="3d"] .pb-art-wrap {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    width: 100%;
+    aspect-ratio: auto;
+    height: 340px;
+    min-height: 340px;
+    box-shadow: 0 8px 25px #68582412;
+  }
+  .pb3d-heading,
+  .pb3d-ground-label {
+    display: none;
+  }
+  .pb3d-card {
+    bottom: 34px;
+    padding: 9px 14px;
+    border-radius: 9px;
+  }
+  .pb3d-card strong {
+    font-size: 20px;
+  }
+  .pb3d-card p {
+    margin-top: 4px;
+  }
+  .pb3d-tools {
+    bottom: 4px;
+  }
+}
+
+/* Give the painting the same uninterrupted image area as the watercolor page. */
+.picturebook[data-visual="3d"] .pb3d-heading,
+.picturebook[data-visual="3d"] .pb3d-ground-label {
+  display: none;
+}
+.pb3d-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at 50% 48%,
+    transparent 42%,
+    #f7edcf38 100%
+  );
+}
+.pb3d-card {
+  background: #faf5e7e8;
+  border-color: #fff9e5;
+  border-radius: 6px;
+}

@@ -1,0 +1,182 @@
+{
+  "date": "2026-10-19",
+  "tool": "built-in image_gen",
+  "assets": [
+    {
+      "key": "people-a",
+      "file": "people-a.png",
+      "sha256": "08113408a9f1ba37ff955f8ef2873ee1052afacafe74470f0fc896b51416b88d",
+      "prompt": "Exquisite hand-painted Little Prince storybook gouache watercolor, detailed warm brush texture, golden rim lighting, expressive sculpted but PAINTED faces, matching references. Square atlas in EXACT 2x2 equal square cells, NO borders or letters. Each subject FULL BODY centered in its own cell, all parts within that cell with at least 12% transparent margin. TRUE RGBA alpha background in and between all cells, no landscape, no ground, no cast shadows. Never cross cell boundaries. TOP LEFT: elderly white-bearded king facing LEFT seated in a purple gold ermine robe and small golden throne, crown, arm extended to command. TOP RIGHT: vain slender gentleman facing LEFT in taupe tailcoat, golden waistcoat, curled mustache, holding his tall hat out in his right hand, full body. BOTTOM LEFT: sad elderly tippler in blue coat seated head bowed with hands over face, no bottles. BOTTOM RIGHT: round bespectacled businessman in dark brown suit seated writing at a small wooden desk with ledger and abacus, entire desk included. No Little Prince in this atlas.",
+      "transparent_background": true,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-07-v2.webp",
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-0a5839c0-a3cd-4253-8c5b-be4b93bce34b.png"
+    },
+    {
+      "key": "people-b",
+      "file": "people-b.png",
+      "sha256": "1cf95b5f37be40a7ac06e0709a629a7910d73b9fe9f72006d23703babbbe1da6",
+      "prompt": "Exquisite hand-painted Little Prince storybook gouache watercolor, detailed warm brush texture, golden rim lighting, expressive sculpted but PAINTED faces, matching references. Square atlas in EXACT 2x2 equal square cells, NO borders or letters. Each subject FULL BODY centered in its own cell, all parts within that cell with at least 12% transparent margin. TRUE RGBA alpha background in and between all cells, no landscape, no ground, no cast shadows. Never cross cell boundaries. TOP LEFT: brown-haired bearded adult aviator in brown leather coat, cream scarf, beige trousers and boots, kneeling facing RIGHT holding pencil and paper ready to draw, no other people. TOP RIGHT: 6-year-old brown-haired boy (young aviator NOT blond Little Prince), cream shirt suspenders, seated on wooden stool drawing on a sketchpad on his knees. BOTTOM LEFT: elderly geographer in burgundy coat, white beard and round spectacles, seated behind huge open atlas on small lectern, facing LEFT. BOTTOM RIGHT: scholarly Turkish astronomer in neat dark suit, small mustache, standing pointing upward RIGHT with one hand, no telescope. Full bodies and props visible.",
+      "transparent_background": true,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-01.webp",
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-061f850f-d89d-43ab-bd53-8704070938c8.png"
+    },
+    {
+      "key": "people-c",
+      "file": "people-c.png",
+      "sha256": "0b27224aeb330facbd30d02dc7710c5f1a87ebc82aae0370eb5cb911daa8dd7f",
+      "prompt": "Exquisite hand-painted Little Prince storybook gouache watercolor, detailed warm brush texture, golden rim lighting, expressive sculpted but PAINTED faces, matching references. Square atlas in EXACT 2x2 equal square cells, NO borders or letters. Each subject FULL BODY centered in its own cell, all parts within that cell with at least 12% transparent margin. TRUE RGBA alpha background in and between all cells, no landscape, no ground, no cast shadows. Never cross cell boundaries. TOP LEFT: tired friendly lamplighter in blue uniform and small cap, standing facing LEFT holding long lighting pole upright, no lamp. TOP RIGHT: railway switchman in navy uniform and cap standing facing LEFT with one hand raised, no train. BOTTOM LEFT: elderly merchant in warm ochre robe standing facing LEFT with small open wooden tray of purple pills. BOTTOM RIGHT: SAME brown-haired bearded aviator as reference, brown leather coat cream scarf, standing cradling sleeping blond Little Prince green coat/yellow scarf in both arms; ONE grouped carrying pose, no background. Keep each cell full bodies and completely separate.",
+      "transparent_background": true,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-01.webp",
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-fa41c787-3610-4fe4-88ca-60c1b7dd03fe.png"
+    },
+    {
+      "key": "prince-poses",
+      "file": "prince-poses.png",
+      "sha256": "bbbefcdee061257d96ca4e9fc0bdb900ccc8ebb451557916cd8775ea021aae2e",
+      "prompt": "Exquisite hand-painted Little Prince storybook gouache watercolor, detailed warm brush texture, golden rim lighting, expressive sculpted but PAINTED faces, matching references. Square atlas in EXACT 2x2 equal square cells, NO borders or letters. Each subject FULL BODY centered in its own cell, all parts within that cell with at least 12% transparent margin. TRUE RGBA alpha background in and between all cells, no landscape, no ground, no cast shadows. Never cross cell boundaries. FOUR poses of the EXACT same reference Little Prince: curly blond hair, forest green coat brass buttons, ochre trousers, brown boots, yellow scarf. TOP LEFT kneeling facing RIGHT reaching to uproot a tiny seedling held in fingers; TOP RIGHT sitting on small wooden chair facing LEFT watching sunset, hands relaxed on knees; BOTTOM LEFT seated on ground facing LEFT with knees drawn up, face lowered tearfully, no other people; BOTTOM RIGHT standing facing LEFT holding a small metal cup at his lips drinking water. Same identity, whole body in each cell. No rose, no background.",
+      "transparent_background": true,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-225f584a-fe2c-4b6c-99ce-66f688b238c6.png"
+    },
+    {
+      "key": "props-a",
+      "file": "props-a.png",
+      "sha256": "49c668890673da189f5716b8b8d8b058969487eb787e3de76b691fa74871c355",
+      "prompt": "Detailed hand-painted gouache watercolor assets for the Little Prince, warm golden edges, matching the references. Square sprite atlas EXACTLY 2 columns by 2 rows, each subject entirely WITHIN its square quadrant with large 15 percent empty transparent padding; no subject touching quadrant edges. TRUE transparent RGBA background, NO scenery, NO text, no cell borders. TOP LEFT: entire vintage golden tan biplane seen 3/4 side, nose pointing LEFT, propeller and wheels visible, no pilot. TOP RIGHT: a small fluffy white lamb standing side view facing LEFT, gentle expressive head. BOTTOM LEFT: a closed small plain wooden crate with exactly three circular air holes across its front; no sheep visible inside and no markings. BOTTOM RIGHT: one majestic baobab tree with huge bulbous trunk and spreading foliage and exposed roots, fully isolated, no planet.",
+      "transparent_background": true,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-01.webp"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-4551133c-b39d-4951-b403-4e03b000b75c.png"
+    },
+    {
+      "key": "props-b",
+      "file": "props-b.png",
+      "sha256": "593e291d8d3830727c6a564f4ce21a9de5dcaf80c7770353123e6a1bc728e204",
+      "prompt": "Detailed hand-painted gouache watercolor assets for the Little Prince, warm golden edges, matching the references. Square sprite atlas EXACTLY 2 columns by 2 rows, each subject entirely WITHIN its square quadrant with large 15 percent empty transparent padding; no subject touching quadrant edges. TRUE transparent RGBA background, NO scenery, NO text, no cell borders. TOP LEFT: small rounded inactive volcano cone in ochre stone, open dark crater, no smoke, no lava. TOP RIGHT: single tall old-fashioned dark green gas streetlamp with a glass lantern at top, unlit, entire post and base visible, no person. BOTTOM LEFT: stone desert well with two wooden uprights and crossbeam and clearly visible top pulley, EMPTY opening and NO bucket or rope (these will animate separately), full structure visible. BOTTOM RIGHT: a vintage navy and brass locomotive with two passenger carriages in broad side view facing LEFT, warm lit windows, no people outside, no track. No ground in any cell.",
+      "transparent_background": true,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-1f73daad-e78f-4f14-ae7d-2ffc3cb39b0e.png"
+    },
+    {
+      "key": "backgrounds",
+      "file": "backgrounds.png",
+      "sha256": "beff0aa5839a7f32baa199df639b12e6c64228176085f4b3adef5ce4d76e20f4",
+      "prompt": "A rich hand-painted storybook gouache watercolor BACKGROUND ATLAS in exact 2x2 square cells with NO gutters or borders, each cell a complete independent EMPTY STAGE. Match warm golden textured brushwork of references. NO characters, no people, no animals, no large flowers, no props, no writing anywhere. TOP LEFT: Sahara dunes at golden dawn, broad open sand foreground lower 40%, sky above. TOP RIGHT: purple rocky mountains with open flat ledge in foreground, azure sky, dramatic but gentle. BOTTOM LEFT: quaint rural railway junction, empty tracks across middle ground, green grass open foreground, distant station building to far right, golden sky. BOTTOM RIGHT: cozy vintage aviator study, old plaster wall, window left glowing golden, bookshelves far back, EMPTY wooden floor foreground, no table, no chair, no people. Four equally sized square paintings.",
+      "transparent_background": false,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-01.webp"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-38a94eba-63f8-44b6-9285-272fd405f121.png"
+    },
+    {
+      "key": "props-c",
+      "file": "props-c.png",
+      "sha256": "acc0361286766d0844828c852347670f9b5a352033945d2ff2121ffc826ee54b",
+      "prompt": "Use case: illustration-story. A transparent 2x2 production prop atlas, FOUR completely separated objects one in each equal square cell, entire objects fully inside their cell with 10% clear margin at every cell edge. Soft exquisite watercolor and gouache on warm parchment painted edges, muted ochre gold sage green, same storybook style as supplied reference. TOP LEFT: a slender golden desert snake curled in a loose S with small head raised, gentle wise expression; TOP RIGHT: one tiny desert flower with EXACTLY THREE cream-white petals, golden center, thin green stem, two leaves, NO rose; BOTTOM LEFT: brass astronomer's telescope on wooden tripod, full object; BOTTOM RIGHT: group of four empty vintage green brown glass bottles. No ground, backgrounds, words, panels or frame. Genuine transparent alpha outside objects.",
+      "transparent_background": true,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-07-v2.webp",
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-fccd3b1f-074d-46ee-b1af-da83076db93a.png"
+    },
+    {
+      "key": "props-d",
+      "file": "props-d.png",
+      "sha256": "5ccd96ec766bbcc6017d58e70120e982d7b44d25d5c38a4b110327f7df568f42",
+      "prompt": "Use case: illustration-story. Transparent 2x2 production prop atlas, FOUR completely separated objects one in each equal square cell, entirely within cell with 10% clear margins on ALL cell edges. Detailed gentle watercolor/gouache illustrated storybook matching reference. TOP LEFT: old wooden water bucket with metal curved handle, front 3/4 view, no rope attached, filled with water; TOP RIGHT: single graceful white migrating bird in flight side view toward left wings spread, full bird; BOTTOM LEFT: low weathered ancient sandstone wall ruins about four stones high, flat ledge on top and irregular ends, wide side view, no snake or people; BOTTOM RIGHT: aged parchment sheet with childlike pencil drawing of a long closed boa constrictor bulging where it swallowed elephant, looking like a hat in profile, no elephant visible, no words. Genuine alpha, no background ground or frame.",
+      "transparent_background": true,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-07-v2.webp",
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-9def4418-b459-4ca8-9fa4-c6fd35f5eb48.png"
+    },
+    {
+      "key": "gestures",
+      "file": "gestures.png",
+      "sha256": "8fee390ff9fec55b635b87598d04f552fc218cd8c1ff771500ff2e6dad34ce22",
+      "prompt": "Use case: illustration-story. Transparent 2x2 sprite atlas of THE SAME little prince as reference image 2, blond tousled hair, delicate face green coat gold buttons yellow scarf brown boots, beautiful watercolor/gouache paper-grain edges. FOUR independent FULL BODY poses each centered entirely inside its equal quadrant with 10% transparent clear gutter. TOP LEFT: standing facing right CLAPPING, hands together in front chest, happy smile; TOP RIGHT: standing facing left raising right hand waving goodbye, gentle smile; BOTTOM LEFT: crouched facing right examining an engine bolt, with little wrench in hand, intent expression; BOTTOM RIGHT: lying gently asleep on his side facing viewer, knees slightly bent, scarf resting near him, peaceful with closed eyes. No scene, ground, shadow, frame, text. Keep identity absolutely consistent. Actual transparent background.",
+      "transparent_background": true,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-07-v2.webp",
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-046e0a03-8193-4d33-9d7f-930de7d9fce8.png"
+    },
+    {
+      "key": "night-stage",
+      "file": "night-stage.png",
+      "sha256": "962e51c7315980add9dd3fdeb5d86f7266cad09a086fe5a8a5c2da7c0bbfb5b8",
+      "prompt": "Use case: illustration-story. Empty stage for same delicate watercolor gouache Little Prince storybook reference. Portrait 3:4 desert at night, infinite deep inky-blue starry sky with tiny soft golden stars taking upper 65%, low distant lavender Sahara dunes and warm ochre sand foreground filling lower 35%. One small distant pale moon upper right. Gorgeous luminous fine brushwork, matte paper texture, nuanced depth and subtle atmospheric haze. Empty stage ready to place independent characters on foreground. NO characters, no flowers, no rose, no animals, no water, no buildings, no props, no lettering or border.",
+      "transparent_background": false,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-07-v2.webp",
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-b2dde3bc-20db-4ce8-88e7-f16faaff2d45.png"
+    },
+    {
+      "key": "story-poses",
+      "file": "story-poses.png",
+      "sha256": "64d749a081576e48dd68309b8e00eb4e2c89a1c967e535e5eab3c3edbed88462",
+      "prompt": "Use case illustration-story. Transparent 2x2 production sprite atlas. Reference 1 is painterly storybook style. Reference 2 is identity of Little Prince: blond tousled curls green coat yellow scarf brown boots delicate face. Keep exactly same face and outfit. Each full figure fully inside its square quadrant with generous transparent gutters. TOP LEFT: little prince sitting on INVISIBLE LEDGE, legs dangling freely straight down, side profile facing right, no chair or furniture. TOP RIGHT: adult brown haired lightly bearded aviator in brown leather flight coat cream scarf kneeling, tenderly hugging AWAKE little prince close, prince's eyes open arms around aviator neck; two bodies together complete without cropping. BOTTOM LEFT: little prince kneeling facing right drinking with closed eyes from LARGE wooden water bucket with metal handle held close to lips, NO cup or glass; full figure. BOTTOM RIGHT: same aviator kneeling facing right fixing aircraft engine with wrench, focused, small unattached metal engine part in hands; no plane. Beautiful watercolor/gouache detailed warm matte paper edges, no ground backgrounds frames or text, genuine transparency.",
+      "transparent_background": true,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-07-v2.webp",
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-3e3e803a-435c-4ea0-b631-95c2ded5f8b6.png"
+    },
+    {
+      "key": "drawings",
+      "file": "drawings.png",
+      "sha256": "80db6941f40f22d1e2c26e9a3c80e8ea14a76e5b7ab714f74a72aa168fe7ce5f",
+      "prompt": "Use case illustration-story. Transparent 2x2 asset atlas, four isolated aged parchment sheets, entirely inside each quadrant with10percent margins. Pencil/crayon CHILD'S DRAWINGS on parchment. TOP LEFT: outline of boa swallowing elephant, hat-shaped exterior, no visible elephant. TOP RIGHT: SAME boa shape in cutaway with clearly recognizable small ELEPHANT inside its belly, side profile, gentle not scary. BOTTOM LEFT: adorable simple little SHEEP, four legs fleece body horns absent. BOTTOM RIGHT: simple closed rectangular WOODEN BOX with three little round ventilation holes. Four sheets same rough warm parchment edges, watercolor/gouache in supplied storybook palette, simple black pencil sketches with subtlecoloredwash. No words numbers or labels. Genuine transparent background outside the sheets, no scene props.",
+      "transparent_background": true,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-07-v2.webp",
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-eb316e80-7762-4143-865e-eb20d95497c5.png"
+    },
+    {
+      "key": "fountain",
+      "file": "fountain.png",
+      "sha256": "4732dff501cfa24e06c8e5c68a8c67f4535e1f6f5e0c7588ba166afaeb9e4260",
+      "prompt": "Use case: illustration-story. Single isolated beautiful little natural freshwater spring fountain for a children's watercolor/gouache picturebook matching supplied references. Water emerges from a gap in warm weathered sandstone rocks and tumbles gently into a shallow clear blue pool edged with moss and tiny grasses. NO well, no bucket, no pump, no people, no large architecture. Exquisite warm matte painted paper edges, subtle fine brushwork, green-gold and turquoise palette. Full spring and pool centered with generous transparent margin, genuine transparent alpha background. No text, no panel, no scene backdrop.",
+      "transparent_background": true,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-07-v2.webp",
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-8cc701a0-1a63-4586-a3eb-f95336737678.png"
+    },
+    {
+      "key": "pilot-well",
+      "file": "pilot-well.png",
+      "sha256": "736776da869448b5e186bd5c344d636a9c0e65646291f5b76f24cbd1fabc59e4",
+      "prompt": "Use case illustration-story. Single full-body transparent sprite of the SAME adult aviator as previous picturebook references: tousled brown hair light brown beard, kind thoughtful face, worn brown leather flying coat, cream scarf, tan trousers, brown boots. Standing three-quarter profile facing RIGHT, feet planted, leaning back a little with effort, BOTH hands in front of his chest gripping an INVISIBLE VERTICAL ROPE, right hand above left. No real rope, no bucket, no machine, no pen, no paper, no child. He is pulling up a bucket from a well and looks toward his hands. Hand painted rich delicate watercolor and gouache, warm sunlit edges, finely detailed matte textures. Whole figure including hair scarf hands boots fully contained with 10% clear margin. Actual transparent alpha background, no ground or shadow, no words.",
+      "transparent_background": true,
+      "reference_images": [
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-full/key-events-07-v2.webp",
+        "/Users/fish/projects/Personal/APP/wise_reader/web/assets/picturebook-lookdev-v2/prince.png"
+      ],
+      "original_path": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-875532f8-5189-47f1-aa2f-d52b104e882c.png"
+    }
+  ]
+}

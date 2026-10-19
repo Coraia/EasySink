@@ -27,5 +27,6 @@ outputs/
 
 data/ai-settings.*
 data/speech-cache/
+data/picturebook-art/
 data/pdf/
 data/*-pdf/

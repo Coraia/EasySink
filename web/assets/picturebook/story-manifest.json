@@ -1,0 +1,153 @@
+{
+  "format": 1,
+  "id": "little-prince-story-v2",
+  "title": "The Little Prince · 小王子的星际旅行",
+  "source": "built-in image_gen",
+  "source_text_sha256": "f0924fcf1c3d9c7626970113e5baa9b37b1da8769b74d69d4f477393c36bcd50",
+  "frames": [
+    {
+      "scene": 0,
+      "sentence": 0,
+      "text": "On a tiny planet, a little prince watched the stars.",
+      "file": "chapter-01-story-v2.webp",
+      "cell": 0,
+      "description": "小王子站在小小星球上仰望星空。"
+    },
+    {
+      "scene": 0,
+      "sentence": 1,
+      "text": "His home was small, but his questions were big.",
+      "file": "chapter-01-story-v2.webp",
+      "cell": 1,
+      "description": "小王子在小屋的桌前思索，身边放着地球仪和星球草图。"
+    },
+    {
+      "scene": 0,
+      "sentence": 2,
+      "text": "He wondered what was waiting beyond the sky.",
+      "file": "chapter-01-story-v2.webp",
+      "cell": 2,
+      "description": "小王子通过望远镜探索遥远星河。"
+    },
+    {
+      "scene": 1,
+      "sentence": 0,
+      "text": "One morning, a red rose opened in the sunlight.",
+      "file": "chapter-02-story-v2.webp",
+      "cell": 0,
+      "description": "红玫瑰在清晨阳光中绽放，花瓣上挂着露珠。"
+    },
+    {
+      "scene": 1,
+      "sentence": 1,
+      "text": "The little prince brought her water every day.",
+      "file": "chapter-02-story-v2.webp",
+      "cell": 1,
+      "description": "小王子拿着水壶，给红玫瑰浇水。"
+    },
+    {
+      "scene": 1,
+      "sentence": 2,
+      "text": "Taking care of her made his small world feel warm.",
+      "file": "chapter-02-story-v2.webp",
+      "cell": 2,
+      "description": "暮色中，小王子轻轻为玫瑰盖上玻璃罩，屋里亮着温暖灯光。"
+    },
+    {
+      "scene": 2,
+      "sentence": 0,
+      "text": "One day, the prince followed the birds into the sky.",
+      "file": "chapter-03-story-v2.webp",
+      "cell": 0,
+      "description": "小王子跟着飞鸟离开自己的星球。"
+    },
+    {
+      "scene": 2,
+      "sentence": 1,
+      "text": "His golden scarf danced behind him in the wind.",
+      "file": "chapter-03-story-v2.webp",
+      "cell": 1,
+      "description": "飞行途中，金色围巾在风中舒展飘舞。"
+    },
+    {
+      "scene": 2,
+      "sentence": 2,
+      "text": "He carried a thousand questions and a memory of his rose.",
+      "file": "chapter-03-story-v2.webp",
+      "cell": 2,
+      "description": "小王子坐在远方的月亮上，捧着象征玫瑰的纪念，思念自己的家。"
+    },
+    {
+      "scene": 3,
+      "sentence": 0,
+      "text": "Far away, a pilot had landed in a quiet desert.",
+      "file": "chapter-04-story-v2.webp",
+      "cell": 0,
+      "description": "飞行员独自坐在降落的飞机旁，四周是清晨的沙漠。"
+    },
+    {
+      "scene": 3,
+      "sentence": 1,
+      "text": "The prince sat beside him as the morning light grew.",
+      "file": "chapter-04-story-v2.webp",
+      "cell": 1,
+      "description": "小王子坐在飞行员身旁，两人认真交谈。"
+    },
+    {
+      "scene": 3,
+      "sentence": 2,
+      "text": "In that great sea of sand, two strangers became friends.",
+      "file": "chapter-04-story-v2.webp",
+      "cell": 2,
+      "description": "小王子和飞行员并肩走过沙丘，已经成为朋友。"
+    },
+    {
+      "scene": 4,
+      "sentence": 0,
+      "text": "Under a tree, a fox waited in the golden grass.",
+      "file": "chapter-05-story-v2.webp",
+      "cell": 0,
+      "description": "一只橙色狐狸独自在金色草地的大树下等待。"
+    },
+    {
+      "scene": 4,
+      "sentence": 1,
+      "text": "Each day, the prince sat a little closer to his new friend.",
+      "file": "chapter-05-story-v2.webp",
+      "cell": 1,
+      "description": "小王子在几步之外安静坐下，与狐狸慢慢熟悉。"
+    },
+    {
+      "scene": 4,
+      "sentence": 2,
+      "text": "They learned that friendship grows when we give it time.",
+      "file": "chapter-05-story-v2.webp",
+      "cell": 2,
+      "description": "狐狸已经依偎在小王子身旁，两位朋友亲密相伴。"
+    },
+    {
+      "scene": 5,
+      "sentence": 0,
+      "text": "That night, the prince looked up at the shining stars.",
+      "file": "chapter-06-story-v2.webp",
+      "cell": 0,
+      "description": "小王子在夜晚的山丘上仰望闪烁星光。"
+    },
+    {
+      "scene": 5,
+      "sentence": 1,
+      "text": "Somewhere among them, his little rose was waiting.",
+      "file": "chapter-06-story-v2.webp",
+      "cell": 1,
+      "description": "远方的小星球上，玫瑰在玻璃罩中静静等候。"
+    },
+    {
+      "scene": 5,
+      "sentence": 2,
+      "text": "The sky felt full of friends, and he no longer felt alone.",
+      "file": "chapter-06-story-v2.webp",
+      "cell": 2,
+      "description": "小王子微笑望着星空，狐狸和飞行员的星座让他感到朋友相伴。"
+    }
+  ]
+}

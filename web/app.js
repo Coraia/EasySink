@@ -16,6 +16,7 @@ import { Reader } from "./reader.js?v=20261018-keyboard-paging-tuned";
 import { renderAI } from "./ai-settings.js";
 import { installReadingTrackpad } from "./reading-trackpad.js?v=20261018-page-turn-latency-selection";
 import { installDesktopLifecycle } from "./desktop-lifecycle.js";
+import { installPicturebook } from "./picturebook.js";
 installDesktopLifecycle();
 const hooks = new Map(),
   routes = new Map();
@@ -90,6 +91,7 @@ const ctx = {
 };
 const host = new PluginHost(ctx);
 ctx.host = host;
+const picturebook = installPicturebook(ctx);
 // App-owned input stream survives chapter loading; it reads no stale Reader.
 installReadingTrackpad(ctx);
 const palette = [
@@ -114,8 +116,10 @@ async function route() {
   ctx.reader = null;
   const scope = (ctx.scope = new Scope());
   const hash = location.hash.replace(/^#\/?/, "");
-  const [name, id] = hash.split("/");
-  document.body.classList.remove("reading", "immersive", "paged-reading");
+  const [requestedName, id] = hash.split("/");
+  const name = requestedName === "picturebook" ? "read" : requestedName;
+  if (requestedName === "picturebook" && /^\d+$/.test(id)) picturebook.activate();
+  document.body.classList.remove("reading", "immersive", "paged-reading", "picturebook-reading");
   if (name === "read" && /^\d+$/.test(id))
     document.body.classList.add("paged-reading");
   $("#header-context").textContent = "你的英文阅读空间";
@@ -142,9 +146,13 @@ async function route() {
     if (scope.signal.aborted) return;
     ctx.profile = profile;
     if (reading) {
-      ctx.reader = new Reader(ctx, scope, doc);
-      ctx.reader.preparation = preparation;
-      await ctx.reader.mount();
+      if (picturebook.enabled()) await picturebook.mount(doc, scope);
+      else {
+        ctx.reader = new Reader(ctx, scope, doc);
+        ctx.reader.preparation = preparation;
+        await ctx.reader.mount();
+        if (!scope.signal.aborted) picturebook.readerSwitch(ctx.reader);
+      }
     } else if (name === "profile" || name === "settings")
       await renderProfile(scope);
     else if (name === "ai") await renderAI(ctx, scope);

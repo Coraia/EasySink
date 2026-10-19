@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>角色美术样片 · Wise Reader</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f7f4e9;
+        --ink: #374c3d;
+        --muted: #8d907b;
+        --line: #dddccc;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family:
+          system-ui,
+          -apple-system,
+          "PingFang SC",
+          sans-serif;
+      }
+      main {
+        max-width: 1440px;
+        margin: auto;
+        padding: 28px 46px 46px;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 22px;
+        border-bottom: 1px solid var(--line);
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      header a {
+        font:
+          19px Georgia,
+          serif;
+      }
+      header small,
+      .eyebrow {
+        font-size: 9px;
+        letter-spacing: 3px;
+        color: var(--muted);
+      }
+      .intro {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        align-items: end;
+        padding: 32px 0 26px;
+      }
+      .intro h1 {
+        font-family: Georgia, "Songti SC", serif;
+        font-weight: 400;
+        letter-spacing: 3px;
+        font-size: 32px;
+        margin: 10px 0;
+      }
+      .intro p {
+        font-size: 12px;
+        line-height: 1.9;
+        color: #818875;
+        margin: 0;
+      }
+      .tabs {
+        display: flex;
+        gap: 5px;
+        border: 1px solid var(--line);
+        padding: 5px;
+        border-radius: 99px;
+        flex-shrink: 0;
+      }
+      button {
+        font: inherit;
+        cursor: pointer;
+        color: inherit;
+        background: none;
+        border: 0;
+      }
+      button:focus-visible,
+      a:focus-visible {
+        outline: 2px solid #b2995c;
+        outline-offset: 4px;
+      }
+      .tabs button {
+        font-size: 12px;
+        border-radius: 99px;
+        padding: 11px 21px;
+      }
+      .tabs button[aria-pressed="true"] {
+        background: #4b6650;
+        color: #faf7eb;
+      }
+      .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 15px;
+        margin: 0 0 16px;
+      }
+      .angles {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .angles > span {
+        font-size: 10px;
+        color: var(--muted);
+        margin-right: 10px;
+      }
+      .angles button {
+        font-size: 11px;
+        padding: 7px 13px;
+        border-radius: 4px;
+      }
+      .angles button[aria-pressed="true"] {
+        background: #e5e9d7;
+        color: #3c6041;
+      }
+      .finish {
+        font-size: 11px;
+        padding: 8px 12px;
+        border: 1px solid #d6dcc9;
+        border-radius: 4px;
+        background: #eef0e3;
+      }
+      .columns {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+      }
+      .panel {
+        margin: 0;
+        min-width: 0;
+      }
+      .panel-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin: 0 0 10px;
+        gap: 8px;
+      }
+      .panel h2 {
+        font-size: 14px;
+        font-weight: 500;
+        margin: 0;
+      }
+      .badge {
+        font-size: 9px;
+        color: #8e8b76;
+      }
+      .frame {
+        position: relative;
+        height: 460px;
+        overflow: hidden;
+        background: #f5edda;
+        border: 1px solid #dedbca;
+        border-radius: 6px;
+        isolation: isolate;
+        box-shadow: 0 8px 20px #514b2610;
+      }
+      .reference {
+        background-image: url("./assets/picturebook-full/key-events-11.webp");
+        background-repeat: no-repeat;
+        background-size: auto 625%;
+        background-position: 29.7% 28%;
+      }
+      body[data-subject="prince"] .reference {
+        background-size: auto 480%;
+        background-position: 7% 12%;
+      }
+      .reference.full {
+        background-size: 200% auto !important;
+        height: auto;
+        aspect-ratio: 1;
+        background-position: 0 0 !important;
+      }
+      .render {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        transform: scale(1.35);
+        display: block;
+      }
+      .design {
+        position: absolute;
+        height: 100%;
+        width: auto;
+        max-width: none;
+        clip-path: inset(
+          0 var(--clip-right, 33.333%) 0 var(--clip-left, 33.333%)
+        );
+        left: 50%;
+        transform: translateX(calc(var(--center, 0.5) * -100%));
+        display: block;
+      }
+      .frame-label {
+        position: absolute;
+        z-index: 2;
+        left: 15px;
+        bottom: 14px;
+        font-size: 9px;
+        padding: 5px 8px;
+        border-radius: 3px;
+        background: #fff9e4dd;
+        color: #7f775d;
+        pointer-events: none;
+      }
+      .panel p {
+        min-height: 39px;
+        font-size: 10px;
+        line-height: 1.8;
+        color: #8b8d78;
+        margin: 11px 1px 0;
+      }
+      .panel .link {
+        font-size: 10px;
+        color: #667f59;
+        padding: 0;
+        border-bottom: 1px dashed #adb699;
+      }
+      .checks {
+        border-top: 1px solid var(--line);
+        margin-top: 24px;
+        padding-top: 17px;
+        display: flex;
+        gap: 30px;
+        font-size: 11px;
+        color: #7a846e;
+      }
+      .checks span::before {
+        content: "✧";
+        margin-right: 8px;
+        color: #b59f63;
+      }
+      .note {
+        font-size: 10px;
+        line-height: 1.8;
+        color: #979681;
+        margin: 15px 0 0;
+      }
+      .status {
+        font-size: 11px;
+        color: #a36b47;
+        min-height: 18px;
+        margin: 10px 0;
+      }
+      dialog {
+        border: 1px solid #d8d4c1;
+        border-radius: 8px;
+        background: #faf5e8;
+        max-width: 95vw;
+        padding: 14px;
+        box-shadow: 0 20px 80px #33281140;
+      }
+      dialog::backdrop {
+        background: #313a2b88;
+      }
+      dialog img {
+        display: block;
+        max-width: 90vw;
+        max-height: 78vh;
+      }
+      dialog button {
+        display: block;
+        margin: 10px 0 0 auto;
+        padding: 8px 15px;
+        background: #e7ead9;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+      .download {
+        font-size: 10px;
+        color: #8c8e78;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      footer {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 20px;
+      }
+      .stage-change {
+        animation: reveal 0.2s ease-out;
+      }
+      @keyframes reveal {
+        from {
+          opacity: 0.7;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      @media (min-width: 1450px) {
+        .frame {
+          height: 570px;
+        }
+      }
+      @media (max-width: 900px) {
+        main {
+          padding: 22px;
+        }
+        .intro {
+          display: block;
+        }
+        .tabs {
+          width: max-content;
+          margin-top: 20px;
+        }
+        .columns {
+          gap: 10px;
+        }
+        .frame {
+          height: 380px;
+        }
+        .panel-top {
+          display: block;
+        }
+        .panel h2 {
+          margin-bottom: 4px;
+        }
+        .checks {
+          gap: 15px;
+          flex-wrap: wrap;
+        }
+      }
+      @media (max-width: 620px) {
+        main {
+          padding: 18px 16px;
+        }
+        header small {
+          letter-spacing: 1px;
+          font-size: 8px;
+        }
+        .intro {
+          padding: 24px 0 18px;
+        }
+        .intro h1 {
+          font-size: 27px;
+        }
+        .intro p {
+          font-size: 11px;
+        }
+        .toolbar {
+          align-items: start;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .columns {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 14px 10px;
+        }
+        .panel:nth-child(3) {
+          grid-column: 1/-1;
+        }
+        .frame {
+          height: 330px;
+        }
+        .panel:nth-child(3) .frame {
+          height: 430px;
+        }
+        .panel h2 {
+          font-size: 12px;
+        }
+        .panel p {
+          font-size: 10px;
+          min-height: 0;
+        }
+        .badge {
+          font-size: 8px;
+        }
+        .tabs button {
+          padding: 9px 19px;
+        }
+        .angles button {
+          padding: 7px 8px;
+        }
+        .angles > span {
+          margin-right: 4px;
+        }
+        .checks {
+          font-size: 10px;
+        }
+        .frame-label {
+          left: 8px;
+          bottom: 8px;
+          font-size: 8px;
+          max-width: 90%;
+        }
+        footer {
+          display: block;
+        }
+        footer .download {
+          display: block;
+          margin-top: 12px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .stage-change {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body data-subject="fox">
+    <main>
+      <header>
+        <a href="/#/read/22">✦ wise reader</a
+        ><small>THE LITTLE PRINCE · LOOK DEVELOPMENT 01</small>
+      </header>
+      <section class="intro">
+        <div>
+          <span class="eyebrow">A CHARACTER, THREE WAYS TO LOOK</span>
+          <h1>从画页里，走出来。</h1>
+          <p>
+            把原绘本、设计方向与实际模型放在一起，先看造型和材质。<br />生成式参考图与真实
+            3D 渲染分列展示，方便直接判断差距。
+          </p>
+        </div>
+        <nav class="tabs" aria-label="选择角色">
+          <button data-subject="fox" aria-pressed="true">狐狸 The fox</button
+          ><button data-subject="prince" aria-pressed="false">
+            小王子 The prince
+          </button>
+        </nav>
+      </section>
+      <div class="toolbar">
+        <div class="angles" role="group" aria-label="查看角色角度">
+          <span>设计 / 模型视角</span
+          ><button data-angle="front" aria-pressed="false">正面</button
+          ><button data-angle="three-quarter" aria-pressed="true">
+            四分之三</button
+          ><button data-angle="side" aria-pressed="false">侧面</button>
+        </div>
+        <button class="finish" id="finish" aria-pressed="true">
+          ✓ 水彩合成 · 点击看干净渲染
+        </button>
+      </div>
+      <section class="columns" aria-label="角色样片对比">
+        <figure class="panel">
+          <div class="panel-top">
+            <h2>01 现有绘本</h2>
+            <span class="badge">对照依据</span>
+          </div>
+          <div
+            class="frame reference"
+            id="reference"
+            role="img"
+            aria-label="第21章现有绘本插画中的狐狸局部"
+          >
+            <span class="frame-label">苹果树下的相遇 · 绘本局部</span>
+          </div>
+          <p>
+            保留现有插画的真实像素；本列只有原插画中的角度。<br /><button
+              class="link"
+              id="full-reference"
+            >
+              查看完整画面
+            </button>
+          </p>
+        </figure>
+        <figure class="panel">
+          <div class="panel-top">
+            <h2>02 风格目标图</h2>
+            <span class="badge">AI 设计参考 · 非模型渲染</span>
+          </div>
+          <div class="frame">
+            <img
+              class="design"
+              id="design"
+              src="./assets/picturebook-lookdev/fox-design-v1.png"
+              alt="狐狸三视角生成式美术参考中的四分之三视角"
+            /><span class="frame-label">造型 / 配色 / 笔触方向</span>
+          </div>
+          <p>
+            根据原绘本制作的美术方向图，不能当作已实现的 3D。<br /><button
+              class="link"
+              id="open-sheet"
+            >
+              查看完整三视角设计图
+            </button>
+          </p>
+        </figure>
+        <figure class="panel">
+          <div class="panel-top">
+            <h2>03 实际 3D 样片</h2>
+            <span class="badge">Blender · 同一模型换相机</span>
+          </div>
+          <div class="frame">
+            <img
+              class="render"
+              id="render"
+              src="./assets/picturebook-lookdev/fox-three-quarter-painted.png?v=2"
+              alt="狐狸模型的实际Blender四分之三视角水彩合成渲染"
+            /><span class="frame-label" id="render-label"
+              >真实模型 · 轻水彩合成</span
+            >
+          </div>
+          <p>
+            实际离线渲染，仍是造型 / 材质小样；请对照目标图看差距。<br />尚未完成
+            UV 手绘纹理、绑定与网页动画。
+          </p>
+        </figure>
+      </section>
+      <p class="status" id="status" role="status"></p>
+      <div class="checks">
+        <span>看口鼻与脸部轮廓</span><span>看毛发与发束方向</span
+        ><span>看衣料、围巾和绘本配色</span>
+      </div>
+      <p class="note">
+        本轮先确认美术方向。模型的实际水彩效果与设计图仍有差距，不将样片等同于已完成的阅读场景。现有绘本插画来自本项目已制作的第
+        21 章。
+      </p>
+      <footer>
+        <a class="download" href="/#/read/22">← 回到《小王子》阅读页</a
+        ><span class="download">2026.10.19 · 第一轮角色样片</span>
+      </footer>
+    </main>
+    <dialog id="sheet">
+      <img id="sheet-image" alt="完整角色三视角设计参考图" /><button
+        id="close-sheet"
+      >
+        关闭，回到比较
+      </button>
+    </dialog>
+    <script type="module">
+      let subject = "fox",
+        angle = "three-quarter",
+        painted = true;
+      const $ = (s) => document.querySelector(s),
+        $$ = (s) => document.querySelectorAll(s);
+      const names = { fox: "狐狸", prince: "小王子" },
+        angles = { front: "正面", "three-quarter": "四分之三", side: "侧面" },
+        centers = { front: 1 / 6, "three-quarter": 0.5, side: 5 / 6 };
+      function update() {
+        document.body.dataset.subject = subject;
+        $$(".tabs button").forEach((b) =>
+          b.setAttribute("aria-pressed", String(b.dataset.subject === subject)),
+        );
+        $$("[data-angle]").forEach((b) =>
+          b.setAttribute("aria-pressed", String(b.dataset.angle === angle)),
+        );
+        $("#design").src =
+          `./assets/picturebook-lookdev/${subject}-design-v1.png`;
+        $("#design").style.setProperty("--center", centers[angle]);
+        $("#design").style.setProperty(
+          "--clip-left",
+          `${(centers[angle] - 1 / 6) * 100}%`,
+        );
+        $("#design").style.setProperty(
+          "--clip-right",
+          `${(1 - centers[angle] - 1 / 6) * 100}%`,
+        );
+        $("#design").alt =
+          `${names[subject]}生成式设计参考的${angles[angle]}角度`;
+        $("#render").src =
+          `./assets/picturebook-lookdev/${subject}-${angle}-${painted ? "painted" : "raw"}.png?v=2`;
+        $("#render").alt =
+          `${names[subject]}模型的实际Blender${angles[angle]}${painted ? "水彩合成" : "干净"}渲染`;
+        $("#reference").setAttribute(
+          "aria-label",
+          `第21章现有绘本插画中的${names[subject]}局部`,
+        );
+        $("#render-label").textContent = painted
+          ? "真实模型 · 轻水彩合成"
+          : "真实模型 · 无水彩后处理";
+        $("#finish").setAttribute("aria-pressed", String(painted));
+        $("#finish").textContent = painted
+          ? "✓ 水彩合成 · 点击看干净渲染"
+          : "干净渲染 · 点击看水彩合成";
+        $("#status").textContent = "";
+        document.title = `${names[subject]}美术样片 · Wise Reader`;
+      }
+      $$(".tabs button").forEach((b) =>
+        b.addEventListener("click", () => {
+          subject = b.dataset.subject;
+          update();
+        }),
+      );
+      $$("[data-angle]").forEach((b) =>
+        b.addEventListener("click", () => {
+          angle = b.dataset.angle;
+          update();
+        }),
+      );
+      $("#finish").addEventListener("click", () => {
+        painted = !painted;
+        update();
+      });
+      $("#full-reference").addEventListener("click", () => {
+        const full = $("#reference").classList.toggle("full");
+        $("#full-reference").textContent = full
+          ? "回到角色局部"
+          : "查看完整画面";
+      });
+      $("#open-sheet").addEventListener("click", () => {
+        $("#sheet-image").src = $("#design").src;
+        $("#sheet").showModal();
+      });
+      $("#close-sheet").addEventListener("click", () => $("#sheet").close());
+      $("#sheet").addEventListener("click", (e) => {
+        if (e.target === $("#sheet")) $("#sheet").close();
+      });
+      $("#render").addEventListener("error", () => {
+        $("#status").textContent = "这一张样片暂时没有载入，请切换角度或刷新。";
+      });
+      update();
+    </script>
+  </body>
+</html>

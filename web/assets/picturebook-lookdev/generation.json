@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-19",
+  "tool": "built-in image_gen",
+  "reference": "web/assets/picturebook-full/key-events-11.webp",
+  "reference_role": "existing project illustration, character identity and painted style",
+  "assets": [
+    {
+      "file": "fox-design-v1.png",
+      "original": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-e97dff9c-c900-441f-a2ab-96b8ceb3b4e1.png",
+      "prompt": "Use case: stylized-concept. Asset type: character design and material look-development reference sheet, NOT a screenshot or evidence of a completed 3D render. Use the attached image ONLY as the character and painterly style reference. Create a premium fox character lookdev sheet on warm ivory paper: three consistent close-up bust views of the SAME fox, front, three-quarter and side, in three equally sized panels, no panel lines, no writing. Match the slim natural red fox in the reference: elegant long tapered snout, alert black-tipped ears, warm amber eyes, white/cream cheek and dense chest ruff, warm russet orange fur, dark paws if visible. Anatomically plausible young fox, not plush, not plastic, not low-poly, no oversized round cheeks, no giant rabbit ears. Maintain the reference's richly painted gouache and translucent watercolor, deliberate directional fur brush strokes, golden light, cool violet shadows, subtle paper tooth. Render sculptural volume with softly painted values rather than hard CG speculars. The fox must feel like the identical fox stepped out of the existing picturebook. Medium-close framing, head and upper chest fully visible with spacious margins. Sharp eyes and whiskers, detailed paint marks. Same soft upper-left warm daylight across all three views; natural expression; no scenery, no decorative elements, no text, no watermark. Landscape sheet."
+    },
+    {
+      "file": "prince-design-v1.png",
+      "original": "/Users/fish/.codex/generated_images/01a1500f-1753-7e92-866b-8dd5f1033a39/exec-a732a07c-68f5-4ec2-b657-d36aefe77f09.png",
+      "prompt": "Use case: stylized-concept. Asset type: Little Prince character design and painted material look-development reference sheet, NOT a screenshot and NOT proof of a completed 3D model. Attached image is character identity and style reference. Produce one premium landscape design sheet with THREE consistent bust views of the SAME little boy, front, three-quarter and side, separated by generous ivory-paper breathing space, no lines and absolutely no text. Match the picturebook precisely: sensitive young child around 7-8, slender graceful child neck/shoulders, soft round youthful face but not chibi, small natural nose, expressive warm brown eyes, small ears, loose windswept golden blond curls made of irregular flowing locks, subtle blush. Deep forest-green long-coat upper chest with broad folded lapels, delicate stitching and natural fabric folds, golden ochre scarf wrapped loosely with layered folds and a trailing tip visible within the composition. Preserve reference's rich golden-hour gouache plus transparent watercolor, irregular directional brush strokes, cool lavender/olive shadows and luminous warm edge-light, fine paper tooth. Sculptural believable volume interpreted through paint; no shiny plastic, no clay figurine, no low-poly, no bead-shaped hair, no oversized doll eyes, no crown, no adult features. Same gentle upper-left daylight on each view. Head, hair, scarf and upper chest completely inside each panel with ample margins. No props, no landscape, no captions, no watermark. The three views are a coherent art-direction study for a future 3D sculpt, not three different character designs."
+    }
+  ],
+  "not_3d_render": true
+}

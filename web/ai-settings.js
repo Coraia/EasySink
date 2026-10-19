@@ -1,5 +1,6 @@
 import { e, api } from "./core.js";
 import { aiReadingReturn, returnFromAI } from "./ai-setup-guard.js";
+import { renderIllustrationSettings } from "./picturebook-settings.js";
 export const voices = [
   "marin",
   "cedar",
@@ -53,6 +54,7 @@ export async function renderAI(ctx, scope, options = {}) {
     event.preventDefault();
     returnFromAI(ctx, readingReturn);
   });
+  if (!embedded) renderIllustrationSettings(ctx, scope, config.illustration);
   if (!embedded) {
     $(".ai-grid").insertAdjacentHTML(
       "beforebegin",
