@@ -1,4 +1,4 @@
-# EasySink 交接状态（2026-10-21）
+# EasySink 交接状态（更新至 2026-10-22）
 
 ## 三层代码必须分开
 
@@ -12,23 +12,25 @@
 
 ## 已有的有限证据
 
-- 011 上的 001/002 原生 GUI、字号/单双页、正常 Quit 后冷启动 source×2、Doc40 段落/译句有有限场景通过。
+- 011 上的 001/002 原生 GUI、字号/单双页、Doc40 段落/译句有有限场景通过；此前 `saved0` 字体场景的两次 cold 绿只证明该固定输入，不能概括为所有续读已经修复。
 - `case-b-safe-leading-011-005` 在治理后用 26.553 秒完成四阶段，`notPassed=[]`；第三种 pending 关卡后 current generation/canonical 在 1122 ms 内就绪，真实 previous→return 撤回及完整 source frontier 通过。1 秒 RSS family 采样峰值为 595,034,112 B，进程与端口已清理。这只是有限 headless 功能证据。
+- 新的真实 native 反例仍为 **NO-GO**：从 note 10 进入时，GUI 首屏落在 `I've`（page 100 / block 9 / offset 0），导航锚却是 `comprehensive`（76:89），随后旧 progress 被保存；正常 Quit 再冷开时首屏从 `comprehensive` 开始。A 当前只在做单 progress 修复，尚无 native 通过证据。
+- CF 控制器已撤销“backend 必须与 App 同 process group”的错误假设，改用 direct parent / executable / birth identity；该身份验证与 `normalQuit003` 有限场景通过。这证明控制器门可工作，不证明续读或原生产品整体通过。
 - 干净远端基线源码已通过 `tests/test_tokenize.py` 的 6 项和 `wise_reader.collections_smoke` 的 94 项合成 API 检查。
 - 活动修复线的资源治理已改用 1 秒 Darwin CPU tick（active ≤ 0.5），保留 10 GiB + 最坏增量磁盘门和 2 GiB 系统 RAM；11 项小检查和 122 B 代表路径通过，原有两个 native caller 已迁到固定槽。它们仍不是大资源或真实 App 验收。
-- 私库原 snapshot 与 BF7 publisher 路径用时 3.788 秒，但原签名校验在 App 启动前被 `codesign --strict` 拒绝，因此 App 启动次数仍为 0。
+- 早先一条私库 snapshot + BF7 publisher 路径用时 3.788 秒，但当时被 `codesign --strict` 在启动前拒绝；后续已安全恢复有限真实 native 验证并得到上述 NO-GO。两次证据属于不同阶段，不能把有限启动写成签名/发布通过。
 
 这些都不等于完整功能、最终原生、真实触控板、真实性能或发布通过。
 
 ## 仍未闭环
 
-1. safe 撤回目前只有上述 headless 场景；原生 presentation、长帧与完整交互链未复验。
-2. 原生长帧、物理触控板卡片滚动/翻页边界、书架真实 App 与 G 大库性能未验收。
-3. 001/002 与 Doc40 只有有限输入；还不能跨版本拼成整体绿。
-4. 两个 active native caller 的固定槽迁移只有当前修复环境里的小检查证据，未纳入本 portable patch，也没有恢复完整 App 构建链。
-5. `codesign --strict` 目前在启动前拒绝候选；原因仍在只读调查，不能擅自改签、删资源或另造 App 绕过。
+1. 上述真实 native 续读反例未修复；A 的单 progress 改动尚未形成可交付小 diff，也未通过 native 复验。
+2. safe 撤回目前只有上述 headless 场景；原生 presentation、长帧与完整交互链未复验。
+3. 原生长帧、物理触控板卡片滚动/翻页边界、书架真实 App 与 G 大库性能未验收。
+4. 001/002 与 Doc40 只有有限输入；还不能跨版本拼成整体绿。
+5. 两个 active native caller 的固定槽迁移只有当前修复环境里的小检查证据，未纳入本 portable patch，也没有恢复完整 App 构建链。
 6. 正式 Build 28、当前 Paragraph Preview、真实书库/笔记/进度没有纳入源码交接，也绝不能由新开发环境覆盖。
-7. 签名、公证、干净 macOS 安装、发布包完整性和许可清单仍未完成。
+7. 签名、公证、干净 macOS 安装、发布包完整性和许可清单仍未完成；不得用一次有限 native 启动覆盖这些门。
 
 ## 仓库卫生核对
 
@@ -103,7 +105,7 @@ PYTHONPATH="$PWD/src" PYTHONNOUSERSITE=1 "$dev_python" -m wise_reader.collection
 ## 推荐的下一步
 
 1. 在新 Mac 上按 `START-HERE.md` 验证远端基线和两个无大资源 smoke。
-2. 向修复 owner 要最新 fixed source manifest，以及 portable patch 之后的 caller/CPU 门小 diff；不从共享 dirty 猜代码。
+2. 等 A 的单 progress 修复形成固定小 diff 后，先复现 note 10 → `I've` / `comprehensive` 反例，再验正常 Quit 与冷开；不要从共享 dirty 猜代码。
 3. 把 safe 撤回的 headless 绿复验到目标浏览器与原生 presentation seam，保留 source/full-gloss/显式译句定位门。
-4. 查明原签名 `codesign --strict` 拒绝原因后，再在隔离原生 candidate 上跑 001/002、Doc40、冷启和物理触控板；不改签绕门。
+4. 复用已纠正的 direct parent / executable / birth 控制器身份门，在隔离原生 candidate 上跑 001/002、Doc40、续读和物理触控板；不把 controller PASS 当产品 PASS，也不改签绕门。
 5. 真实 App caller、失败无全量复制、free-space 预算、G 大库与发布资源清单齐全后，才恢复构建链和性能门。
