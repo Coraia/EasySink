@@ -14,6 +14,10 @@ uv run python -m wise_reader.collections_smoke
 
 在 `main@74226309` 应用 011 portable core 后，旧 smoke harness 会因为没有提供新增的 `ctx.engine.lexicon` 而在注册阶段失败；这是冻结候选与其测试入口的真实漂移，不是 94 项断言失败。按 [当前状态](CURRENT-STATUS.md#活动候选与参考补丁) 再应用独立的 `candidate-011-smoke-harness-adapter.patch` 后，94 项通过。不要把这个 adapter 当作产品代码或词典行为验收。
 
+portable core 还必须先应用 `candidate-011-module-closure-adapter.patch`；否则 `reader-chrome.js` 会引用未交付的点击实验模块。交接复建对候选 24 个 JS 根模块做了递归静态相对 import 检查：42 个可达模块、92 条边、0 缺失。`node --check` 只证明语法，不能替代模块闭包检查。
+
+独立的 G3 书架 patch 只做过三文件 AST 和小型临时 Store/URLCommitter 检查，覆盖无 URL、空 URL committer 与 summary index；没有读取真实 G 库，也没有性能通过结论。
+
 合成手工导入 fixture：`tests/fixtures/handoff_synthetic.md`。它由项目交接生成，不含用户书籍、笔记或供应商响应。
 
 ## 2. Python/API 测试

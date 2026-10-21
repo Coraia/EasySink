@@ -46,10 +46,22 @@
 `docs/handoff/patches/` 里的 patch 都是**未合入参考**：
 
 - `candidate-011-portable-core-main-74226309.patch`：可直接应用到远端 `main@74226309` 的 35 文件、纯文本 repair core，SHA-256 `08b31d3e9688ee078096d98eefcad40cd2c8f6720b4347db651c10d00bb967da`。每个目标文件都是冻结 011 的实际字节；配套 `candidate-011-portable-core-manifest.json`（SHA-256 `28f6b81d8ee688c4bdb378b0439613cf95ee79a2bd89b1c9320e7feaab8ccaef`）列出路径、new/modified、bytes 和 SHA。
-- 这个 portable core 明确排除了词典/私库/运行资料、绘本/品牌/reading-spaces/essence、OCR adapter 实验、混合品牌的 `web/app.js`/`index.html`，以及 G3 书架性能三文件。它能从 GitHub 重建本轮阅读修复源码子集，但**不等于**完整 518 文件 manifest，也不继承原生/签名/设备验收。
+- 这个 portable core 明确排除了词典/私库/运行资料、绘本/品牌/reading-spaces/essence、OCR adapter 实验和混合品牌的 `web/app.js`/`index.html`。它能从 GitHub 重建本轮阅读修复源码子集，但**不等于**完整 518 文件 manifest，也不继承原生/签名/设备验收。
+- `candidate-011-module-closure-adapter.patch`：SHA-256 `2bdb5344fd8478bd850b505181b5c6fe5f69e749856c0346b1ff96ba90e4b99b`。portable core 的 `reader-chrome.js` 静态 import 了被主动排除的 `reading-click-paging-experiment.js`；这个 adapter 删除 import 和安装调用，保留原有点击翻页路径。它明确偏离冻结 011，只为得到不依赖缺失实验模块的 portable 开发版本。
 - `candidate-011-smoke-harness-adapter.patch`：仅修正旧测试上下文的 3 个注册点，SHA-256 `1d13443fb17827d1c3a1e6c5bbd389735d9775dc3581dbc29e6d4ad409f35ab0`。冻结 011 插件开始读取 `ctx.engine.lexicon`，但同一冻结包里的 `collections_smoke.py` 仍只提供 `ctx.store`；不加本 adapter，94 项 smoke 会在注册阶段报 `AttributeError`。adapter 传入 `lexicon=None`，不改变 35 个冻结候选文件，也不是产品修复。
+- `candidate-011-shelf-performance-portable-main-74226309.patch`：相对 `main@74226309` 的 G3 书架性能 WIP，SHA-256 `34f74e47d60d09583e6908edd1e5da695b4770fdd5727d9be7e4d7c2631e4655`。`store.py` 与 `url_commit.py` 是冻结 011 的精确字节；`app.py` 只保留 `URLCommitter.list_documents` 接线，主动剔除同一候选中的 EasySink 品牌版本、picturebook/children-space 字段。三文件 AST 和无 URL / 空 URL committer / summary index 合成检查通过，但真实 G 大库性能仍未跑。
 - `candidate-011-resume-only.patch` 仅保留为 provenance：它是 010→011 最后两文件 overlay，SHA-256 `ac8c6017014af819b9864897a5ff79cd1ea01eb907b49db23ffc46ad7075ee24`；新 Mac 不再依赖本机-only 010 来取得 portable core。
 - `resource-governance-main-74226309.patch`：相对 `main@74226309` 的 portable 五文件治理快照，SHA-256 `a3da165baa7ac888424e8abb3ba879e186d6758fb444dd196b4c59c7ea688fb7`。它包含 1 秒 Darwin CPU tick 门，并剔除了 `EasySink.icns`、品牌版本、`reflow_omarchy_book.py` 和私有 `.runtime` caller 依赖；自包含 11 项小资源检查通过。活动修复线后来又迁了两个 native caller，但未收进这个固定 patch；接手者应取新的、可审阅的小 caller diff，而不是把旧机 runtime 当依赖。
+
+### 未纳入 GitHub patch 的 active caller
+
+活动修复环境中已有三组治理调用改动，但它们不能原样交付：
+
+- `A/run-a.py` + `A/server.py`：一个 headless/native 验证 caller 单元，已改固定 A/B 槽、source admission 和独立数据库快照。
+- `native-final-003/build_actual_app.py`：另一个实际 App 诊断 caller，已改固定槽与小文件刷新。
+- `A/freeze-candidate.py`：开发候选冻结 helper，已改成 sealed base + small-code overlay。
+
+这些文件位于 ignored `.runtime`，原 diff 含旧机绝对仓库路径、固定 sealed root、私库输入和既有诊断 App 约束；直接提交会让新 Mac 依赖旧机，并可能暴露私人运行布局。因此本交接**主动不附该 diff**。下一步应把路径、slot root、sealed manifest、App 和数据库全部改为显式参数，以合成 fixture 做小检查后，再形成相对公开基线的独立 patch。当前已做工作及缺口已记录，不需要旧机才能理解下一步，但不能声称这些 caller 已可迁移运行。
 
 应用顺序：
 
@@ -59,7 +71,9 @@ handoff_root="$PWD"
 dev_python="$(uv run python -c 'import sys; print(sys.executable)')"
 scratch="$(mktemp -d)"
 cp docs/handoff/patches/candidate-011-portable-core-* "$scratch/"
+cp docs/handoff/patches/candidate-011-module-closure-adapter.patch "$scratch/"
 cp docs/handoff/patches/candidate-011-smoke-harness-adapter.patch "$scratch/"
+cp docs/handoff/patches/candidate-011-shelf-performance-portable-main-74226309.patch "$scratch/"
 cp docs/handoff/patches/resource-governance-main-74226309.patch "$scratch/"
 cp tests/fixtures/handoff_synthetic.md "$scratch/"
 shasum -a 256 "$scratch"/*
@@ -69,6 +83,10 @@ git worktree add --detach "$scratch/source" 74226309ebd1211bdbeeace4323049c2c175
 cd "$scratch/source"
 git apply --check "$scratch/candidate-011-portable-core-main-74226309.patch"
 git apply "$scratch/candidate-011-portable-core-main-74226309.patch"
+git apply --check "$scratch/candidate-011-module-closure-adapter.patch"
+git apply "$scratch/candidate-011-module-closure-adapter.patch"
+git apply --check "$scratch/candidate-011-shelf-performance-portable-main-74226309.patch"
+git apply "$scratch/candidate-011-shelf-performance-portable-main-74226309.patch"
 git apply --check "$scratch/resource-governance-main-74226309.patch"
 git apply "$scratch/resource-governance-main-74226309.patch"
 git apply --check "$scratch/candidate-011-smoke-harness-adapter.patch"
@@ -80,7 +98,7 @@ PYTHONPATH="$PWD/src" PYTHONNOUSERSITE=1 "$dev_python" -m wise_reader.collection
 "$dev_python" scripts/desktop/check_resource_policy.py --output "$scratch/resource-check.json"
 ```
 
-上述 patch/adapter 顺序已在干净 detached `main@74226309` 实跑：35 个 manifest 文件逐个 bytes/SHA 匹配，9 个 Python 文件 AST 解析通过，24 个 JavaScript 文件 `node --check` 通过，`6 passed`、adapter 后 `94 API checks passed`、资源策略 11 项小检查通过。未加 adapter 的 94 项失败也已保留为已知 harness drift。由于本轮禁止下载，实际测试把命令里的 `$dev_python` 替换成旧机已有 Python 3.13 解释器，并用 `PYTHONPATH` 断言导入仍来自 detached 源；新 Mac 的 `uv sync` 尚未验证。这个 worktree 只是 WIP 复建，不要提交到 main；应用后仍要重新运行当前 owner 指定的浏览器/原生场景。不要把 patch、小检查或源码 hash 成功写成产品 PASS，不要从本机绝对路径复制候选资源。
+上述 patch/adapter 顺序已在干净 detached `main@74226309` 实跑：35 个 manifest 文件逐个 bytes/SHA 匹配，9 个 Python 文件 AST 解析通过，24 个 JavaScript 文件 `node --check` 通过；从这 24 个候选根模块递归检查到 42 个可达 JS 模块、92 条静态相对 import，缺失为 0。`6 passed`、adapter 后 `94 API checks passed`、资源策略 11 项小检查通过，书架 patch 的三文件 AST 与小型 Store/URLCommitter 合成检查通过。未加 adapter 的 94 项失败与缺失点击实验模块均保留为已知 portable drift。由于本轮禁止下载，实际测试把命令里的 `$dev_python` 替换成旧机已有 Python 3.13 解释器，并用 `PYTHONPATH` 断言导入仍来自 detached 源；新 Mac 的 `uv sync` 尚未验证。这个 worktree 只是 WIP 复建，不要提交到 main；应用后仍要重新运行当前 owner 指定的浏览器/原生场景。不要把 patch、小检查、模块闭包或源码 hash 成功写成产品 PASS，不要从本机绝对路径复制候选资源。
 
 ## 推荐的下一步
 
