@@ -7,14 +7,16 @@
 | 远端主线 | `main@74226309ebd1211bdbeeace4323049c2c175f742` | 新设备 clone、文档和开发基线 | 可复现，但不含近期修复 |
 | 本机共享 checkout | 同一 HEAD，存在大量 tracked/untracked dirty | 并行修复、绘本、品牌和桌面实验 | 不可整批提交，不是候选快照 |
 | 冻结候选 011 | manifest `200835d735cc49630a37f64ec8f4e70d336e8e5bb944beaa643caf8d5c1bd822`，518 文件 | 一次固定的本机修复证据 | 约 1.07 GB、未合 main、未形成发布门 |
+| source012 单文件 overlay | logical manifest `1594c6bf463556769c884144e00065e7337cdf93891794695ec18275563e42b7` | 在 011 上替换 `web/plugins/progress.js` | 仅续读子门通过，不是完整新候选 |
 
-当前修复 owner 仍在推进，冻结 011 manifest 尚未变化。较早的 006 HOLD / 007 撤回记录属于历史；最新固定证据已把第三种 pending 的 safe 撤回 headless 场景闭环，但这仍不能扩大为原生或整体验收。
+当前修复 owner 仍在推进；011 的 518 文件 manifest 未改，012 只是一项可重放的小 overlay。较早的 006 HOLD / 007 撤回记录属于历史；safe 撤回 headless 与 012 续读子门已有固定证据，但都不能扩大为原生或整体验收。
 
 ## 已有的有限证据
 
 - 011 上的 001/002 原生 GUI、字号/单双页、Doc40 段落/译句有有限场景通过；此前 `saved0` 字体场景的两次 cold 绿只证明该固定输入，不能概括为所有续读已经修复。
 - `case-b-safe-leading-011-005` 在治理后用 26.553 秒完成四阶段，`notPassed=[]`；第三种 pending 关卡后 current generation/canonical 在 1122 ms 内就绪，真实 previous→return 撤回及完整 source frontier 通过。1 秒 RSS family 采样峰值为 595,034,112 B，进程与端口已清理。这只是有限 headless 功能证据。
-- 新的真实 native 反例仍为 **NO-GO**：从 note 10 进入时，GUI 首屏落在 `I've`（page 100 / block 9 / offset 0），导航锚却是 `comprehensive`（76:89），随后旧 progress 被保存；正常 Quit 再冷开时首屏从 `comprehensive` 开始。A 当前只在做单 progress 修复，尚无 native 通过证据。
+- 011 的真实 native 反例保留为红证据：从 note 10 进入时，GUI 首屏落在 `I've`（page 100 / block 9 / offset 0），导航锚却是 `comprehensive`（76:89），随后旧 progress 被保存；正常 Quit 再冷开时首屏从 `comprehensive` 开始。
+- source012 只替换 `web/plugins/progress.js`：note 10 → known/need → 收卡后实际首屏仍是 `I've`；正常 Quit 前 SQL 与闭库后 SQL 均为 page 100 / block 9 / `[0,0)`，无导航 cold open 仍从 `I've` 开始。两次 App 分别 44.818 秒与 15.049 秒正常 `exit 0`，A 已独立只读核对 AX、SQL 和 receipt。App 文件名仍含 011，但实际 build 标识为 `280526/source012`，是既有 App 内的小文件更新，没有新建 App。
 - CF 控制器已撤销“backend 必须与 App 同 process group”的错误假设，改用 direct parent / executable / birth identity；该身份验证与 `normalQuit003` 有限场景通过。这证明控制器门可工作，不证明续读或原生产品整体通过。
 - 干净远端基线源码已通过 `tests/test_tokenize.py` 的 6 项和 `wise_reader.collections_smoke` 的 94 项合成 API 检查。
 - 活动修复线的资源治理已改用 1 秒 Darwin CPU tick（active ≤ 0.5），保留 10 GiB + 最坏增量磁盘门和 2 GiB 系统 RAM；11 项小检查和 122 B 代表路径通过，原有两个 native caller 已迁到固定槽。它们仍不是大资源或真实 App 验收。
@@ -24,13 +26,12 @@
 
 ## 仍未闭环
 
-1. 上述真实 native 续读反例未修复；A 的单 progress 改动尚未形成可交付小 diff，也未通过 native 复验。
+1. 012 只关闭上述续读子门；完整 012 必要回归、原生帧、物理触控板卡片滚动/翻页边界和 G 大库性能未验收。
 2. safe 撤回目前只有上述 headless 场景；原生 presentation、长帧与完整交互链未复验。
-3. 原生长帧、物理触控板卡片滚动/翻页边界、书架真实 App 与 G 大库性能未验收。
-4. 001/002 与 Doc40 只有有限输入；还不能跨版本拼成整体绿。
-5. 两个 active native caller 的固定槽迁移只有当前修复环境里的小检查证据，未纳入本 portable patch，也没有恢复完整 App 构建链。
-6. 正式 Build 28、当前 Paragraph Preview、真实书库/笔记/进度没有纳入源码交接，也绝不能由新开发环境覆盖。
-7. 签名、公证、干净 macOS 安装、发布包完整性和许可清单仍未完成；不得用一次有限 native 启动覆盖这些门。
+3. 001/002 与 Doc40 只有有限输入；还不能跨版本拼成整体绿。
+4. 两个 active native caller 的固定槽迁移只有当前修复环境里的小检查证据，未纳入本 portable patch，也没有恢复完整 App 构建链。
+5. 正式 Build 28、当前 Paragraph Preview、真实书库/笔记/进度没有纳入源码交接，也绝不能由新开发环境覆盖。
+6. 签名、公证、干净 macOS 安装、发布包完整性和许可清单仍未完成；不得用两次有限 native 正常退出覆盖这些门。
 
 ## 仓库卫生核对
 
@@ -50,6 +51,7 @@
 - `candidate-011-portable-core-main-74226309.patch`：可直接应用到远端 `main@74226309` 的 35 文件、纯文本 repair core，SHA-256 `08b31d3e9688ee078096d98eefcad40cd2c8f6720b4347db651c10d00bb967da`。每个目标文件都是冻结 011 的实际字节；配套 `candidate-011-portable-core-manifest.json`（SHA-256 `28f6b81d8ee688c4bdb378b0439613cf95ee79a2bd89b1c9320e7feaab8ccaef`）列出路径、new/modified、bytes 和 SHA。
 - 这个 portable core 明确排除了词典/私库/运行资料、绘本/品牌/reading-spaces/essence、OCR adapter 实验和混合品牌的 `web/app.js`/`index.html`。它能从 GitHub 重建本轮阅读修复源码子集，但**不等于**完整 518 文件 manifest，也不继承原生/签名/设备验收。
 - `candidate-011-module-closure-adapter.patch`：SHA-256 `2bdb5344fd8478bd850b505181b5c6fe5f69e749856c0346b1ff96ba90e4b99b`。portable core 的 `reader-chrome.js` 静态 import 了被主动排除的 `reading-click-paging-experiment.js`；这个 adapter 删除 import 和安装调用，保留原有点击翻页路径。它明确偏离冻结 011，只为得到不依赖缺失实验模块的 portable 开发版本。
+- `candidate-012-progress-from-011.patch`：011→012 的单文件 exact diff，SHA-256 `154d2ef72194ea527879990a28fe955f6669c94466ca6aa21484549d761d81fb`。父文件 SHA-256 `4dd53131a689d3f9c4842d9e22fd521ae942451bc861896eee0842fc000caca7`，应用后 5437 bytes、SHA-256 `852c6a4aa18d10f2b7197f2c3716dc7f0e5d8191213f54985fb4bd8b341aaa21`。配套脱敏 `candidate-012-progress-overlay.json`（SHA-256 `61ecf0b590c6e48cd6670cb011540817de7b11dc2ad83b62607edc2860250823`）不含旧机路径或 receipt。
 - `candidate-011-smoke-harness-adapter.patch`：仅修正旧测试上下文的 3 个注册点，SHA-256 `1d13443fb17827d1c3a1e6c5bbd389735d9775dc3581dbc29e6d4ad409f35ab0`。冻结 011 插件开始读取 `ctx.engine.lexicon`，但同一冻结包里的 `collections_smoke.py` 仍只提供 `ctx.store`；不加本 adapter，94 项 smoke 会在注册阶段报 `AttributeError`。adapter 传入 `lexicon=None`，不改变 35 个冻结候选文件，也不是产品修复。
 - `candidate-011-shelf-performance-portable-main-74226309.patch`：相对 `main@74226309` 的 G3 书架性能 WIP，SHA-256 `34f74e47d60d09583e6908edd1e5da695b4770fdd5727d9be7e4d7c2631e4655`。`store.py` 与 `url_commit.py` 是冻结 011 的精确字节；`app.py` 只保留 `URLCommitter.list_documents` 接线，主动剔除同一候选中的 EasySink 品牌版本、picturebook/children-space 字段。三文件 AST 和无 URL / 空 URL committer / summary index 合成检查通过，但真实 G 大库性能仍未跑。
 - `candidate-011-resume-only.patch` 仅保留为 provenance：它是 010→011 最后两文件 overlay，SHA-256 `ac8c6017014af819b9864897a5ff79cd1ea01eb907b49db23ffc46ad7075ee24`；新 Mac 不再依赖本机-only 010 来取得 portable core。
@@ -74,6 +76,7 @@ dev_python="$(uv run python -c 'import sys; print(sys.executable)')"
 scratch="$(mktemp -d)"
 cp docs/handoff/patches/candidate-011-portable-core-* "$scratch/"
 cp docs/handoff/patches/candidate-011-module-closure-adapter.patch "$scratch/"
+cp docs/handoff/patches/candidate-012-progress-* "$scratch/"
 cp docs/handoff/patches/candidate-011-smoke-harness-adapter.patch "$scratch/"
 cp docs/handoff/patches/candidate-011-shelf-performance-portable-main-74226309.patch "$scratch/"
 cp docs/handoff/patches/resource-governance-main-74226309.patch "$scratch/"
@@ -87,6 +90,8 @@ git apply --check "$scratch/candidate-011-portable-core-main-74226309.patch"
 git apply "$scratch/candidate-011-portable-core-main-74226309.patch"
 git apply --check "$scratch/candidate-011-module-closure-adapter.patch"
 git apply "$scratch/candidate-011-module-closure-adapter.patch"
+git apply --check "$scratch/candidate-012-progress-from-011.patch"
+git apply "$scratch/candidate-012-progress-from-011.patch"
 git apply --check "$scratch/candidate-011-shelf-performance-portable-main-74226309.patch"
 git apply "$scratch/candidate-011-shelf-performance-portable-main-74226309.patch"
 git apply --check "$scratch/resource-governance-main-74226309.patch"
@@ -100,12 +105,12 @@ PYTHONPATH="$PWD/src" PYTHONNOUSERSITE=1 "$dev_python" -m wise_reader.collection
 "$dev_python" scripts/desktop/check_resource_policy.py --output "$scratch/resource-check.json"
 ```
 
-上述 patch/adapter 顺序已在干净 detached `main@74226309` 实跑：35 个 manifest 文件逐个 bytes/SHA 匹配，9 个 Python 文件 AST 解析通过，24 个 JavaScript 文件 `node --check` 通过；从这 24 个候选根模块递归检查到 42 个可达 JS 模块、92 条静态相对 import，缺失为 0。`6 passed`、adapter 后 `94 API checks passed`、资源策略 11 项小检查通过，书架 patch 的三文件 AST 与小型 Store/URLCommitter 合成检查通过。未加 adapter 的 94 项失败与缺失点击实验模块均保留为已知 portable drift。由于本轮禁止下载，实际测试把命令里的 `$dev_python` 替换成旧机已有 Python 3.13 解释器，并用 `PYTHONPATH` 断言导入仍来自 detached 源；新 Mac 的 `uv sync` 尚未验证。这个 worktree 只是 WIP 复建，不要提交到 main；应用后仍要重新运行当前 owner 指定的浏览器/原生场景。不要把 patch、小检查、模块闭包或源码 hash 成功写成产品 PASS，不要从本机绝对路径复制候选资源。
+上述 patch/adapter 顺序已在干净 detached `main@74226309` 实跑：35 个 manifest 文件逐个 bytes/SHA 匹配，9 个 Python 文件 AST 解析通过，24 个 JavaScript 文件 `node --check` 通过；从这 24 个候选根模块递归检查到 42 个可达 JS 模块、92 条静态相对 import，缺失为 0。012 exact diff 另在父文件 SHA 匹配的轻量隔离目录应用，产物 hash/bytes 匹配并通过 `node --check`。`6 passed`、adapter 后 `94 API checks passed`、资源策略 11 项小检查通过，书架 patch 的三文件 AST 与小型 Store/URLCommitter 合成检查通过。未加 adapter 的 94 项失败与缺失点击实验模块均保留为已知 portable drift。由于本轮禁止下载，实际测试把命令里的 `$dev_python` 替换成旧机已有 Python 3.13 解释器，并用 `PYTHONPATH` 断言导入仍来自 detached 源；新 Mac 的 `uv sync` 尚未验证。这个 worktree 只是 WIP 复建，不要提交到 main；应用后仍要重新运行当前 owner 指定的浏览器/原生场景。不要把 patch、小检查、模块闭包或源码 hash 成功写成产品 PASS，不要从本机绝对路径复制候选资源。
 
 ## 推荐的下一步
 
 1. 在新 Mac 上按 `START-HERE.md` 验证远端基线和两个无大资源 smoke。
-2. 等 A 的单 progress 修复形成固定小 diff 后，先复现 note 10 → `I've` / `comprehensive` 反例，再验正常 Quit 与冷开；不要从共享 dirty 猜代码。
+2. 在新 Mac 上按父 SHA 应用 012 单 progress patch，先复现 011 红，再复验 note 10 → `I've`、Quit 前后 SQL 和无导航 cold open；不要从共享 dirty 猜代码。
 3. 把 safe 撤回的 headless 绿复验到目标浏览器与原生 presentation seam，保留 source/full-gloss/显式译句定位门。
-4. 复用已纠正的 direct parent / executable / birth 控制器身份门，在隔离原生 candidate 上跑 001/002、Doc40、续读和物理触控板；不把 controller PASS 当产品 PASS，也不改签绕门。
+4. 复用已纠正的 direct parent / executable / birth 控制器身份门，在隔离 012 上跑 001/002、Doc40、原生帧和物理触控板；不把 controller 或续读子门 PASS 当产品 PASS，也不改签绕门。
 5. 真实 App caller、失败无全量复制、free-space 预算、G 大库与发布资源清单齐全后，才恢复构建链和性能门。

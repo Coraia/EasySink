@@ -16,6 +16,8 @@ uv run python -m wise_reader.collections_smoke
 
 portable core 还必须先应用 `candidate-011-module-closure-adapter.patch`；否则 `reader-chrome.js` 会引用未交付的点击实验模块。交接复建对候选 24 个 JS 根模块做了递归静态相对 import 检查：42 个可达模块、92 条边、0 缺失。`node --check` 只证明语法，不能替代模块闭包检查。
 
+012 的 `candidate-012-progress-from-011.patch` 必须在 011 父文件 SHA 匹配后应用。已有真实 native 证据只覆盖 note 10 → 收卡可见首源、Quit 前后 SQL 和无导航 cold open；旧 011 红证据必须保留。两次 App 正常退出不等于完整 012 回归、帧性能或物理触控板通过。
+
 独立的 G3 书架 patch 只做过三文件 AST 和小型临时 Store/URLCommitter 检查，覆盖无 URL、空 URL committer 与 summary index；没有读取真实 G 库，也没有性能通过结论。
 
 合成手工导入 fixture：`tests/fixtures/handoff_synthetic.md`。它由项目交接生成，不含用户书籍、笔记或供应商响应。
