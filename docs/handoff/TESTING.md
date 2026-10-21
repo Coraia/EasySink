@@ -10,7 +10,9 @@ uv run pytest tests/test_tokenize.py -q
 uv run python -m wise_reader.collections_smoke
 ```
 
-接手时已在干净源码上验证 `6 passed` 和 `94 API checks passed`。后者创建临时数据库和全合成内容，输出 `transcript.jsonl` 后自行清理；它覆盖 source anchor、UTF-16、合并/撤回、导入导出和冲突回滚，但不是 GUI 或设备验收。
+接手时已在干净源码上验证 `6 passed` 和 `94 API checks passed`。为避免下载，本次执行显式使用已有 Python 3.13 解释器、`PYTHONPATH=src` 和 `PYTHONNOUSERSITE=1`，并断言 `wise_reader.__file__` 位于隔离源码；它不是全新 `.venv` 安装证据。后者创建临时数据库和全合成内容，输出 `transcript.jsonl` 后自行清理；它覆盖 source anchor、UTF-16、合并/撤回、导入导出和冲突回滚，但不是 GUI 或设备验收。
+
+在 `main@74226309` 应用 011 portable core 后，旧 smoke harness 会因为没有提供新增的 `ctx.engine.lexicon` 而在注册阶段失败；这是冻结候选与其测试入口的真实漂移，不是 94 项断言失败。按 [当前状态](CURRENT-STATUS.md#活动候选与参考补丁) 再应用独立的 `candidate-011-smoke-harness-adapter.patch` 后，94 项通过。不要把这个 adapter 当作产品代码或词典行为验收。
 
 合成手工导入 fixture：`tests/fixtures/handoff_synthetic.md`。它由项目交接生成，不含用户书籍、笔记或供应商响应。
 

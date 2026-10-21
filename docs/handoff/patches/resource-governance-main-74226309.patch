@@ -1,36 +1,16 @@
 diff --git a/scripts/desktop/build.py b/scripts/desktop/build.py
-index 5488bdb..edcf20b 100644
+index 5488bdb..69fb179 100644
 --- a/scripts/desktop/build.py
 +++ b/scripts/desktop/build.py
-@@ -20,15 +20,17 @@ import sys
+@@ -20,6 +20,7 @@ import sys
  import time
  import tomllib
  from pathlib import Path
 +from resource_policy import native_clone, preflight
  
  ROOT = Path(__file__).resolve().parents[2]
-+ICON = ROOT / "desktop/Assets/EasySink.icns"
  PDF_PINS = {
-     "pdfplumber": "0.11.10", "pdfminer-six": "20260107", "pypdfium2": "5.14.0",
-     "pillow": "12.3.0", "charset-normalizer": "3.5.2", "cryptography": "50.0.2",
-     "cffi": "2.1.1", "pycparser": "3.0", "psutil": "7.2.2",
- }
- DIRECT = ("fastapi", "uvicorn", "httpx", "pydantic", "pydantic-settings", "python-multipart", "markdown-it-py")
--SCRIPTS = ("scripts/pdf_lab_convert.py", "scripts/formula_recognize.py",
-+SCRIPTS = ("scripts/pdf_lab_convert.py", "scripts/formula_recognize.py", "scripts/reflow_omarchy_book.py",
-            "scripts/setup_mineru_runtime.py", "scripts/desktop/backend.py",
-            "scripts/desktop/runtime.py", "scripts/desktop/prepare_ocr.py")
- 
-@@ -66,7 +68,7 @@ def source_files():
- 
- 
- def source_hashes():
--    sources = [*source_files(), *(ROOT / "desktop").glob("*.swift"),
-+    sources = [*source_files(), *(ROOT / "desktop").glob("*.swift"), ICON,
-                Path(__file__), ROOT / "scripts/desktop/dependencies.lock", ROOT / "uv.lock"]
-     return {str(p.relative_to(ROOT)): sha(p) for p in sorted(sources)}
- 
-@@ -93,9 +95,7 @@ def resources(app):
+@@ -93,9 +94,7 @@ def resources(app):
                  raise RuntimeError("Bundled dictionary changed; use a new output directory.")
              continue
          # APFS clone-on-write: never hardlink mutable source files into a release.
@@ -41,7 +21,7 @@ index 5488bdb..edcf20b 100644
          target.chmod(0o444)
  
  
-@@ -212,7 +212,15 @@ def main():
+@@ -212,7 +211,15 @@ def main():
      parser.add_argument("--dependency-lock", type=Path)
      parser.add_argument("--refresh-app", action="store_true")
      parser.add_argument("--archive", action="store_true", help="Also produce a compressed distributable ZIP")
@@ -57,76 +37,15 @@ index 5488bdb..edcf20b 100644
      # The current canonical lock is authoritative even on a source-only refresh.
      # Otherwise newly added runtime dependencies would silently remain absent.
      args.dependency_lock = (args.dependency_lock or ROOT / "scripts/desktop/dependencies.lock").resolve()
-@@ -225,11 +233,17 @@ def main():
-     swift = sorted((ROOT / "desktop").glob("*.swift"))
-     if not (ROOT / "desktop/App.swift").is_file():
-         parser.error("Main must supply desktop/App.swift first")
-+    if not ICON.is_file() or ICON.is_symlink():
-+        parser.error("Supply the canonical desktop/Assets/EasySink.icns before building")
-     output = args.output.resolve()
-     output.mkdir(parents=True, exist_ok=True)
--    bundle = output / "Wise Reader.app"
-+    bundle = output / "EasySink.app"
-     marker = output / "desktop-build-inputs.json"
--    if bundle.exists() and not (args.refresh_app and marker.exists()):
-+    if args.refresh_app and not (bundle.is_dir() and marker.is_file()
-+            and (bundle / "Contents/Resources/python/bin/python3").is_file()
-+            and (bundle / "Contents/Resources/python/BUILD").is_file()):
-+        parser.error("--refresh-app requires this builder's existing EasySink.app, runtime and build-inputs marker")
-+    if bundle.exists() and not args.refresh_app:
-         parser.error("Output exists; --refresh-app reuses this builder's runtime/dictionary, or choose --output DIR")
-     frozen_sources = source_hashes()
-     requested_lock_hash = sha(args.dependency_lock)
-@@ -250,14 +264,24 @@ def main():
-          "-framework", "AppKit", "-framework", "WebKit"])
-     (contents / "Info.plist").write_bytes(plistlib.dumps({
-         "CFBundleExecutable": "WiseReader", "CFBundleIdentifier": "com.coraia.wisereader.candidate",
--        "CFBundleName": "Wise Reader", "CFBundleDisplayName": "Wise Reader",
--        "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.2.0",
--        "CFBundleVersion": "17", "LSMinimumSystemVersion": "13.0",
-+        "CFBundleName": "EasySink", "CFBundleDisplayName": "EasySink",
-+        "CFBundleIconFile": "EasySink.icns",
-+        "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.3.0",
-+        "CFBundleVersion": "27", "LSMinimumSystemVersion": "13.0",
-         "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication",
-         "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
-     }, sort_keys=True))
--    app = contents / "Resources/app"
--    python_root = contents / "Resources/python"
-+    resource_root = contents / "Resources"
-+    resource_root.mkdir(parents=True, exist_ok=True)
-+    resource_root.chmod(0o755)
-+    packaged_icon = resource_root / ICON.name
-+    if packaged_icon.exists():
-+        packaged_icon.chmod(0o644)
-+    copy(ICON, packaged_icon)
-+    if sha(packaged_icon) != frozen_sources[str(ICON.relative_to(ROOT))]:
-+        raise RuntimeError("App icon changed during build; freeze and rebuild.")
-+    app = resource_root / "app"
-+    python_root = resource_root / "python"
-     if args.refresh_app:
-         original = json.loads(marker.read_text())
-         info, runtime = original["runtime"], Path(original["runtime_source"])
-@@ -289,8 +313,8 @@ def main():
-             if not packaged.is_file() or sha(packaged) != digest:
+@@ -290,7 +297,7 @@ def main():
                  raise RuntimeError(f"Packaged source changed during build: {relative}; freeze and rebuild.")
      audit_native_runtime(python_root, output)
--    readonly_resources(contents / "Resources")
+     readonly_resources(contents / "Resources")
 -    inputs = {"runtime": info, "runtime_source": str(runtime), "runtime_build": (python_root / "BUILD").read_text().strip(),
-+    readonly_resources(resource_root)
 +    inputs = {"resource_budget": resource_budget, "runtime": info, "runtime_source": str(runtime), "runtime_build": (python_root / "BUILD").read_text().strip(),
                "dependency_lock_sha256": sha(lock), "swift_sources": {"desktop/" + p.name: sha(p) for p in swift_inputs},
                "builder_sha256": sha(Path(__file__)), "uv_lock_sha256": sha(ROOT / "uv.lock"),
                "source_sha256": frozen_sources}
-@@ -305,7 +329,7 @@ def main():
-              "optional_ocr_bundled_bytes": 0, "optional_ocr_download_bytes": None,
-              "ocr_accuracy_passed": False, "build_elapsed_seconds": time.monotonic() - started}
-     if args.archive:
--        archive = output / "Wise Reader.zip"
-+        archive = output / "EasySink.zip"
-         if archive.exists():
-             archive.unlink()
-         run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", bundle, archive])
 diff --git a/scripts/fetch_lexicon.py b/scripts/fetch_lexicon.py
 index da9b132..b058f89 100644
 --- a/scripts/fetch_lexicon.py
@@ -147,10 +66,10 @@ index da9b132..b058f89 100644
      con.execute("CREATE INDEX IF NOT EXISTS idx_frq ON stardict(frq)")
 diff --git a/scripts/desktop/resource_policy.py b/scripts/desktop/resource_policy.py
 new file mode 100644
-index 0000000..749c2de
+index 0000000..854fcf0
 --- /dev/null
 +++ b/scripts/desktop/resource_policy.py
-@@ -0,0 +1,357 @@
+@@ -0,0 +1,407 @@
 +"""Small shared guards for existing development/build entry points.
 +
 +No reader runner, cleanup, ordinary-copy fallback or release-resource exception.
@@ -167,6 +86,7 @@ index 0000000..749c2de
 +import shutil
 +import sqlite3
 +import subprocess
++import time
 +
 +GIB = 1024 ** 3
 +INTERACTIVE_RAM_RESERVE_BYTES = 2 * GIB
@@ -254,9 +174,44 @@ index 0000000..749c2de
 +    return receipt
 +
 +
++def _cpu_interval():
++    """Darwin HOST_CPU_LOAD_INFO tick deltas, matching interval CPU activity.
++
++    SDK mach/host_info.h: flavor3, four integer ticks; mach/machine.h:
++    user0/system1/idle2/nice3. No process inspection or privilege is needed.
++    """
++    if platform.system() != 'Darwin':
++        raise ResourceError('Interval CPU measurement unavailable')
++    libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
++    libc.mach_host_self.restype = ctypes.c_uint
++    libc.host_statistics.argtypes = [ctypes.c_uint, ctypes.c_int,
++                                     ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_uint)]
++    libc.host_statistics.restype = ctypes.c_int
++    host = libc.mach_host_self()
++    def ticks():
++        values, count = (ctypes.c_int * 4)(), ctypes.c_uint(4)
++        if libc.host_statistics(host, 3, values, ctypes.byref(count)) or count.value != 4:
++            raise ResourceError('CPU interval counters unavailable')
++        return [value & 0xffffffff for value in values]
++    first = ticks()
++    started = time.monotonic()
++    time.sleep(1)
++    last = ticks()
++    elapsed = time.monotonic() - started
++    delta = [(after - before) & 0xffffffff for before, after in zip(first, last)]
++    total = sum(delta)
++    if total <= 0:
++        raise ResourceError('CPU interval has no valid tick delta')
++    return {'cpu_active_fraction': (total - delta[2]) / total,
++            'cpu_idle_fraction': delta[2] / total, 'cpu_interval_seconds': elapsed,
++            'cpu_measurement': 'Darwin HOST_CPU_LOAD_INFO one-second tick delta'}
++
++
 +def host_facts(path):
 +    facts = {'free_bytes': shutil.disk_usage(path).free, 'cpu_count': os.cpu_count(),
-+             'load1': None, 'available_ram_bytes': None, 'platform': platform.system()}
++             'load1': None, 'available_ram_bytes': None, 'platform': platform.system(),
++             'cpu_active_fraction': None, 'cpu_interval_seconds': None,
++             'available_ram_is_estimate': True, 'os_memory_free_percentage': None}
 +    try:
 +        facts['load1'] = os.getloadavg()[0]
 +        if platform.system() == 'Darwin':
@@ -273,6 +228,18 @@ index 0000000..749c2de
 +                facts['available_ram_bytes'] = int(match[1]) * 1024
 +    except (OSError, ValueError, subprocess.SubprocessError):
 +        pass
++    try:
++        facts.update(_cpu_interval())
++    except (ResourceError, OSError, ValueError):
++        pass
++    if platform.system() == 'Darwin':
++        try:
++            output = subprocess.check_output(['/usr/bin/memory_pressure', '-Q'], text=True, timeout=2)
++            match = re.search(r'System-wide memory free percentage:\s*(\d+)%', output)
++            if match:
++                facts['os_memory_free_percentage'] = int(match[1])
++        except (OSError, ValueError, subprocess.SubprocessError):
++            pass
 +    return facts
 +
 +
@@ -288,9 +255,11 @@ index 0000000..749c2de
 +            or facts['available_ram_bytes'] - ram_bytes < INTERACTIVE_RAM_RESERVE_BYTES):
 +        raise ResourceError('RAM unknown or insufficient for the budget plus2GiB interactive reserve')
 +    if (type(facts.get('cpu_count')) is not int or facts['cpu_count'] <= 0
-+            or type(facts.get('load1')) not in (float, int)
-+            or not 0 <= facts['load1'] <= facts['cpu_count'] * cpu_fraction):
-+        raise ResourceError('CPU capacity unknown or above the declared load budget')
++            or type(facts.get('cpu_active_fraction')) not in (float, int)
++            or not 0 <= facts['cpu_active_fraction'] <= cpu_fraction
++            or type(facts.get('cpu_interval_seconds')) not in (float, int)
++            or not facts['cpu_interval_seconds'] >= .5):
++        raise ResourceError('CPU interval activity unknown or above the declared active-fraction budget')
 +    return {'facts': facts, 'worstCaseDiskBytes': disk_growth_bytes, 'ramBudgetBytes': ram_bytes,
 +            'cpuFraction': cpu_fraction, 'minimumFreeAfterWorstCaseBytes': 10 * GIB,
 +            'interactiveRamReserveBytes': INTERACTIVE_RAM_RESERVE_BYTES}
@@ -510,10 +479,10 @@ index 0000000..749c2de
 +            raise ResourceError('Development source/resource identity drift: ' + relative)
 diff --git a/scripts/desktop/check_resource_policy.py b/scripts/desktop/check_resource_policy.py
 new file mode 100644
-index 0000000..e6a8228
+index 0000000..57cbdcb
 --- /dev/null
 +++ b/scripts/desktop/check_resource_policy.py
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,240 @@
 +"""Finite tiny-resource walkthrough; no actual reader, App or large fixtures."""
 +from pathlib import Path
 +import argparse
@@ -679,12 +648,17 @@ index 0000000..e6a8228
 +
 +        def disk_and_host():
 +            good = {'free_bytes': 12 * policy.GIB, 'available_ram_bytes': 4 * policy.GIB,
-+                    'cpu_count': 4, 'load1': 0.1}
++                    'cpu_count': 4, 'load1': 20, 'cpu_active_fraction': .1,
++                    'cpu_interval_seconds': 1.0}
 +            with patch.object(policy, 'host_facts', return_value=good):
 +                policy.preflight(root, disk_growth_bytes=policy.GIB, ram_bytes=1024, cpu_fraction=.5)
++            with patch.object(policy, 'host_facts', return_value=dict(good, load1=None)):
++                policy.preflight(root, disk_growth_bytes=1024, ram_bytes=1024, cpu_fraction=.5)
 +            for bad in [dict(good, free_bytes=9 * policy.GIB), dict(good, available_ram_bytes=0),
 +                        dict(good, available_ram_bytes=policy.GIB),
-+                        dict(good, available_ram_bytes=None), dict(good, load1=None), dict(good, load1=8)]:
++                        dict(good, available_ram_bytes=None), dict(good, cpu_active_fraction=None),
++                        dict(good, cpu_active_fraction=.9), dict(good, cpu_active_fraction=float('nan')),
++                        dict(good, cpu_interval_seconds=0)]:
 +                with patch.object(policy, 'host_facts', return_value=bad):
 +                    rejected(lambda: policy.preflight(root, disk_growth_bytes=1024, ram_bytes=1024, cpu_fraction=.5))
 +            rejected(lambda: policy.preflight(root, disk_growth_bytes=None, ram_bytes=1024, cpu_fraction=.5))
@@ -728,6 +702,14 @@ index 0000000..e6a8228
 +            assert policy.file_sha(frozen) == before
 +        check('indexing-cannot-write-sealed-or-referenced-dictionary', lexicon)
 +
++        def portable_build_entry():
++            build = Path(__file__).with_name('build.py')
++            result = subprocess.run([sys.executable, str(build), '--help'],
++                                    check=True, capture_output=True, text=True)
++            for option in ('--disk-growth-bytes', '--ram-bytes', '--cpu-fraction'):
++                assert option in result.stdout
++        check('portable-build-entry-imports-policy-and-declares-budgets', portable_build_entry)
++
 +    result = {'kind': 'small-resource-only', 'notReaderOrNativeAcceptance': True,
 +              'largeRealResourcesRead': False, 'readerAppLaunched': False,
 +              'passed': all(row['pass'] for row in rows), 'checks': rows,
@@ -743,10 +725,10 @@ index 0000000..e6a8228
 +    raise SystemExit(main())
 diff --git a/scripts/desktop/RESOURCE_POLICY.md b/scripts/desktop/RESOURCE_POLICY.md
 new file mode 100644
-index 0000000..bdfc630
+index 0000000..22dfdbe
 --- /dev/null
 +++ b/scripts/desktop/RESOURCE_POLICY.md
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,29 @@
 +# Development resource boundary
 +
 +The resource fix keeps one declared sealed source/resource root and at most two named work slots (A and B). A run gets its own small evidence directory, never a new full product tree or App. First use requires an empty slot; an occupied slot is rejected, including after a failed run. No automatic reset, deletion, B fallback or label-based slot creation. Explicit retirement requires a matching lease and a closed receipt with every recorded PID absent. Rebuildable source uses its protected base/diff and full manifest; it does not require another source archive. Other necessary evidence must be retained independently. A private test database recorded by this policy may be reset from its hash-verified closed baseline only after all owned processes exit and the owner explicitly confirms its unique evidence has been retained. It is not archived in full. Old/unknown databases and the real library are outside this policy; unique unretained data blocks retirement. Only fake-slot reset/reuse is exercised now; no real old slot is retired.
@@ -756,6 +738,12 @@ index 0000000..bdfc630
 +Private writable databases are native clones of a consistent closed snapshot, with independent inodes and WAL paths. Native cloning must succeed directly; no ordinary-copy fallback or hardlinks. Dictionary indexing refuses symlinks and read-only files/directories before SQLite opens a write connection. Large hashes use bounded streaming reads.
 +
 +Before a real operation, measured free space minus its declared worst-case growth must remain at least 10 GiB. RAM headroom and CPU load are measured and compared with explicit budgets. Unknown facts/budgets reject the run. Passing a small resource check does not resume functional, native, physical-input or performance acceptance.
++
++The portable handoff contains the policy, the lexicon guard and the desktop
++builder integration only. Private `.runtime` caller adapters are intentionally
++absent; the new Mac must migrate each real caller explicitly before resuming
++that path. The finite check verifies that the shipped builder imports the
++policy and exposes explicit budgets, but it does not build an App.
 +
 +Failure modes fixed before implementation and checked with tiny fake resources:
 +

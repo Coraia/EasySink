@@ -16,7 +16,7 @@
 
 ## 依赖与开发命令
 
-- Python：`pyproject.toml` 要求 `>=3.12`；Web 开发建议固定 3.13，桌面 builder 要求 uv 管理的 standalone CPython 3.12 arm64。
+- Python：`pyproject.toml` 要求 `>=3.12`；Web 开发建议固定 3.13。运行 `build.py` 的开发解释器必须支持 `tomllib`，被打进 App 的 runtime 则是 uv 管理的 standalone CPython 3.12 arm64；两者不是同一个环境。
 - Python 精确解析：`uv.lock`。当前主要锁定值包括 FastAPI 0.141.1、Uvicorn 0.52.4、Pydantic 2.13.5、HTTPX 0.28.1、Pillow 12.3.0、pytest 9.1.1。
 - Node 精确解析：`package-lock.json`；`package.json` 当前使用 Playwright 1.58.x 和 Prettier 3.9.x。
 - 桌面 wheel 冻结：`scripts/desktop/dependencies.lock`。
@@ -75,12 +75,19 @@ shasum -a 256 data/stardict.db
 仅在固定源、固定依赖和小测试通过后构建：
 
 ```bash
-python3 scripts/desktop/build.py \
+uv python install 3.12
+uv python find --managed-python --no-python-downloads 3.12
+uv run python -c 'import sys, tomllib; print(sys.version)'
+uv run python scripts/desktop/build.py \
   --dependency-lock scripts/desktop/dependencies.lock \
   --archive
 ```
 
 远端基线 builder 生成 `dist/Wise Reader.app` / ZIP，最低系统版本声明为 macOS 13，要求 Apple Silicon、Xcode Command Line Tools 和 standalone CPython 3.12。该命令不是 Build 28 的可复现声明；当前安装包、品牌名变更、签名/公证和干净机器安装状态见 [当前状态](CURRENT-STATUS.md)。不要覆盖 `/Applications/EasySink.app`。
+
+交接机上已用 `--no-python-downloads` 找到缓存的 uv-managed CPython 3.12，并用现有开发解释器确认 `tomllib` 可导入；这只核实本机前置，不代表新 Mac 已完成安装。
+
+若在实验分支应用资源治理 patch，builder 还会要求显式的 `--disk-growth-bytes`、`--ram-bytes` 和 `--cpu-fraction`。这些值必须是运行前确定的最坏增量预算；不要为让 preflight 通过而临时缩小。交接只验证了 `--help` 能加载 portable policy，没有执行新 Mac 原生构建。
 
 ## 分支与提交纪律
 
