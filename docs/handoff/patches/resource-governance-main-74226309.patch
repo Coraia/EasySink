@@ -1,0 +1,772 @@
+diff --git a/scripts/desktop/build.py b/scripts/desktop/build.py
+index 5488bdb..edcf20b 100644
+--- a/scripts/desktop/build.py
++++ b/scripts/desktop/build.py
+@@ -20,15 +20,17 @@ import sys
+ import time
+ import tomllib
+ from pathlib import Path
++from resource_policy import native_clone, preflight
+ 
+ ROOT = Path(__file__).resolve().parents[2]
++ICON = ROOT / "desktop/Assets/EasySink.icns"
+ PDF_PINS = {
+     "pdfplumber": "0.11.10", "pdfminer-six": "20260107", "pypdfium2": "5.14.0",
+     "pillow": "12.3.0", "charset-normalizer": "3.5.2", "cryptography": "50.0.2",
+     "cffi": "2.1.1", "pycparser": "3.0", "psutil": "7.2.2",
+ }
+ DIRECT = ("fastapi", "uvicorn", "httpx", "pydantic", "pydantic-settings", "python-multipart", "markdown-it-py")
+-SCRIPTS = ("scripts/pdf_lab_convert.py", "scripts/formula_recognize.py",
++SCRIPTS = ("scripts/pdf_lab_convert.py", "scripts/formula_recognize.py", "scripts/reflow_omarchy_book.py",
+            "scripts/setup_mineru_runtime.py", "scripts/desktop/backend.py",
+            "scripts/desktop/runtime.py", "scripts/desktop/prepare_ocr.py")
+ 
+@@ -66,7 +68,7 @@ def source_files():
+ 
+ 
+ def source_hashes():
+-    sources = [*source_files(), *(ROOT / "desktop").glob("*.swift"),
++    sources = [*source_files(), *(ROOT / "desktop").glob("*.swift"), ICON,
+                Path(__file__), ROOT / "scripts/desktop/dependencies.lock", ROOT / "uv.lock"]
+     return {str(p.relative_to(ROOT)): sha(p) for p in sorted(sources)}
+ 
+@@ -93,9 +95,7 @@ def resources(app):
+                 raise RuntimeError("Bundled dictionary changed; use a new output directory.")
+             continue
+         # APFS clone-on-write: never hardlink mutable source files into a release.
+-        cloned = subprocess.run(["/bin/cp", "-c", str(source), str(target)], capture_output=True)
+-        if cloned.returncode:
+-            shutil.copyfile(source, target)
++        native_clone(source, target)
+         target.chmod(0o444)
+ 
+ 
+@@ -212,7 +212,15 @@ def main():
+     parser.add_argument("--dependency-lock", type=Path)
+     parser.add_argument("--refresh-app", action="store_true")
+     parser.add_argument("--archive", action="store_true", help="Also produce a compressed distributable ZIP")
++    parser.add_argument("--disk-growth-bytes", type=int, required=True)
++    parser.add_argument("--ram-bytes", type=int, required=True)
++    parser.add_argument("--cpu-fraction", type=float, required=True)
+     args = parser.parse_args()
++    capacity_root = args.output.resolve()
++    while not capacity_root.exists():
++        capacity_root = capacity_root.parent
++    resource_budget = preflight(capacity_root, disk_growth_bytes=args.disk_growth_bytes,
++                                ram_bytes=args.ram_bytes, cpu_fraction=args.cpu_fraction)
+     # The current canonical lock is authoritative even on a source-only refresh.
+     # Otherwise newly added runtime dependencies would silently remain absent.
+     args.dependency_lock = (args.dependency_lock or ROOT / "scripts/desktop/dependencies.lock").resolve()
+@@ -225,11 +233,17 @@ def main():
+     swift = sorted((ROOT / "desktop").glob("*.swift"))
+     if not (ROOT / "desktop/App.swift").is_file():
+         parser.error("Main must supply desktop/App.swift first")
++    if not ICON.is_file() or ICON.is_symlink():
++        parser.error("Supply the canonical desktop/Assets/EasySink.icns before building")
+     output = args.output.resolve()
+     output.mkdir(parents=True, exist_ok=True)
+-    bundle = output / "Wise Reader.app"
++    bundle = output / "EasySink.app"
+     marker = output / "desktop-build-inputs.json"
+-    if bundle.exists() and not (args.refresh_app and marker.exists()):
++    if args.refresh_app and not (bundle.is_dir() and marker.is_file()
++            and (bundle / "Contents/Resources/python/bin/python3").is_file()
++            and (bundle / "Contents/Resources/python/BUILD").is_file()):
++        parser.error("--refresh-app requires this builder's existing EasySink.app, runtime and build-inputs marker")
++    if bundle.exists() and not args.refresh_app:
+         parser.error("Output exists; --refresh-app reuses this builder's runtime/dictionary, or choose --output DIR")
+     frozen_sources = source_hashes()
+     requested_lock_hash = sha(args.dependency_lock)
+@@ -250,14 +264,24 @@ def main():
+          "-framework", "AppKit", "-framework", "WebKit"])
+     (contents / "Info.plist").write_bytes(plistlib.dumps({
+         "CFBundleExecutable": "WiseReader", "CFBundleIdentifier": "com.coraia.wisereader.candidate",
+-        "CFBundleName": "Wise Reader", "CFBundleDisplayName": "Wise Reader",
+-        "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.2.0",
+-        "CFBundleVersion": "17", "LSMinimumSystemVersion": "13.0",
++        "CFBundleName": "EasySink", "CFBundleDisplayName": "EasySink",
++        "CFBundleIconFile": "EasySink.icns",
++        "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.3.0",
++        "CFBundleVersion": "27", "LSMinimumSystemVersion": "13.0",
+         "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication",
+         "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
+     }, sort_keys=True))
+-    app = contents / "Resources/app"
+-    python_root = contents / "Resources/python"
++    resource_root = contents / "Resources"
++    resource_root.mkdir(parents=True, exist_ok=True)
++    resource_root.chmod(0o755)
++    packaged_icon = resource_root / ICON.name
++    if packaged_icon.exists():
++        packaged_icon.chmod(0o644)
++    copy(ICON, packaged_icon)
++    if sha(packaged_icon) != frozen_sources[str(ICON.relative_to(ROOT))]:
++        raise RuntimeError("App icon changed during build; freeze and rebuild.")
++    app = resource_root / "app"
++    python_root = resource_root / "python"
+     if args.refresh_app:
+         original = json.loads(marker.read_text())
+         info, runtime = original["runtime"], Path(original["runtime_source"])
+@@ -289,8 +313,8 @@ def main():
+             if not packaged.is_file() or sha(packaged) != digest:
+                 raise RuntimeError(f"Packaged source changed during build: {relative}; freeze and rebuild.")
+     audit_native_runtime(python_root, output)
+-    readonly_resources(contents / "Resources")
+-    inputs = {"runtime": info, "runtime_source": str(runtime), "runtime_build": (python_root / "BUILD").read_text().strip(),
++    readonly_resources(resource_root)
++    inputs = {"resource_budget": resource_budget, "runtime": info, "runtime_source": str(runtime), "runtime_build": (python_root / "BUILD").read_text().strip(),
+               "dependency_lock_sha256": sha(lock), "swift_sources": {"desktop/" + p.name: sha(p) for p in swift_inputs},
+               "builder_sha256": sha(Path(__file__)), "uv_lock_sha256": sha(ROOT / "uv.lock"),
+               "source_sha256": frozen_sources}
+@@ -305,7 +329,7 @@ def main():
+              "optional_ocr_bundled_bytes": 0, "optional_ocr_download_bytes": None,
+              "ocr_accuracy_passed": False, "build_elapsed_seconds": time.monotonic() - started}
+     if args.archive:
+-        archive = output / "Wise Reader.zip"
++        archive = output / "EasySink.zip"
+         if archive.exists():
+             archive.unlink()
+         run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", bundle, archive])
+diff --git a/scripts/fetch_lexicon.py b/scripts/fetch_lexicon.py
+index da9b132..b058f89 100644
+--- a/scripts/fetch_lexicon.py
++++ b/scripts/fetch_lexicon.py
+@@ -35,6 +35,13 @@ def _download(url: str, dest: Path) -> None:
+ 
+ 
+ def build_indexes(db_path: Path) -> None:
++    # A development slot references its sealed dictionary. Never open that
++    # reference or another read-only baseline with a SQLite write connection.
++    db_path = Path(db_path)
++    if (db_path.is_symlink() or not db_path.is_file()
++            or not db_path.stat().st_mode & 0o222
++            or not db_path.parent.stat().st_mode & 0o222):
++        raise ValueError("Dictionary indexing requires an independent writable file and directory")
+     print("[idx ] 构建词频索引…")
+     con = sqlite3.connect(db_path)
+     con.execute("CREATE INDEX IF NOT EXISTS idx_frq ON stardict(frq)")
+diff --git a/scripts/desktop/resource_policy.py b/scripts/desktop/resource_policy.py
+new file mode 100644
+index 0000000..749c2de
+--- /dev/null
++++ b/scripts/desktop/resource_policy.py
+@@ -0,0 +1,357 @@
++"""Small shared guards for existing development/build entry points.
++
++No reader runner, cleanup, ordinary-copy fallback or release-resource exception.
++"""
++from __future__ import annotations
++
++import ctypes
++import hashlib
++import json
++import os
++from pathlib import Path, PurePosixPath
++import platform
++import re
++import shutil
++import sqlite3
++import subprocess
++
++GIB = 1024 ** 3
++INTERACTIVE_RAM_RESERVE_BYTES = 2 * GIB
++
++
++class ResourceError(RuntimeError):
++    pass
++
++
++def file_sha(path):
++    digest = hashlib.sha256()
++    with Path(path).open('rb') as stream:
++        for part in iter(lambda: stream.read(1024 * 1024), b''):
++            digest.update(part)
++    return digest.hexdigest()
++
++
++def _clone_call(source, destination):
++    if platform.system() != 'Darwin':
++        raise ResourceError('Native clone implementation unavailable; no copy fallback')
++    libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib', use_errno=True)
++    clone = libc.clonefile
++    clone.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
++    clone.restype = ctypes.c_int
++    if clone(os.fsencode(source), os.fsencode(destination), 0) != 0:
++        error = ctypes.get_errno()
++        raise OSError(error, os.strerror(error))
++
++
++def native_clone(source, destination):
++    source, destination = Path(source), Path(destination)
++    if source.is_symlink() or not source.is_file():
++        raise ResourceError('Clone source must be an explicit regular file')
++    if destination.exists() or destination.is_symlink():
++        raise FileExistsError(destination)
++    if not destination.parent.is_dir():
++        raise ResourceError('Clone destination parent must already exist')
++    before = source.stat()
++    if before.st_dev != destination.parent.stat().st_dev:
++        raise ResourceError('Native clone requires the same filesystem; no copy fallback')
++    try:
++        _clone_call(source, destination)
++    except OSError as error:
++        raise ResourceError('Native clone failed; no ordinary copy fallback: ' + str(error)) from error
++    after, result = source.stat(), destination.stat()
++    identity = lambda st: (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
++    if (identity(before) != identity(after) or result.st_ino == before.st_ino
++            or result.st_dev != before.st_dev or result.st_size != before.st_size):
++        raise ResourceError('Clone identity/source stability check failed')
++    return {'source': str(source.resolve()), 'destination': str(destination.resolve()),
++            'independentInode': True, 'bytes': result.st_size, 'fallback': False}
++
++
++def snapshot_sqlite(source, destination):
++    source, destination = Path(source), Path(destination)
++    wal = Path(str(source) + '-wal')
++    if wal.is_symlink() or (wal.exists() and wal.stat().st_size):
++        raise ResourceError('Snapshot source must have a closed/empty WAL')
++    for suffix in ('', '-wal', '-shm'):
++        target = Path(str(destination) + suffix)
++        if target.exists() or target.is_symlink():
++            raise ResourceError('Private database/WAL destination is already occupied')
++    before = file_sha(source)
++    with sqlite3.connect(source.resolve().as_uri() + '?mode=ro&immutable=1', uri=True) as db:
++        if db.execute('pragma quick_check').fetchone()[0] != 'ok':
++            raise ResourceError('Snapshot SQLite integrity check failed')
++    receipt = native_clone(source, destination)
++    destination.chmod(0o600)
++    if (file_sha(source) != before or file_sha(destination) != before
++            or (wal.exists() and wal.stat().st_size)):
++        raise ResourceError('Closed SQLite snapshot changed during cloning')
++    receipt.update(sha256=before, privateWal=str(destination) + '-wal', closedSnapshot=True)
++    for parent in destination.resolve().parents:
++        lease_path = parent / 'lease.json'
++        if lease_path.is_file():
++            lease = json.loads(lease_path.read_text())
++            if lease.get('resourcePolicy') != 'fixed-development-slot-v1':
++                raise ResourceError('Cannot register private database with an unknown slot lease')
++            relative = str(destination.resolve().relative_to(parent))
++            lease.setdefault('ownedDatabases', {})[relative] = {
++                'source': str(source.resolve()), 'sourceSha256': before,
++                'privateInode': destination.stat().st_ino, 'closedSnapshot': True}
++            lease_path.write_text(json.dumps(lease, indent=2))
++            break
++    return receipt
++
++
++def host_facts(path):
++    facts = {'free_bytes': shutil.disk_usage(path).free, 'cpu_count': os.cpu_count(),
++             'load1': None, 'available_ram_bytes': None, 'platform': platform.system()}
++    try:
++        facts['load1'] = os.getloadavg()[0]
++        if platform.system() == 'Darwin':
++            output = subprocess.check_output(['/usr/bin/vm_stat'], text=True, timeout=2)
++            match = re.search(r'page size of (\d+) bytes', output)
++            values = {key: int(value) for key, value in re.findall(r'^([^:\n]+):\s+(\d+)\.', output, re.M)}
++            keys = ('Pages free', 'Pages inactive', 'Pages speculative')
++            if match and all(key in values for key in keys):
++                facts['available_ram_bytes'] = int(match[1]) * sum(values[key] for key in keys)
++        elif platform.system() == 'Linux':
++            text = Path('/proc/meminfo').read_text()
++            match = re.search(r'^MemAvailable:\s+(\d+) kB', text, re.M)
++            if match:
++                facts['available_ram_bytes'] = int(match[1]) * 1024
++    except (OSError, ValueError, subprocess.SubprocessError):
++        pass
++    return facts
++
++
++def preflight(path, *, disk_growth_bytes, ram_bytes, cpu_fraction):
++    if (type(disk_growth_bytes) is not int or disk_growth_bytes < 0
++            or type(ram_bytes) is not int or ram_bytes <= 0
++            or type(cpu_fraction) not in (float, int) or not 0 < cpu_fraction <= 1):
++        raise ResourceError('Explicit worst-case disk/RAM/CPU budgets are required')
++    facts = host_facts(path)
++    if type(facts.get('free_bytes')) is not int or facts['free_bytes'] - disk_growth_bytes < 10 * GIB:
++        raise ResourceError('Insufficient disk: worst-case growth must leave at least10GiB')
++    if (type(facts.get('available_ram_bytes')) is not int
++            or facts['available_ram_bytes'] - ram_bytes < INTERACTIVE_RAM_RESERVE_BYTES):
++        raise ResourceError('RAM unknown or insufficient for the budget plus2GiB interactive reserve')
++    if (type(facts.get('cpu_count')) is not int or facts['cpu_count'] <= 0
++            or type(facts.get('load1')) not in (float, int)
++            or not 0 <= facts['load1'] <= facts['cpu_count'] * cpu_fraction):
++        raise ResourceError('CPU capacity unknown or above the declared load budget')
++    return {'facts': facts, 'worstCaseDiskBytes': disk_growth_bytes, 'ramBudgetBytes': ram_bytes,
++            'cpuFraction': cpu_fraction, 'minimumFreeAfterWorstCaseBytes': 10 * GIB,
++            'interactiveRamReserveBytes': INTERACTIVE_RAM_RESERVE_BYTES}
++
++
++def claim_slot(root, slot, run_id):
++    root = Path(root)
++    if slot not in ('A', 'B') or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', run_id):
++        raise ResourceError('Only explicit fixed A/B work slots and safe run ids are allowed')
++    root.mkdir(parents=True, exist_ok=True)
++    if root.is_symlink() or any(path.name not in ('A', 'B') for path in root.iterdir()):
++        raise ResourceError('Unexpected work-slot root or entry')
++    target = root / slot
++    target.mkdir(mode=0o700, exist_ok=True)
++    if target.is_symlink() or any(target.iterdir()):
++        raise ResourceError('Work slot occupied; no overwrite, automatic reset or alternate slot')
++    with (target / 'lease.json').open('x') as stream:
++        json.dump({'slot': slot, 'runId': run_id, 'pid': os.getpid(),
++                   'resourcePolicy': 'fixed-development-slot-v1',
++                   'state': 'occupied; explicit evidence-preserving retirement required'}, stream)
++    return target
++
++
++def retire_slot(root, slot, run_id, closed_receipt, *, explicit=False):
++    """Explicit, retained-and-closed retirement. Never called by a run's finally."""
++    root, closed_receipt = Path(root).resolve(), Path(closed_receipt).resolve()
++    if not explicit or slot not in ('A', 'B'):
++        raise ResourceError('Explicit fixed-slot retirement required')
++    target = root / slot
++    lease = json.loads((target / 'lease.json').read_text())
++    if (lease.get('slot') != slot or lease.get('runId') != run_id
++            or lease.get('resourcePolicy') != 'fixed-development-slot-v1'
++            or root in closed_receipt.parents):
++        raise ResourceError('Retirement owner/run/evidence boundary differs')
++    closed = json.loads(closed_receipt.read_text())
++    if (closed.get('closed') is not True or closed.get('slot') != slot
++            or closed.get('runId') != run_id or type(closed.get('processes')) is not list):
++        raise ResourceError('Matching closed-process receipt required')
++    for process in closed['processes']:
++        pid = process.get('pid')
++        if type(pid) is not int or pid <= 0:
++            raise ResourceError('Invalid owned PID receipt')
++        try:
++            os.kill(pid, 0)
++        except ProcessLookupError:
++            continue
++        except PermissionError as error:
++            raise ResourceError('Cannot establish absent owned PID') from error
++        raise ResourceError('Recorded process is live; refuse slot retirement')
++    files = [path for path in target.rglob('*') if path.is_file() or path.is_symlink()]
++    retained = closed.get('retained', {})
++    admission = closed.get('developmentSource')
++    reconstructable = set()
++    if admission:
++        if Path(admission['slotRoot']).parent != target:
++            raise ResourceError('Rebuildable source proof outside this slot')
++        validate_source(admission)
++        for relative in admission['staged']:
++            original = Path(admission['sourceRoot']) / relative
++            if not original.exists():
++                original = Path(admission['sealedRoot']) / relative
++            if (original.is_symlink() or original.stat().st_mode & 0o222
++                    or file_sha(original) != admission['files'][relative]['sha256']):
++                raise ResourceError('Protected source/diff no longer reconstructs the slot')
++            reconstructable.add(str((Path(admission['slotRoot']) / relative).relative_to(target)))
++    resettable = set()
++    for relative, database in lease.get('ownedDatabases', {}).items():
++        _relative(relative)
++        private = target / relative
++        baseline = Path(database['source'])
++        if (closed.get('disposableTestData') is not True or closed.get('uniqueEvidenceRetained') is not True):
++            raise ResourceError('Unique evidence/private database not approved for reset: ' + str(private))
++        if (not private.is_file() or private.is_symlink() or private.stat().st_ino != database['privateInode']
++                or baseline.is_symlink() or target in baseline.resolve().parents
++                or file_sha(baseline) != database['sourceSha256']):
++            raise ResourceError('Owned private database/baseline proof changed: ' + str(private))
++        wal = Path(str(baseline) + '-wal')
++        if wal.is_symlink() or (wal.exists() and wal.stat().st_size):
++            raise ResourceError('Database reset baseline is not a closed snapshot')
++        resettable.update(str(path.relative_to(target)) for path in
++                         (private, Path(str(private) + '-wal'), Path(str(private) + '-shm')) if path.exists())
++    regular = {str(path.relative_to(target)): path for path in files
++               if not path.is_symlink() and path != target / 'lease.json'
++               and str(path.relative_to(target)) not in reconstructable | resettable}
++    if set(retained) != set(regular):
++        raise ResourceError('Every slot payload must be independently retained before retirement')
++    links = [path for path in files if path.is_symlink()]
++    if links:
++        if not admission or Path(admission['slotRoot']).parent != target:
++            raise ResourceError('Unverifiable resource reference at retirement')
++        validate_source(admission)
++        if links != [Path(admission['dictionaryReference']['path'])]:
++            raise ResourceError('Unexpected slot symlink at retirement')
++    for relative, path in regular.items():
++        entry = retained[relative]
++        archive = Path(entry['path'])
++        if (archive.is_symlink() or not archive.is_file() or root in archive.resolve().parents
++                or file_sha(path) != entry['sha256'] or file_sha(archive) != entry['sha256']):
++            raise ResourceError('Retained slot payload proof differs: ' + relative)
++    retirement = closed_receipt.with_name(closed_receipt.name + '.retirement.json')
++    if retirement.exists():
++        raise ResourceError('Do not overwrite an earlier retirement receipt')
++    # All payloads are retained and all processes absent before any removal.
++    record = {'slot': slot, 'runId': run_id, 'previousLease': lease,
++              'closedReceipt': str(closed_receipt), 'closedReceiptSha256': file_sha(closed_receipt),
++              'retained': retained, 'reconstructableSourceFiles': sorted(reconstructable),
++              'resettableOwnedDatabaseFiles': sorted(resettable), 'databaseBaselines': lease.get('ownedDatabases', {}),
++              'explicit': True}
++    with retirement.open('x') as stream:
++        json.dump(record, stream, indent=2)
++    for path in files:
++        path.unlink()
++    for path in sorted((path for path in target.rglob('*') if path.is_dir()), key=lambda p: len(p.parts), reverse=True):
++        path.rmdir()
++    return record
++
++
++def _relative(value):
++    pure = PurePosixPath(value)
++    if (pure.is_absolute() or not pure.parts or '..' in pure.parts
++            or '\\' in value or str(pure) != value):
++        raise ResourceError('Unsafe source manifest path')
++    return pure
++
++
++def _small_code(relative):
++    pure = _relative(relative)
++    return ((pure.parts[0] in ('src', 'scripts') and pure.suffix == '.py')
++            or (pure.parts[0] == 'web' and (pure.suffix in ('.js', '.css', '.html')
++                or ((len(pure.parts) == 2 or pure.parts[1] == 'plugins')
++                    and pure.suffix in ('.mjs', '.json', '.webmanifest'))))
++            or relative == 'data/lemma.en.txt')
++
++
++def stage_source(destination, source_root, source_manifest, sealed_root, sealed_manifest):
++    destination, source_root, sealed_root = [Path(path).resolve() for path in (destination, source_root, sealed_root)]
++    if destination.exists() or destination.is_symlink():
++        raise ResourceError('Development source slot already exists; no overwrite')
++    if set(source_manifest) != set(sealed_manifest):
++        raise ResourceError('Full source manifest identities differ')
++    staged, shared = [], []
++    for relative, meta in source_manifest.items():
++        _relative(relative)
++        source = source_root / relative
++        if not source.exists() and not source.is_symlink():
++            # A frozen small-diff candidate need not duplicate unchanged files.
++            # Missing changed files still fail the full manifest SHA below.
++            source = sealed_root / relative
++        if (source.is_symlink() or not source.is_file() or source.stat().st_size != meta['bytes']
++                or file_sha(source) != meta['sha256']):
++            raise ResourceError('Source manifest bytes differ: ' + relative)
++        if _small_code(relative):
++            limit = 3 * 1024 * 1024 if relative == 'data/lemma.en.txt' else 2 * 1024 * 1024
++            if meta['bytes'] > limit:
++                raise ResourceError('Code overlay is not small: ' + relative)
++            staged.append(relative)
++        else:
++            sealed = sealed_root / relative
++            if (meta != sealed_manifest[relative] or sealed.is_symlink() or not sealed.is_file()
++                    or sealed.stat().st_mode & 0o222 or file_sha(sealed) != meta['sha256']):
++                raise ResourceError('Shared resource must match the exact read-only sealed root: ' + relative)
++            shared.append(relative)
++    if sum(source_manifest[name]['bytes'] for name in staged) > 16 * 1024 * 1024:
++        raise ResourceError('Code overlay exceeds16MiB; no full candidate copies')
++    destination.mkdir(parents=True, mode=0o700)
++    for relative in staged:
++        target = destination / relative
++        target.parent.mkdir(parents=True, exist_ok=True)
++        source = source_root / relative
++        if not source.exists() and not source.is_symlink():
++            source = sealed_root / relative
++        native_clone(source, target)
++        target.chmod(0o444)
++    if 'data/stardict.db' not in shared:
++        raise ResourceError('Sealed dictionary resource is required')
++    reference = destination / 'data/stardict.db'
++    reference.parent.mkdir(parents=True, exist_ok=True)
++    reference.symlink_to((sealed_root / 'data/stardict.db').resolve())
++    admission = {'schema': 'dev-source-v1', 'developmentSharedResources': True,
++                 'releaseBundleVerified': False, 'slotRoot': str(destination.resolve()),
++                 'sourceRoot': str(source_root.resolve()), 'sealedRoot': str(sealed_root.resolve()),
++                 'files': source_manifest, 'staged': staged, 'shared': shared,
++                 'dictionaryReference': {'path': str(reference), 'target': str(reference.resolve())}}
++    validate_source(admission)
++    return admission
++
++
++def source_path(admission, relative):
++    _relative(relative)
++    if admission.get('schema') != 'dev-source-v1' or relative not in admission['files']:
++        raise ResourceError('Unadmitted development source path')
++    if relative in admission['staged']:
++        return Path(admission['slotRoot']) / relative
++    if relative in admission['shared']:
++        return Path(admission['sealedRoot']) / relative
++    raise ResourceError('Source path has no explicit resource classification')
++
++
++def validate_source(admission):
++    root = Path(admission['slotRoot'])
++    staged, shared = set(admission['staged']), set(admission['shared'])
++    if staged & shared or staged | shared != set(admission['files']):
++        raise ResourceError('Incomplete or overlapping source/resource classification')
++    actual = {str(path.relative_to(root)) for path in root.rglob('*') if path.is_file() or path.is_symlink()}
++    if actual != staged | {'data/stardict.db'}:
++        raise ResourceError('Undeclared slot file or resource reference')
++    alias = root / 'data/stardict.db'
++    expected = Path(admission['sealedRoot']) / 'data/stardict.db'
++    if (not alias.is_symlink() or alias.resolve() != expected
++            or admission['dictionaryReference'] != {'path': str(alias), 'target': str(expected)}):
++        raise ResourceError('Only the exact sealed dictionary reference is allowed')
++    for relative, meta in admission['files'].items():
++        path = source_path(admission, relative)
++        if (path.is_symlink() or path.resolve() != path or not path.is_file()
++                or path.stat().st_size != meta['bytes'] or file_sha(path) != meta['sha256']
++                or (relative in shared and path.stat().st_mode & 0o222)):
++            raise ResourceError('Development source/resource identity drift: ' + relative)
+diff --git a/scripts/desktop/check_resource_policy.py b/scripts/desktop/check_resource_policy.py
+new file mode 100644
+index 0000000..e6a8228
+--- /dev/null
++++ b/scripts/desktop/check_resource_policy.py
+@@ -0,0 +1,227 @@
++"""Finite tiny-resource walkthrough; no actual reader, App or large fixtures."""
++from pathlib import Path
++import argparse
++import hashlib
++import importlib.util
++import json
++import os
++import sqlite3
++import subprocess
++import sys
++import tempfile
++import time
++from unittest.mock import patch
++
++
++def load(name, path):
++    spec = importlib.util.spec_from_file_location(name, path)
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument('--output', required=True, type=Path)
++    args = parser.parse_args()
++    assert not args.output.exists(), 'Do not overwrite earlier check evidence'
++    rows = []
++    start = time.monotonic()
++    policy = load('resource_policy', Path(__file__).with_name('resource_policy.py'))
++
++    def check(name, action):
++        began = time.monotonic()
++        try:
++            action()
++            rows.append({'name': name, 'pass': True, 'seconds': time.monotonic() - began})
++        except Exception as error:
++            rows.append({'name': name, 'pass': False, 'error': type(error).__name__ + ': ' + str(error)})
++
++    def rejected(action):
++        try:
++            action()
++        except (policy.ResourceError, ValueError, FileExistsError):
++            return
++        raise AssertionError('Unsafe operation was accepted')
++
++    with tempfile.TemporaryDirectory(prefix='easysink-resource-small-') as name:
++        root = Path(name).resolve()
++        source = root / 'source.bin'
++        source.write_bytes(b'small fake resource\n' * 64)
++
++        def stream_hash():
++            expected = hashlib.sha256(source.read_bytes()).hexdigest()
++            with patch.object(Path, 'read_bytes', side_effect=AssertionError('whole-file read')):
++                assert policy.file_sha(source) == expected
++        check('bounded-stream-hash', stream_hash)
++
++        def fail_clone():
++            destination = root / 'failed-clone'
++            with patch.object(policy, '_clone_call', side_effect=OSError('declared clone failure')):
++                rejected(lambda: policy.native_clone(source, destination))
++            assert not destination.exists()
++        check('clone-failure-no-copy-fallback', fail_clone)
++
++        def real_clone():
++            destination = root / 'actual-native-clone'
++            policy.native_clone(source, destination)
++            assert source.stat().st_ino != destination.stat().st_ino
++            assert policy.file_sha(source) == policy.file_sha(destination)
++            rejected(lambda: policy.native_clone(source, destination))
++        check('tiny-native-clone-independent-inode-existing-refused', real_clone)
++
++        def slots():
++            slots_root = root / 'slots'
++            slot = policy.claim_slot(slots_root, 'A', 'first')
++            evidence = root / 'old-evidence.json'
++            evidence.write_text('{"kept":true}')
++            before = evidence.read_bytes()
++            rejected(lambda: policy.claim_slot(slots_root, 'A', 'second'))
++            rejected(lambda: policy.claim_slot(slots_root, 'C', 'third'))
++            assert evidence.read_bytes() == before and not (slots_root / 'B').exists()
++            assert slot == slots_root / 'A'
++        check('fixed-slot-conflict-no-extra-slot-or-evidence-overwrite', slots)
++
++        def controlled_reuse():
++            slots_root = root / 'reuse-slots'
++            slot = policy.claim_slot(slots_root, 'A', 'old')
++            payload = slot / 'payload.txt'
++            payload.write_text('old reproducible evidence')
++            retained = root / 'retained-payload.txt'
++            retained.write_text(payload.read_text())
++            evidence = root / 'closed-small.json'
++            child = subprocess.Popen([sys.executable, '-c', 'pass'])
++            child.wait(timeout=3)
++            receipt = {'slot': 'A', 'runId': 'old', 'closed': True,
++                       'processes': [{'pid': child.pid}],
++                       'retained': {'payload.txt': {'path': str(retained), 'sha256': policy.file_sha(payload)}}}
++            evidence.write_text(json.dumps({**receipt, 'processes': [{'pid': os.getpid()}]}))
++            rejected(lambda: policy.retire_slot(slots_root, 'A', 'old', evidence, explicit=True))
++            assert payload.exists()
++            evidence.write_text(json.dumps(receipt))
++            rejected(lambda: policy.retire_slot(slots_root, 'A', 'wrong', evidence, explicit=True))
++            before = evidence.read_bytes()
++            policy.retire_slot(slots_root, 'A', 'old', evidence, explicit=True)
++            assert evidence.read_bytes() == before and retained.read_text() == 'old reproducible evidence'
++            assert policy.claim_slot(slots_root, 'A', 'new') == slot
++            assert not (slots_root / 'B').exists()
++        check('controlled-closed-retained-slot-reuse-and-live-pid-refusal', controlled_reuse)
++
++        def database_reset_reuse():
++            baseline = root / 'reset-baseline.sqlite3'
++            with sqlite3.connect(baseline) as db:
++                db.execute('create table state(value text, payload blob)')
++                db.execute("insert into state values('baseline',zeroblob(4*1024*1024))")
++            original_sha = policy.file_sha(baseline)
++            slots_root = root / 'database-reuse-slots'
++            slot = policy.claim_slot(slots_root, 'A', 'db-old')
++            (slot / 'data').mkdir()
++            private = slot / 'data/user.db'
++            policy.snapshot_sqlite(baseline, private)
++            with sqlite3.connect(private) as db:
++                db.execute("update state set value='test-only change'")
++            child = subprocess.Popen([sys.executable, '-c', 'pass'])
++            child.wait(timeout=3)
++            evidence = root / 'closed-reset-database.json'
++            closed = {'slot': 'A', 'runId': 'db-old', 'closed': True,
++                      'processes': [{'pid': child.pid}], 'retained': {},
++                      'disposableTestData': True, 'uniqueEvidenceRetained': False}
++            evidence.write_text(json.dumps(closed))
++            rejected(lambda: policy.retire_slot(slots_root, 'A', 'db-old', evidence, explicit=True))
++            assert private.exists()
++            closed['uniqueEvidenceRetained'] = True
++            evidence.write_text(json.dumps(closed))
++            policy.retire_slot(slots_root, 'A', 'db-old', evidence, explicit=True)
++            slot = policy.claim_slot(slots_root, 'A', 'db-new')
++            (slot / 'data').mkdir()
++            policy.snapshot_sqlite(baseline, slot / 'data/user.db')
++            with sqlite3.connect(slot / 'data/user.db') as db:
++                assert db.execute('select value from state').fetchone()[0] == 'baseline'
++            assert policy.file_sha(baseline) == original_sha
++            assert not (slots_root / 'B').exists()
++            assert not list(root.glob('*archive*'))
++        check('owned-disposable-database-reset-from-baseline-without-full-archive', database_reset_reuse)
++
++        def database():
++            original = root / 'closed.sqlite3'
++            with sqlite3.connect(original) as db:
++                db.execute('create table record(value text)')
++                db.execute("insert into record values('original')")
++            before = policy.file_sha(original)
++            private = root / 'private.sqlite3'
++            policy.snapshot_sqlite(original, private)
++            with sqlite3.connect(private) as db:
++                db.execute('pragma journal_mode=WAL')
++                db.execute("update record set value='private'")
++                db.commit()
++                assert not Path(str(original) + '-wal').exists()
++                assert original.stat().st_ino != private.stat().st_ino
++            assert policy.file_sha(original) == before
++            Path(str(original) + '-wal').write_bytes(b'not closed')
++            rejected(lambda: policy.snapshot_sqlite(original, root / 'bad.sqlite3'))
++        check('closed-database-independent-writes-and-wal', database)
++
++        def disk_and_host():
++            good = {'free_bytes': 12 * policy.GIB, 'available_ram_bytes': 4 * policy.GIB,
++                    'cpu_count': 4, 'load1': 0.1}
++            with patch.object(policy, 'host_facts', return_value=good):
++                policy.preflight(root, disk_growth_bytes=policy.GIB, ram_bytes=1024, cpu_fraction=.5)
++            for bad in [dict(good, free_bytes=9 * policy.GIB), dict(good, available_ram_bytes=0),
++                        dict(good, available_ram_bytes=policy.GIB),
++                        dict(good, available_ram_bytes=None), dict(good, load1=None), dict(good, load1=8)]:
++                with patch.object(policy, 'host_facts', return_value=bad):
++                    rejected(lambda: policy.preflight(root, disk_growth_bytes=1024, ram_bytes=1024, cpu_fraction=.5))
++            rejected(lambda: policy.preflight(root, disk_growth_bytes=None, ram_bytes=1024, cpu_fraction=.5))
++        check('disk-ten-gib-floor-memory-cpu-and-unknown-budget-refuse', disk_and_host)
++
++        def source_boundary():
++            sealed = root / 'sealed'
++            items = {'src/wise_reader/settings.py': b'ROOT = None\n', 'web/index.html': b'<main>fake</main>',
++                     'data/stardict.db': b'fake dictionary', 'web/assets/fake.png': b'fake pixels',
++                     'web/vendor/example/nested.js': b'export const fake = true;'}
++            manifest = {}
++            for relative, body in items.items():
++                path = sealed / relative
++                path.parent.mkdir(parents=True, exist_ok=True)
++                path.write_bytes(body)
++                path.chmod(0o444)
++                manifest[relative] = {'bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()}
++            staged = root / 'staged'
++            admission = policy.stage_source(staged, sealed, manifest, sealed, manifest)
++            assert (staged / 'data/stardict.db').is_symlink()
++            assert (staged / 'data/stardict.db').resolve() == sealed / 'data/stardict.db'
++            assert not (staged / 'web/assets/fake.png').exists()
++            assert (staged / 'web/vendor/example/nested.js').is_file()
++            assert admission['schema'] == 'dev-source-v1'
++            assert policy.source_path(admission, 'web/assets/fake.png') == sealed / 'web/assets/fake.png'
++            policy.validate_source(admission)
++            (staged / 'web/unexpected').symlink_to(source)
++            rejected(lambda: policy.validate_source(admission))
++        check('small-code-and-exact-readonly-shared-resource-boundary', source_boundary)
++
++        def lexicon():
++            fetch = load('fetch_lexicon_small_check', Path(__file__).resolve().parents[1] / 'fetch_lexicon.py')
++            frozen = root / 'sealed-index.sqlite3'
++            frozen.write_bytes(b'not a real dictionary')
++            frozen.chmod(0o444)
++            before = policy.file_sha(frozen)
++            rejected(lambda: fetch.build_indexes(frozen))
++            link = root / 'index-reference.sqlite3'
++            link.symlink_to(frozen)
++            rejected(lambda: fetch.build_indexes(link))
++            assert policy.file_sha(frozen) == before
++        check('indexing-cannot-write-sealed-or-referenced-dictionary', lexicon)
++
++    result = {'kind': 'small-resource-only', 'notReaderOrNativeAcceptance': True,
++              'largeRealResourcesRead': False, 'readerAppLaunched': False,
++              'passed': all(row['pass'] for row in rows), 'checks': rows,
++              'elapsedSeconds': time.monotonic() - start}
++    with args.output.open('x') as stream:
++        json.dump(result, stream, indent=2)
++        stream.write('\n')
++    print(json.dumps(result))
++    return 0 if result['passed'] else 1
++
++
++if __name__ == '__main__':
++    raise SystemExit(main())
+diff --git a/scripts/desktop/RESOURCE_POLICY.md b/scripts/desktop/RESOURCE_POLICY.md
+new file mode 100644
+index 0000000..bdfc630
+--- /dev/null
++++ b/scripts/desktop/RESOURCE_POLICY.md
+@@ -0,0 +1,23 @@
++# Development resource boundary
++
++The resource fix keeps one declared sealed source/resource root and at most two named work slots (A and B). A run gets its own small evidence directory, never a new full product tree or App. First use requires an empty slot; an occupied slot is rejected, including after a failed run. No automatic reset, deletion, B fallback or label-based slot creation. Explicit retirement requires a matching lease and a closed receipt with every recorded PID absent. Rebuildable source uses its protected base/diff and full manifest; it does not require another source archive. Other necessary evidence must be retained independently. A private test database recorded by this policy may be reset from its hash-verified closed baseline only after all owned processes exit and the owner explicitly confirms its unique evidence has been retained. It is not archived in full. Old/unknown databases and the real library are outside this policy; unique unretained data blocks retirement. Only fake-slot reset/reuse is exercised now; no real old slot is retired.
++
++Development source has small Python/UI code in its slot, a complete source manifest and an explicit shared-resource map. Only `data/stardict.db` may be a symlink, to the exact declared read-only sealed dictionary. Other resources are served by an exact manifest lookup in the sealed root, never arbitrary symlink traversal. Changed shared assets are rejected rather than silently using the base. This exception is for development only. A release App contains an independent dictionary inode and verifies its own actual bundle bytes.
++
++Private writable databases are native clones of a consistent closed snapshot, with independent inodes and WAL paths. Native cloning must succeed directly; no ordinary-copy fallback or hardlinks. Dictionary indexing refuses symlinks and read-only files/directories before SQLite opens a write connection. Large hashes use bounded streaming reads.
++
++Before a real operation, measured free space minus its declared worst-case growth must remain at least 10 GiB. RAM headroom and CPU load are measured and compared with explicit budgets. Unknown facts/budgets reject the run. Passing a small resource check does not resume functional, native, physical-input or performance acceptance.
++
++Failure modes fixed before implementation and checked with tiny fake resources:
++
++1. Native clone unavailable, failing, same inode, symlink source, existing destination or cross-volume: stop without ordinary copy.
++2. Source database has a nonempty WAL, destination aliases a source or private WAL path, or source changes: reject.
++3. A second run attempts an occupied slot, an arbitrary slot name, or old evidence reuse: reject without changing evidence or creating another slot.
++4. Hashing tries a whole-file read: reject in the check; stream SHA must still match.
++5. Low disk, insufficient/unknown RAM, unavailable/over-budget CPU or absent growth budget: reject before allocation.
++6. Development manifest drift, undeclared resource change, writable sealed dictionary, unexpected symlink or path escape: reject; exact declared dictionary reference is the only link exception.
++7. Indexing is pointed at the sealed dictionary or its development reference: reject before writes.
++8. Release resource cloning fails: reject; a successful release dictionary remains an independent file, not a shared development reference.
++9. Retirement has a wrong owner/run, live PID, unretained payload, unverifiable dictionary link, existing retirement receipt or evidence inside the slot: reject before removal. A fully closed, retained tiny slot may be retired and claimed again without overwriting its old evidence.
++
++Run only `check_resource_policy.py --output ABS_FRESH_JSON` for the authorized tiny-resource checks. It does not launch a reader, build an App or access a real library/dictionary.
