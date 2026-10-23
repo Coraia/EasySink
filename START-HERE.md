@@ -2,7 +2,7 @@
 
 这份入口面向一位新开发者和一台新的 macOS。先把远端主线跑到可验证状态，再选择功能工作；不要把本机候选、已安装 App 或个人书库当成源码基线。
 
-> 当前不是可发布交接。远端稳定基线是 `main@74226309ebd1211bdbeeace4323049c2c175f742`；正在并行修复的候选仍有 HOLD 项。`/Applications/EasySink.app` Build 28、Paragraph Preview、真实书库、笔记和进度都不属于开发资产，禁止覆盖或拿来做测试。
+> 当前不是可发布交接。远端稳定基线是 `main@74226309ebd1211bdbeeace4323049c2c175f742`；正在并行修复的候选仍有 HOLD 项。`/Applications/EasySink.app` Build 28、Paragraph Preview、真实书库、笔记和进度都不属于开发资产，禁止覆盖或拿来做测试。GitHub clone 能取得开发交接，但不能取得私人阅读数据；真实书库通过单独的本机私有迁移包恢复，绝不在本 PR 中。
 
 ## 0–10 分钟：取得确定的基线
 
@@ -54,6 +54,8 @@ uv run python scripts/web.py status
 词典体积很大，不进 Git，也不是前两项 smoke 的前置条件。来源、许可、校验和缺资源行为见 [开发文档](docs/handoff/DEVELOPMENT.md#词典与大资源)。可导入 `tests/fixtures/handoff_synthetic.md` 做无版权手工走查；不要导入接手人的私人书籍。
 
 若准备改正在修复的阅读链，先核对 [当前状态](docs/handoff/CURRENT-STATUS.md#活动候选与参考补丁) 并向当前 owner 取得新的固定 SHA。仓库附带的小 patch 只用于审阅或在精确父版本上重建，不代表已合入。
+
+当前可重建功能源仍是 `source012`：冻结 011 portable core 后再应用 012 的单文件 progress overlay。最新原生输入链已采到 1228 帧并得到 `no-go-observed`，不是旧的“0 帧/未运行”；精简证据和新 Mac 必跑项见 [当前状态](docs/handoff/CURRENT-STATUS.md#新-mac-的性能续跑边界)。失败后已回退的属性候选和临时诊断 snippet 都不是产品代码，不要应用。
 
 若准备构建 macOS 候选，还需单独安装并核对 uv-managed standalone CPython 3.12：
 

@@ -55,6 +55,10 @@ shasum -a 256 EasySink-user-backup.db
 
 macOS 候选数据位于 `~/Library/Application Support/EasySink Candidate`，与 Web 的 `data/user.db` 相互独立，当前没有自动迁移。正式 App/个人候选数据迁移必须在副本上演练，不用真实库做首次测试。
 
+对 macOS 资料目录，完整恢复单元不只是 `user.db`：至少还包括 `reading-library-id`、`reading-storage.json`、`user.evidence.sqlite3`、`user-pdf/registry.sqlite3`、`user-pdf/originals/`，以及仍被当前 PDF 范围引用的任务/发布资料。三份 SQLite 都应使用 backup API 产生一致快照；只复制 `user.db` 或只带 PDF 原件都会造成不完整恢复。迁移前用 `desktop.lock` 的非阻塞独占锁确认该资料目录没有 backend owner，且在整个备份期间持锁；不要为了备份强退未知 App。
+
+私人迁移包和 GitHub 交接是两个交付面：前者可以包含受版权保护的书籍、笔记和进度，但不能进 Git、PR 附件或默认上传；后者只记录通用结构、恢复合同和脱敏数量。新 Mac 恢复时先校验逐文件 SHA，再在 EasySink 未运行时把命名库目录放到对应 Application Support 位置。正式库和 Paragraph Preview 若都迁移，必须按来源分开恢复，禁止合并进度或互相覆盖。若目标目录已存在，先完整备份或改名。AI/API 凭据、`.env`、Keychain、session/ready/port 文件、OCR 注册路径、缓存、旧测试槽和 macOS 文件选择历史都不随库迁移，需在新机重新配置。
+
 ## 词典与大资源
 
 `scripts/fetch_lexicon.py` 从 ECDICT `1.0.28` release 获取 SQLite 包，并从 upstream master 获取 `lemma.en.txt`。ECDICT 上游许可是 MIT：<https://github.com/skywind3000/ECDICT/blob/master/LICENSE>。这只说明上游词典的许可，不等于 EasySink 仓库整体采用 MIT；仓库目前没有顶层 LICENSE。
@@ -88,6 +92,8 @@ uv run python scripts/desktop/build.py \
 交接机上已用 `--no-python-downloads` 找到缓存的 uv-managed CPython 3.12，并用现有开发解释器确认 `tomllib` 可导入；这只核实本机前置，不代表新 Mac 已完成安装。
 
 若在实验分支应用资源治理 patch，builder 还会要求显式的 `--disk-growth-bytes`、`--ram-bytes` 和 `--cpu-fraction`。这些值必须是运行前确定的最坏增量预算；不要为让 preflight 通过而临时缩小。交接只验证了 `--help` 能加载 portable policy，没有执行新 Mac 原生构建。
+
+旧机当前 active runner 仍位于 ignored `.runtime`，其中包含本机绝对路径、sealed App/profile 和私人 slot 绑定，不能直接复制为开发工具。新 Mac 若继续原生性能验收，应先把 App、data/profile、diagnostic binding、preparation、work slot 与输出 label 全部改成显式参数，并保留 direct parent / executable / birth 的 owner 校验。现有入口已经支持 `--warm-attachment-only --native-hitches`，但可移植 runner patch 尚未形成；这项缺口不得用复制整棵 `.runtime` 解决。
 
 ## 分支与提交纪律
 

@@ -67,6 +67,10 @@ npm run test:e2e -- tests/browser/word-popover.spec.js
 
 性能通过必须同时说明预算、输入规模和测量边界。浏览器 frame 数、WebKit 长帧、返回书架 loading 和真实 G 大库是不同指标。
 
+最新 `source012 / cold008 / build280534` 的真实原生输入链得到 `no-go-observed`：19 次反馈 commit 和 source pointerdown 可信，1228 帧、max 72 ms、p95 20 ms、37 帧大于 34 ms，位移为 0。这个结果纠正了早期“0 帧/未运行”状态，但实际输入间隔为 547–1161 ms，不能算严格 65 ms rapid；物理触控板仍未跑。可迁移的脱敏摘要在 `docs/handoff/evidence/source012-native-input-chain-008-summary.json`，私人截图、正文和完整 receipt 不进 Git。
+
+性能诊断的失败候选也要与产品源分开：同步 JS 片段只观察到部分 draw，不能解释整段延迟；属性快照候选没有稳定改善，已完整回退。下一步先在新 Mac 的隔离 source012 上，用 `xctrace --template 'Animation Hitches' --attach <owned-pid> --time-limit 12s` 只附着自有 App PID，并设置 128 MiB 输出上限；先导出最小 TOC/热点确认采到 own WebKit/layout/composite，再谈归因。只采到宿主不算充分证据。旧机两次准备运行都在 CPU preflight 结束，App/trace 0 Popen，故 timeline 是 `NOT RUN / RESOURCE`。
+
 ## 6. 证据与安全
 
 - 截图/trace 不包含私人正文、笔记、token 或供应商请求体。

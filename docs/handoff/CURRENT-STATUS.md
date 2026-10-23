@@ -1,4 +1,4 @@
-# EasySink 交接状态（更新至 2026-10-22）
+# EasySink 交接状态（更新至 2026-10-23）
 
 ## 三层代码必须分开
 
@@ -16,7 +16,10 @@
 - 011 上的 001/002 原生 GUI、字号/单双页、Doc40 段落/译句有有限场景通过；此前 `saved0` 字体场景的两次 cold 绿只证明该固定输入，不能概括为所有续读已经修复。
 - `case-b-safe-leading-011-005` 在治理后用 26.553 秒完成四阶段，`notPassed=[]`；第三种 pending 关卡后 current generation/canonical 在 1122 ms 内就绪，真实 previous→return 撤回及完整 source frontier 通过。1 秒 RSS family 采样峰值为 595,034,112 B，进程与端口已清理。这只是有限 headless 功能证据。
 - 011 的真实 native 反例保留为红证据：从 note 10 进入时，GUI 首屏落在 `I've`（page 100 / block 9 / offset 0），导航锚却是 `comprehensive`（76:89），随后旧 progress 被保存；正常 Quit 再冷开时首屏从 `comprehensive` 开始。
-- function012/source012 只替换 `web/plugins/progress.js`，续读因果与窄 native 回归真实 PASS：note 10 → known/need → 收卡后实际首屏仍是 `I've`；正常 Quit 前 SQL 与闭库后 SQL 均为 page 100 / block 9 / `[0,0)`，无导航 cold open 仍从 `I've` 开始。两次 App 分别 44.818 秒与 15.049 秒正常 `exit 0`，A 已独立只读核对 AX、SQL 和 receipt；App 文件名仍含 011，实际标识为 `build280528/function012`，是既有 App 内的小文件更新，没有新建 App。AD 诊断在同一 function012 上曾实际到达 `ownerRegistered` 与 `reader-ready`，但 CUA 仅能在 running inventory 看见它，按 bundle/path/name 调用 `getApp` 均报 `Invalid app / -10822`，因此是 0 个可信动作、0 条 measurement；只读 CoreServices 返回的新 bundle URL 正确，但工具 Mac 没有正式 PID/window 附着。全部自有进程与端口已清理，B 已标 failed/quarantine，使用原 profile；只执行 `js_reset` 清 JS bindings 后即取消 warm 启动，没有额外 App 或服务修改。因此原生帧、19 rapid、物理 trackpad 与最终放行仍为 NOT RUN；这不是“原生性能已通过”，也不应归类为产品性能红。晨间私有候选可做手动功能/硬件验证，但不能替代帧门；正式 App、用户 Preview 与真实书库均未触碰。
+- function012/source012 只替换 `web/plugins/progress.js`，续读因果与窄 native 回归真实 PASS：note 10 → known/need → 收卡后实际首屏仍是 `I've`；正常 Quit 前 SQL 与闭库后 SQL 均为 page 100 / block 9 / `[0,0)`，无导航 cold open 仍从 `I've` 开始。两次 App 分别 44.818 秒与 15.049 秒正常 `exit 0`，A 已独立只读核对 AX、SQL 和 receipt。012 的窄原生回归还覆盖 Right/Left 和 Doc40 的完整段落、14 句缓存、跨页显式点击与关闭。App 文件名仍含 011，实际功能源是 `source012`；这些通过项不等于 012 全矩阵重跑。
+- 最新可信原生输入链 `cold008 / build280534 / source012` 已不再是旧的“0 帧”：真实 source pointerdown 和 19 次交替反馈 commit 均可信，`firstFailure=null`，采得 1228 帧；冻结评分为 `no-go-observed`、`errors=[]`，全程 max 72 ms、p95 20 ms、37 帧大于 34 ms。target/prefix 位移均为 0，末段 settle 650 ms；原 GPU context 保持 antialias、MSAA4 和 reducedMotion=false。正常 Quit 后独立核对进程/端口清理、WAL 为空与 quick check。精简、无正文的可迁移证据在 `docs/handoff/evidence/source012-native-input-chain-008-summary.json`。
+- 上述 19 次动作不是“严格 65 ms rapid 已通过”：工具实际 post-commit→下一次输入间隔是 547–1161 ms。物理触控板、#53 独立翻页帧、稳定改善和最终放行仍未完成；新 Mac 还必须重新绑定 App PID、窗口、DPR、坐标和 profile，不能照搬旧机点击坐标。
+- 随后的同步 JS 小诊断只得到 4 次完整 draw 调用（约 20–26 ms）与不完整 AX 文本，不能解释整段 72 ms。属性快照优化单对 warm draw 为 33/27 ms，没有实质改善，已否决并完全回退；当前 source012 不含这个候选，也不含临时诊断 snippet。恢复后 App 的 Reflow/index/Info/Mach-O 与回退清单一致。`Animation Hitches` timeline 的两次尝试均在 CPU 资源门前被阻止，App/trace 0 Popen，因此状态是 `NOT RUN / RESOURCE`，不是录制失败或性能通过。
 - CF 控制器已撤销“backend 必须与 App 同 process group”的错误假设，改用 direct parent / executable / birth identity；该身份验证与 `normalQuit003` 有限场景通过。这证明控制器门可工作，不证明续读或原生产品整体通过。
 - 干净远端基线源码已通过 `tests/test_tokenize.py` 的 6 项和 `wise_reader.collections_smoke` 的 94 项合成 API 检查。
 - 活动修复线的资源治理已改用 1 秒 Darwin CPU tick（active ≤ 0.5），保留 10 GiB + 最坏增量磁盘门和 2 GiB 系统 RAM；11 项小检查和 122 B 代表路径通过，原有两个 native caller 已迁到固定槽。它们仍不是大资源或真实 App 验收。
@@ -26,12 +29,18 @@
 
 ## 仍未闭环
 
-1. 012 只关闭上述续读子门；完整 012 必要回归、原生帧、物理触控板卡片滚动/翻页边界和 G 大库性能未验收。
+1. 012 只关闭上述续读子门和窄原生场景；最新原生帧是 `no-go-observed`，严格 65 ms rapid、物理触控板卡片滚动/翻页边界、#53 独立翻页帧和 G 大库性能未验收。
 2. safe 撤回目前只有上述 headless 场景；原生 presentation、长帧与完整交互链未复验。
 3. 001/002 与 Doc40 只有有限输入；还不能跨版本拼成整体绿。
-4. 两个 active native caller 的固定槽迁移只有当前修复环境里的小检查证据，未纳入本 portable patch，也没有恢复完整 App 构建链。
+4. active native caller 的固定槽与 `--warm-attachment-only --native-hitches` 改动只有当前修复环境证据，未纳入 portable patch，也没有恢复完整 App 构建链。下一台 Mac 需先把旧机绝对路径、sealed root、App/data/profile 绑定改成显式输入再运行。
 5. 正式 Build 28、当前 Paragraph Preview、真实书库/笔记/进度没有纳入源码交接，也绝不能由新开发环境覆盖。
 6. 签名、公证、干净 macOS 安装、发布包完整性和许可清单仍未完成；不得用两次有限 native 正常退出覆盖这些门。
+
+## 新 Mac 的性能续跑边界
+
+当前没有待集成的性能产品补丁：属性候选已否决并回退，临时诊断 snippet 也已撤回。下一步是在原 source012 上采集一次**只附着自有 App PID**的 `Animation Hitches`，再判断热点属于 WebKit/layout/composite 还是只有宿主；只得到宿主的 trace 不足以归因。现有 runner 已有 `--warm-attachment-only --native-hitches` 入口，但 runner 本身仍在旧机 ignored runtime，不能直接当作跨机工具。
+
+新机执行前必须确认 Xcode `xctrace`、模板、签名/架构、唯一 PID、窗口/DPR、隔离 profile 与 10 GiB/2 GiB/CPU tick 资源门。原来的两次 timeline 尝试都在 CPU 门结束，没有 App 或 trace 进程。若 macOS 要求 Developer Tools 或隐私权限，应人工确认具体动作；不要修改系统设置来绕过门。旧机的 `used profile006` 已经使用过，不能在新证据里写成 unused。
 
 ## 仓库卫生核对
 
@@ -112,5 +121,5 @@ PYTHONPATH="$PWD/src" PYTHONNOUSERSITE=1 "$dev_python" -m wise_reader.collection
 1. 在新 Mac 上按 `START-HERE.md` 验证远端基线和两个无大资源 smoke。
 2. 在新 Mac 上按父 SHA 应用 012 单 progress patch，先复现 011 红，再复验 note 10 → `I've`、Quit 前后 SQL 和无导航 cold open；不要从共享 dirty 猜代码。
 3. 把 safe 撤回的 headless 绿复验到目标浏览器与原生 presentation seam，保留 source/full-gloss/显式译句定位门。
-4. 复用已纠正的 direct parent / executable / birth 控制器身份门，在隔离 012 上跑 001/002、Doc40、原生帧和物理触控板；不把 controller 或续读子门 PASS 当产品 PASS，也不改签绕门。
+4. 复用已纠正的 direct parent / executable / birth 控制器身份门，在隔离 012 上先采自有 PID 的 `Animation Hitches` 最小 TOC/热点，再跑严格 65 ms rapid、001/002、Doc40 与物理触控板；不把 controller、慢节奏 19 次输入或续读子门 PASS 当产品 PASS，也不改签绕门。
 5. 真实 App caller、失败无全量复制、free-space 预算、G 大库与发布资源清单齐全后，才恢复构建链和性能门。
