@@ -1,5 +1,7 @@
 # Wise Reader
 
+> 新开发者与新 macOS 设备请先读 [START-HERE：第一小时接手指南](START-HERE.md)。当前并行修复尚未全部通过；稳定主线、候选和未验收项见 [交接状态](docs/handoff/CURRENT-STATUS.md)。
+
 面向中文读者的本地英文阅读应用，提供 Web 阅读器和 macOS 客户端。中文解释贴近正文，阅读偏好与笔记自动保存；19 个扩展可以逐个开关。
 
 当前产品基线：**V1 · `v1.0.0`（2026-10-10）**。使用 FastAPI / SQLite / 本地词典，前端为可拆卸 ES modules，macOS 客户端复用阅读核心。该标签冻结本次已体验的源码；包内历史版本号暂保持不变，以对应已安装并走查的客户端。
@@ -56,6 +58,11 @@ npx playwright install chromium
 
 ## 文档
 
+- [新开发者第一小时入口](START-HERE.md)
+- [产品定位与行为验收](docs/handoff/PRODUCT.md)
+- [架构、开发与数据](docs/handoff/DEVELOPMENT.md)
+- [测试分层与证据](docs/handoff/TESTING.md)
+- [2026-10-21 交接状态、已知问题与参考补丁](docs/handoff/CURRENT-STATUS.md)
 - [项目交接 · 2026-10-17：V1.2 进展与 Codex / Claude Code 接手入口](docs/handoffs/2026-10-17.md)
 - [历史交接 · 2026-10-12](docs/handoffs/2026-10-12.md)
 - [V1 版本记录与遗留项](docs/releases/v1.0.0.json)

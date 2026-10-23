@@ -1,0 +1,44 @@
+diff --git a/web/plugins/progress.js b/web/plugins/progress.js
+index 7c2d35d..839e3d5 100644
+--- a/web/plugins/progress.js
++++ b/web/plugins/progress.js
+@@ -57,7 +57,7 @@ export function install(ctx) {
+     if (!local.get(`jump:${id}`))
+       await reader.restore(
+         pending || saved.anchor || { ratio: saved.scroll_ratio },
+-        { automatic: true, mark: false },
++        { automatic: true, mark: false, alignStart: true },
+       );
+     const changed = () => {
+       if (reader.restoring || document.hidden) return;
+diff --git a/web/reader.js b/web/reader.js
+index 99772c1..6deaa81 100644
+--- a/web/reader.js
++++ b/web/reader.js
+@@ -187,7 +187,7 @@ export class Reader {
+     const selector = this.handoff ? null : local.get(`jump:${d.id}`);
+     if (selector) {
+       local.remove(`jump:${d.id}`);
+-      await this.restore(selector, { automatic: selector.resume_position === true, mark: !selector.resume_position });
++      await this.restore(selector, { automatic: selector.resume_position === true, mark: !selector.resume_position, alignStart: selector.resume_position === true });
+     }
+     const translationJump = this.handoff ? null : local.get(`translation-jump:${d.id}`);
+     if (translationJump) {
+@@ -539,7 +539,7 @@ export class Reader {
+         (b.text.includes(anchor.quote) && b.text.indexOf(anchor.quote) === b.text.lastIndexOf(anchor.quote))));
+     return matches.find(b => b.id === anchor.block_id) || (matches.length === 1 ? matches[0] : null);
+   }
+-  async restore(anchor, {automatic = false, mark = true, signal} = {}) {
++  async restore(anchor, {automatic = false, mark = true, signal, alignStart = false} = {}) {
+     if (signal?.aborted || this.scope.signal.aborted) return false;
+     if (automatic && this.handoff) return false;
+     let unprovenPosition = false;
+@@ -577,7 +577,7 @@ export class Reader {
+         end: typeof start === "number" && anchor.quote && anchor.kind !== "image"
+           ? start + anchor.quote.length : anchor.end};
+     }
+-    return this.pages.restore(anchor || { ratio: 0 }, mark, {signal});
++    return this.pages.restore(anchor || { ratio: 0 }, mark, {signal, alignStart: alignStart && Boolean(this.pages.validAnchor(anchor))});
+   }
+   captureSelection() {
+     if (this.selecting || this.adjustingSelection || this.aiSetupOpen) return;

@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "base_commit": "74226309ebd1211bdbeeace4323049c2c175f742",
+  "candidate_full_manifest_sha256": "200835d735cc49630a37f64ec8f4e70d336e8e5bb944beaa643caf8d5c1bd822",
+  "candidate_full_file_count": 518,
+  "patch_sha256": "08b31d3e9688ee078096d98eefcad40cd2c8f6720b4347db651c10d00bb967da",
+  "scope": "portable code-only repair subset; exact candidate-011 bytes for listed files",
+  "status": "WIP_NOT_RELEASE",
+  "files": [
+    {
+      "path": "src/wise_reader/collections.py",
+      "action": "modified",
+      "bytes": 35772,
+      "sha256": "e234a6d3d38a6f44c7cfdb58195d456404630149c168fd52ae211d6584b8678d"
+    },
+    {
+      "path": "src/wise_reader/collections_transfer.py",
+      "action": "modified",
+      "bytes": 32983,
+      "sha256": "1f1a625ea2ac89bcbdfa687b2e8c3270b5549c62f4101ff785d78f8b9bb3db34"
+    },
+    {
+      "path": "src/wise_reader/engine.py",
+      "action": "modified",
+      "bytes": 13078,
+      "sha256": "22a72cee464c179d65679143bbe0fc26157903b814939187d6ee8d4ca0e69866"
+    },
+    {
+      "path": "src/wise_reader/l2.py",
+      "action": "modified",
+      "bytes": 2299,
+      "sha256": "63a31b8099a3119f25796fadccbd4f7aaacfe566786c4d5f524b4d5d9ee3008c"
+    },
+    {
+      "path": "src/wise_reader/pdf/paragraph_groups.py",
+      "action": "new",
+      "bytes": 5640,
+      "sha256": "56086db57306330ea6cf92b097630689f81e3437a9eccdb2dfb78c1ec79beffb"
+    },
+    {
+      "path": "src/wise_reader/pdf/representation.py",
+      "action": "modified",
+      "bytes": 7097,
+      "sha256": "68258784e3c0b482e8af780ef473cc1d65d94c89fe1063276cb6e4a59cfab818"
+    },
+    {
+      "path": "src/wise_reader/plugins/collections.py",
+      "action": "modified",
+      "bytes": 11638,
+      "sha256": "59bd5bb4ce041bc926ea5214e660315e1c519e7a096cbe17f5c03db776742ca6"
+    },
+    {
+      "path": "src/wise_reader/reading_learning.py",
+      "action": "new",
+      "bytes": 15056,
+      "sha256": "92bdbe76cb444bf887257e246d94757883c47879c084d4006e6455efe6fb82e4"
+    },
+    {
+      "path": "src/wise_reader/usage_feedback.py",
+      "action": "new",
+      "bytes": 8538,
+      "sha256": "576ec2c7f4018033a04a58773a1a6a4bd425b1e32a8010a635dbe49f902e1a1c"
+    },
+    {
+      "path": "web/annotation-ink.js",
+      "action": "new",
+      "bytes": 2111,
+      "sha256": "0a9c78891a78ba9af0232ecb74f6bad6dcc324ee039e4661b860ee27caa7fb14"
+    },
+    {
+      "path": "web/annotation-layout.js",
+      "action": "new",
+      "bytes": 22832,
+      "sha256": "c0ce278d4a6429da245c367487c2efce00a633cc456dd00eb22582f74176dde1"
+    },
+    {
+      "path": "web/annotation-reflow.js",
+      "action": "new",
+      "bytes": 55091,
+      "sha256": "5bc7d89e717c41041e6f51672ed5c9c3a635bbb25d038d40f7ace8e89ca07983"
+    },
+    {
+      "path": "web/assist-popup.js",
+      "action": "modified",
+      "bytes": 10662,
+      "sha256": "88a5f3a5fc5f011735ad5d38caef672d94a3b3a861e0608a1efe5e3249acc2c9"
+    },
+    {
+      "path": "web/collections-word.js",
+      "action": "modified",
+      "bytes": 17592,
+      "sha256": "7d6b9c6b34cadda0112276155d186f70f49e4aa36d9772e1b50f278da178d16d"
+    },
+    {
+      "path": "web/collections.css",
+      "action": "modified",
+      "bytes": 11447,
+      "sha256": "e004801ab556f67ad5331ff755aab4f62f46d68dec219a8e07f2d5c0121c9e51"
+    },
+    {
+      "path": "web/dictionary-card.js",
+      "action": "modified",
+      "bytes": 3991,
+      "sha256": "d5b54108fe6c61905191791448ad3387a546ef360fc1cac4b5c6455e7484e004"
+    },
+    {
+      "path": "web/page-curl-renderer.js",
+      "action": "modified",
+      "bytes": 48703,
+      "sha256": "041900e256cd062b0c8b3896abb9879c08ef93cb1ec1032a0cb0769fad896c83"
+    },
+    {
+      "path": "web/pagination.js",
+      "action": "modified",
+      "bytes": 81226,
+      "sha256": "065f9c7e59fd424ada206edf83b599a40773ca02b8edee23aa0fc46901afaf40"
+    },
+    {
+      "path": "web/pdf-paragraph-groups.js",
+      "action": "new",
+      "bytes": 1518,
+      "sha256": "39ea982e67c47300a95f57ca6ca2cfc7d36a91bcf26773ba1426bba5f4d3dcb5"
+    },
+    {
+      "path": "web/plugins/collections.js",
+      "action": "modified",
+      "bytes": 21194,
+      "sha256": "cab469a67ff31536012dd49a753cdeecfe156f1fceac37e7d727ba8fd141c2bf"
+    },
+    {
+      "path": "web/plugins/notes.js",
+      "action": "modified",
+      "bytes": 36793,
+      "sha256": "0539b4f8a3c41e14cbd55413b0307c744da7ae645ebc265e08ffeba194d58ce1"
+    },
+    {
+      "path": "web/plugins/progress.js",
+      "action": "modified",
+      "bytes": 3965,
+      "sha256": "4dd53131a689d3f9c4842d9e22fd521ae942451bc861896eee0842fc000caca7"
+    },
+    {
+      "path": "web/plugins/translate.js",
+      "action": "modified",
+      "bytes": 16950,
+      "sha256": "1aa7fb4ac105380774148f09f270f0bd11436d86d9feee8728c4e0636221b3e6"
+    },
+    {
+      "path": "web/plugins/tts.js",
+      "action": "modified",
+      "bytes": 8747,
+      "sha256": "26d8c134a30111f8b772f6ef59855688d4c899f58476ec8ce83d50e807897225"
+    },
+    {
+      "path": "web/plugins/typography.js",
+      "action": "modified",
+      "bytes": 3420,
+      "sha256": "0070b52edb3aff1aecbc68b0d4ecc45ec5862c95603f3001250da69e954867ed"
+    },
+    {
+      "path": "web/reader-chrome.js",
+      "action": "modified",
+      "bytes": 20579,
+      "sha256": "7b793067a6b7046ab71694cfa14e17e903fc272feba396849f1ac555f569777f"
+    },
+    {
+      "path": "web/reader.js",
+      "action": "modified",
+      "bytes": 35340,
+      "sha256": "589bae5549b273a9fd9aa22d471e8146c188e5fbd673346f6db5ee55eaa02452"
+    },
+    {
+      "path": "web/reading-action-icons.js",
+      "action": "new",
+      "bytes": 2491,
+      "sha256": "424c6a766a2b2035ff17a7a137ffb72332dd35bc04a10c46b67cd1970061f68e"
+    },
+    {
+      "path": "web/reading-evidence.js",
+      "action": "modified",
+      "bytes": 20153,
+      "sha256": "8d22e8a9f9778d6e227e2a6321272f50989577d1324273dce80e4118a5767bef"
+    },
+    {
+      "path": "web/reading-interactions.js",
+      "action": "modified",
+      "bytes": 23508,
+      "sha256": "7de76abfeea654eca4d13afa2266225aef5472bd594c63d9f76982327bd2e2ec"
+    },
+    {
+      "path": "web/reading-learning.js",
+      "action": "new",
+      "bytes": 9608,
+      "sha256": "95db008d064d54e4595e6547a1ee6ae646d82d87f267f6113623e08c657983d1"
+    },
+    {
+      "path": "web/reading-native-trackpad.js",
+      "action": "modified",
+      "bytes": 16477,
+      "sha256": "91704b9fa6ce74a70be3349f6deff04a2fe0985582d16c3d2440d36faf769262"
+    },
+    {
+      "path": "web/reading-wheel.js",
+      "action": "modified",
+      "bytes": 9383,
+      "sha256": "5d9bca8dabd2af624857e636241787d97f175c094fcaa1f2912588419ee6dbe4"
+    },
+    {
+      "path": "web/selection-range.js",
+      "action": "modified",
+      "bytes": 5248,
+      "sha256": "c3359ee1070fd60cb4141150003fbc6553b84f7afc179e6a6f8e677d7056efb1"
+    },
+    {
+      "path": "web/style.css",
+      "action": "modified",
+      "bytes": 74706,
+      "sha256": "67e7404fbca4fac5094ba081a85ef7e30a7bd86610fe6410d99ada94e51fdbaf"
+    }
+  ],
+  "excluded": [
+    "full dictionary and user/runtime data",
+    "picturebook and brand assets/code",
+    "reading-spaces and essence experiments",
+    "G3 shelf-performance slice: src/wise_reader/{app.py,store.py,url_commit.py}",
+    "PDF OCR adapter experiment: src/wise_reader/pdf_lab/adapters/omarchy.py",
+    "mixed web/app.js and web/index.html brand/children-space changes",
+    "web/plugins/{importer.js,library.js} unrelated shelf changes",
+    "web/reading-click-paging-experiment.js"
+  ],
+  "limitations": [
+    "does not reproduce the full 518-file manifest",
+    "does not inherit native/App/signing or device qualification",
+    "must be revalidated; patch application is not acceptance"
+  ]
+}

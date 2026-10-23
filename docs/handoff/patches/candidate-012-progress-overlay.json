@@ -1,0 +1,23 @@
+{
+  "schema": "visible-resume-progress-portable-v1",
+  "status": "WIP_NATIVE_SUBGATE_ONLY",
+  "base_manifest_sha256": "200835d735cc49630a37f64ec8f4e70d336e8e5bb944beaa643caf8d5c1bd822",
+  "logical_manifest_sha256": "1594c6bf463556769c884144e00065e7337cdf93891794695ec18275563e42b7",
+  "path": "web/plugins/progress.js",
+  "base_file_sha256": "4dd53131a689d3f9c4842d9e22fd521ae942451bc861896eee0842fc000caca7",
+  "target_file_sha256": "852c6a4aa18d10f2b7197f2c3716dc7f0e5d8191213f54985fb4bd8b341aaa21",
+  "target_bytes": 5437,
+  "patch_sha256": "154d2ef72194ea527879990a28fe955f6669c94466ca6aa21484549d761d81fb",
+  "source_overlay_sha256": "e45d9de3543a9dbeed2d5ea87c8443ad218962fbba92e6105f9a565a597788e0",
+  "evidence": {
+    "old_011_red_retained": true,
+    "progress_run_seconds": 44.818391541950405,
+    "cold_run_seconds": 15.048876083979849,
+    "app_exit_codes": [0, 0],
+    "native_subgate": "passed",
+    "full_012_regression": "not_run",
+    "native_frames": "not_run",
+    "physical_trackpad": "not_run"
+  },
+  "portable_note": "Sanitized metadata only; no private paths, databases, App bundles, or runtime receipts are included."
+}

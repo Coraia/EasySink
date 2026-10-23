@@ -1,0 +1,17 @@
+diff --git a/web/reader-chrome.js b/web/reader-chrome.js
+--- a/web/reader-chrome.js
++++ b/web/reader-chrome.js
+@@ -1,6 +1,5 @@
+ import { openReadingAI } from "./ai-setup-guard.js";
+ import { $, e, local, toast } from "./core.js";
+-import { installClickPagingExperiment } from "./reading-click-paging-experiment.js";
+ 
+ const icons = {
+   outline: '<path d="M4 5h16M4 12h16M4 19h16"/>',
+@@ -71,6 +70,5 @@ export function readerShell(d, progressEnabled) {
+ // All listeners belong to the reader scope; no global handler survives a route.
+ export function installReaderChrome(r) {
+-  installClickPagingExperiment(r);
+   const chrome = $("#reader-chrome"),
+     trigger = $("#show-tools"),
+     stage = $("#reading-stage");

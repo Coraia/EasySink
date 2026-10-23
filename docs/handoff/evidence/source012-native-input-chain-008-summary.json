@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "status": "no-go-observed",
+  "errors": [],
+  "source": {
+    "functional_label": "source012",
+    "logical_manifest_sha256": "1594c6bf463556769c884144e00065e7337cdf93891794695ec18275563e42b7",
+    "base_011_manifest_sha256": "200835d735cc49630a37f64ec8f4e70d336e8e5bb944beaa643caf8d5c1bd822",
+    "diagnostic_build": 280534,
+    "attribute_candidate_included": false,
+    "diagnostic_snippet_included": false
+  },
+  "trusted_input": {
+    "source_pointerdown": true,
+    "feedback_commits": 19,
+    "first_failure": null,
+    "strict_65ms_rapid_covered": false,
+    "post_commit_to_next_input_ms_range": [547, 1161]
+  },
+  "frames": {
+    "count": 1228,
+    "max_ms": 72,
+    "p95_ms": 20,
+    "over_34ms": 37,
+    "target_shift_px": 0,
+    "prefix_shift_px": 0,
+    "final_settle_ms": 650
+  },
+  "runtime_quality": {
+    "existing_gpu_context": true,
+    "antialias": true,
+    "msaa_samples": 4,
+    "reduced_motion": false
+  },
+  "closure": {
+    "normal_quit": true,
+    "owned_processes_and_ports_cleared": true,
+    "wal_bytes": 0,
+    "sqlite_quick_check": "ok"
+  },
+  "original_private_receipt_sha256": "53c69438eafda9faf2c62509a59be2beb5db1683c127934d344ccbeaedad329e",
+  "limits": [
+    "This summary contains no private book text, screenshot, local absolute path, PID or port.",
+    "The measurement does not establish product root cause or stable improvement.",
+    "Physical trackpad, issue 53 page-turn frames, strict 65 ms rapid input and release approval remain unverified.",
+    "The rejected attribute optimization and temporary diagnostic snippet were fully reverted and are not product code.",
+    "Two Animation Hitches attempts ended at the CPU preflight gate before App or trace process creation."
+  ]
+}
