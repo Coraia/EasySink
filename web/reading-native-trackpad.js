@@ -30,9 +30,16 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
       !pages.r.scope.signal.aborted && document.hasFocus() && !document.hidden &&
       !document.activeElement?.closest('input,textarea,select,[contenteditable]'));
   }
-  function inPaper(target) {
-    return target instanceof Element && Boolean(target.closest('#reading-stage')) &&
-      !target.closest('a,input,textarea,select,[contenteditable],#reading-selection,#translation-pane,.inline-grammar,.annotation-pop,#tool-panel,#reader-chrome') &&
+  function inPaper(target, horizontal = false) {
+    if (!(target instanceof Element)) return false;
+    const card = target.closest('.annotation-pop');
+    if (card) {
+      // A word card is scrollable assistance, not a modal. Keep vertical card
+      // scrolling, but let a deliberate horizontal gesture turn the paper.
+      return horizontal;
+    }
+    if (!target.closest('#reading-stage')) return false;
+    return !target.closest('a,input,textarea,select,[contenteditable],#reading-selection,#translation-pane,.inline-grammar,#tool-panel,#reader-chrome') &&
       (!target.closest('button') || Boolean(target.closest('.reading-edge-grip')));
   }
   function gate() {
@@ -223,8 +230,9 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
         !Number.isInteger(e.phase) || e.phase < 0 || e.phase > 63 ||
         !Number.isInteger(e.momentum) || e.momentum < 0 || e.momentum > 63 ||
         !(e.phase || e.momentum)) return;
+    const horizontal = Boolean(active) || Math.abs(e.dx) > Math.abs(e.dy);
     if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.buttons || !allowed() ||
-        !inPaper(document.elementFromPoint(e.clientX, e.clientY))) {
+        !inPaper(document.elementFromPoint(e.clientX, e.clientY), horizontal)) {
       over = false; cancel('desktop-interaction-blocked'); return;
     }
     clientY = e.clientY; over = true;
@@ -240,7 +248,8 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
   }, options);
   document.addEventListener('wheel', e => {
     if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.buttons) { cancel('other-input'); return; }
-    if (!inPaper(e.target) || !allowed()) { over = false; cancel('interaction-blocked'); return; }
+    const horizontal = Boolean(active) || Math.abs(e.deltaX) > Math.abs(e.deltaY);
+    if (!inPaper(e.target, horizontal) || !allowed()) { over = false; cancel('interaction-blocked'); return; }
     clientY = e.clientY; over = true; gate();
     // Only horizontal page input is owned. Vertical scrolling and word cards survive.
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || active) {

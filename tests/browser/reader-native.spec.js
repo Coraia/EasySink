@@ -11,7 +11,16 @@ async function phase(page, phase, dx = 0, dy = 0, momentum = 0, handled = true) 
     ? await root.getAttribute('data-native-trackpad')
       .then(value => JSON.parse(value || '{}').events || 0)
     : 0;
-  page.__native.send(JSON.stringify({ source: 'e2e-phase-fixture', phase, dx, dy, momentum }));
+  if (page.__desktopNative) await page.evaluate(payload => {
+    const point = window.__e2eNativePointer || { clientX: innerWidth / 2, clientY: innerHeight / 2 };
+    window.dispatchEvent(new CustomEvent('wise-reader-native-trackpad', { detail: {
+      source: 'macOS-NSEvent', phase: payload.phase, dx: payload.dx, dy: payload.dy,
+      momentum: payload.momentum, clientX: point.clientX, clientY: point.clientY,
+      nativeTime: performance.now(), sequence: (window.__e2eNativeSequence = (window.__e2eNativeSequence || 0) + 1),
+      ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, buttons: 0,
+    } }));
+  }, {phase, dx, dy, momentum});
+  else page.__native.send(JSON.stringify({ source: 'e2e-phase-fixture', phase, dx, dy, momentum }));
   const publishes = (phase & (1 | 8 | 16)) || (momentum & 8);
   if (hasReader && handled && publishes) await expect.poll(async () => {
     const value = await page.locator('.reader').getAttribute('data-native-trackpad');
@@ -20,20 +29,40 @@ async function phase(page, phase, dx = 0, dy = 0, momentum = 0, handled = true) 
   else await page.waitForTimeout(40);
 }
 async function over(page) {
-  const box = await page.locator('#article').boundingBox();
-  await page.mouse.move(box.x + box.width * .7, box.y + box.height * .55);
+  const point = await page.evaluate(() => {
+    const article = document.querySelector('#article');
+    const box = article.getBoundingClientRect();
+    const blocked = 'button,a,input,textarea,select,[contenteditable],#reading-selection,#translation-pane,.inline-grammar,.annotation-pop,#tool-panel,#reader-chrome';
+    for (const y of [.2, .4, .6, .8]) for (const x of [.2, .4, .6, .8]) {
+      const clientX = box.left + box.width * x, clientY = box.top + box.height * y;
+      const target = document.elementFromPoint(clientX, clientY);
+      if (target?.closest('#reading-stage') && !target.closest(blocked)) return {clientX, clientY};
+    }
+    throw new Error('No unobstructed paper point');
+  });
+  await page.mouse.move(point.clientX, point.clientY);
 }
-async function prepared(page, request, layout = 'single') {
+async function prepared(page, request, layout = 'single', {desktop = false} = {}) {
   await page.addInitScript(layout => {
     localStorage.setItem('wr2:page-layout', JSON.stringify(layout));
     localStorage.setItem('wr2:page-motion', JSON.stringify('curl'));
   }, layout);
-  await page.route('**/api/reading/native-trackpad', route => route.fulfill({ json: {
-    available: true, platform: 'darwin', url: 'ws://127.0.0.1:8769/events?token=fixture' } }));
-  await page.routeWebSocket(/^ws:\/\/127\.0\.0\.1:8769\/events/, ws => {
-    page.__native = ws;
-    ws.send(JSON.stringify({ source: 'bridge-ready', monitorReady: true }));
-  });
+  if (desktop) {
+    page.__desktopNative = true;
+    await page.addInitScript(() => {
+      window.wiseReaderDesktop = {nativeTrackpad: true};
+      addEventListener('pointermove', event => {
+        window.__e2eNativePointer = {clientX: event.clientX, clientY: event.clientY};
+      }, {capture: true});
+    });
+  } else {
+    await page.route('**/api/reading/native-trackpad', route => route.fulfill({ json: {
+      available: true, platform: 'darwin', url: 'ws://127.0.0.1:8769/events?token=fixture' } }));
+    await page.routeWebSocket(/^ws:\/\/127\.0\.0\.1:8769\/events/, ws => {
+      page.__native = ws;
+      ws.send(JSON.stringify({ source: 'bridge-ready', monitorReady: true }));
+    });
+  }
   const doc = await (await request.post('/api/documents', { data: {
     title: 'Native trackpad production acceptance', text: Array(60).fill(body).join('\n\n') } })).json();
   await page.goto(`/?readingPerf=1#/read/${doc.id}`);
@@ -161,6 +190,38 @@ test('tools, zoom, Escape and disconnect do not commit a held page; a source sel
   expect(await pageIndex(page)).toBe(0);
   await page.locator('#reading-edge-next').click();
   await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '1');
+});
+test('an open word card keeps vertical card scrolling but its source word yields to horizontal paging', async ({ page, request }) => {
+  await prepared(page, request, 'single', {desktop: true});
+  const word = page.locator('#article [data-word="conviction"]').first();
+  await word.click();
+  const card = page.locator('.annotation-pop');
+  await expect(card).toBeVisible();
+  await card.evaluate(element => {
+    element.style.height = '180px';
+    element.style.overflow = 'auto';
+    const probe = document.createElement('div');
+    probe.style.height = '420px';
+    probe.dataset.scrollProbe = '';
+    element.append(probe);
+  });
+  expect(await card.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+  await card.hover({position: {x: 40, y: 120}});
+  const scrollTop = await card.evaluate(element => element.scrollTop);
+  await page.mouse.wheel(0, 180);
+  await expect.poll(() => card.evaluate(element => element.scrollTop)).toBeGreaterThan(scrollTop);
+  await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '0');
+  await expect(card).toBeVisible();
+  await phase(page, 1, 900);
+  await phase(page, 8);
+  await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '1');
+  await expect(card).toBeHidden();
+  await over(page);
+  await phase(page, 1, -900);
+  await phase(page, 8);
+  await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '0');
+  await word.click();
+  await expect(page.locator('.annotation-pop')).toBeVisible();
 });
 test('a queued native gesture waits less than 50ms for the preceding page to land', async ({ page, request }, info) => {
   await page.addInitScript(() => {

@@ -1334,6 +1334,10 @@ export class ReadingPages {
       boundaryWarm: Boolean(boundary && this.ranges.get(boundary.doc_id)?.packet),
     });
     this.animating = true;
+    // A page turn owns the transient assistance surface. Closing the card here
+    // leaves the selection/retained annotation data intact and prevents the
+    // overlay from swallowing later phases of the same horizontal gesture.
+    this.r.closePop();
     if (setup) {
       setup.previewCreatedAt = performance.now();
       this.painter.attachSetup = null;
