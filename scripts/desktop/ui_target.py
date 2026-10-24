@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 from dataclasses import asdict, dataclass
+from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
 import plistlib
+import subprocess
 from typing import Callable
 
 
@@ -20,7 +23,7 @@ class UITargetError(ValueError):
 class ProcessIdentity:
     pid: int
     executable: Path
-    started_at: float
+    started_at: str
     bundle_id: str
 
 
@@ -43,15 +46,23 @@ def bundle_info(executable: Path) -> dict[str, object]:
 def inspect_process(pid: int) -> ProcessIdentity:
     if pid <= 0:
         raise UITargetError("A positive existing PID is required.")
+    buffer = ctypes.create_string_buffer(4096)
     try:
-        import psutil
-    except ImportError as exc:
-        raise UITargetError("psutil is required to inspect an existing PID.") from exc
-    try:
-        process = psutil.Process(pid)
-        executable = Path(process.exe()).resolve(strict=True)
-        started_at = process.create_time()
-    except (OSError, psutil.Error) as exc:
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        libproc.proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+        libproc.proc_pidpath.restype = ctypes.c_int
+        length = libproc.proc_pidpath(pid, buffer, len(buffer))
+        if length <= 0:
+            raise OSError(ctypes.get_errno(), "proc_pidpath failed")
+        executable = Path(buffer.value.decode("utf-8")).resolve(strict=True)
+        result = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "lstart="], check=True,
+            text=True, capture_output=True, timeout=5)
+        started_at = result.stdout.strip()
+        if not started_at:
+            raise OSError("ps returned no start time")
+        datetime.strptime(started_at, "%a %b %d %H:%M:%S %Y")
+    except (OSError, subprocess.SubprocessError, UnicodeError, ValueError) as exc:
         raise UITargetError("The requested PID is not an inspectable running process.") from exc
     info = bundle_info(executable)
     bundle_id = info.get("CFBundleIdentifier")

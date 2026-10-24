@@ -17,7 +17,8 @@ def test_ui_target_requires_existing_matching_pid_hash_path_and_bundle(tmp_path:
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"frozen diagnostic executable")
     digest = hashlib.sha256(executable.read_bytes()).hexdigest()
-    identity = ProcessIdentity(8123, executable.resolve(), 123.5, "com.coraia.wisereader.diagnostic")
+    identity = ProcessIdentity(8123, executable.resolve(), "Thu Oct 23 18:00:00 2026",
+                               "com.coraia.wisereader.diagnostic")
 
     result = verify_existing_target(
         8123, executable, digest, identity.bundle_id, inspector=lambda pid: identity)
