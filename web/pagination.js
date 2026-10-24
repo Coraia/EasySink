@@ -519,9 +519,10 @@ export class ReadingPages {
     if(page.length)yield page;
   }
   async adjacent(direction, reason = "tap") {
+    if(this.r.popElement)return;
     const intent=this.navigation;
     if (this.wordReflow.pendingLayout || this.wordReflow.flushing) await this.wordReflow.flush();
-    if(this.r.scope.signal.aborted || intent!==this.navigation)return;
+    if(this.r.scope.signal.aborted || this.r.popElement || intent!==this.navigation)return;
     if (this.r.focus.isOpen() || this.animating || this.displayPending) return;
     const presentationOutside=this.presentationOutside(direction);
     const target = presentationOutside!==null ? this.index+direction*this.count : this.index > 0
@@ -542,6 +543,7 @@ export class ReadingPages {
     return this.turn(Math.max(0, target), true, reason);
   }
   accelerateTurn(direction, reason = "keyboard-held") {
+    if(this.r.popElement)return false;
     const preview = this.preview;
     if (!preview || preview.direction !== direction || preview.boundary ||
         !preview.session || preview.release?.reason !== "tap") return false;
@@ -1266,10 +1268,10 @@ export class ReadingPages {
     return local.get("page-light", true);
   }
   canGrab(ownPreview = false) {
-    // Input adapters exclude the card/tool targets. A card over the source is
-    // page-local assistance, not a modal reason to require a second gesture.
+    // Word-card input belongs to the card until the reader closes it.
     return (
       !this.r.scope.signal.aborted &&
+      !this.r.popElement &&
       !this.r.focus.isOpen() &&
       !this.r.aiSetupOpen &&
       !this.r.grammarInspecting &&
@@ -1334,7 +1336,8 @@ export class ReadingPages {
     return true;
   }
   beginTurn(direction, clientY, force = false) {
-    if(this.r.scope.signal.aborted)return null;
+    // Forced button/keyboard entry must obey the same word-card boundary.
+    if(this.r.scope.signal.aborted || this.r.popElement)return null;
     // A canonical reflow that already owns the document must finish first.
     // Pending (not-yet-started) work is safe: this turn freezes the current
     // presentation and either disposes it on commit or resumes it on cancel.
@@ -1386,16 +1389,9 @@ export class ReadingPages {
     });
     const turnRun=this.animationToken,turnPainter=this.painter,turnScene=turnPainter.scene;
     this.animating = true;
-    // A page turn owns the transient assistance surface. Closing the card here
-    // leaves the selection/retained annotation data intact and prevents the
-    // overlay from swallowing later phases of the same horizontal gesture.
-    const hadOpenCard=Boolean(this.r.popElement);
+    // The open-card guard has already passed; retire any pending lookup so
+    // its late response cannot open a card during this new turn.
     this.r.closePop();
-    // Warm textures can otherwise attach in the same task as removal. Give
-    // WKWebView one presentation boundary to retire the card's compositor
-    // layer before the first curl surface is attached.
-    const cardDismissed=hadOpenCard
-      ? new Promise(resolve=>requestAnimationFrame(()=>resolve())) : null;
     if (setup) {
       setup.previewCreatedAt = performance.now();
       this.painter.attachSetup = null;
@@ -1688,7 +1684,6 @@ export class ReadingPages {
       else if (!preview.raf) preview.raf = requestAnimationFrame(draw);
     };
     const prepare = async (source, index) => {
-      if(cardDismissed)await cardDismissed;
       if (!canAttach()) return;
       if (setup) setup.incomingStartedAt = performance.now();
       const frontIndex = currentSource.index + (direction > 0 ? this.count - 1 : 0),
@@ -1757,9 +1752,10 @@ export class ReadingPages {
     return session;
   }
   async turn(index, animate = false, reason = "tap") {
+    if(this.r.popElement)return;
     const intent=this.navigation;
     if (this.wordReflow.pendingLayout || this.wordReflow.flushing) await this.wordReflow.flush();
-    if(this.r.scope.signal.aborted || intent!==this.navigation)return;
+    if(this.r.scope.signal.aborted || this.r.popElement || intent!==this.navigation)return;
     if (
       this.displayPending ||
       this.animating ||
@@ -1774,11 +1770,12 @@ export class ReadingPages {
       if (
         navigation !== this.navigation ||
         generation !== this.generation ||
+        this.r.popElement ||
         this.r.scope.signal.aborted
       )
         return;
     }
-    if ((index >= this.pages.length && !this.annotationLayout && !this.presentedView) || this.r.scope.signal.aborted) return;
+    if ((index >= this.pages.length && !this.annotationLayout && !this.presentedView) || this.r.popElement || this.r.scope.signal.aborted) return;
     if (
       animate &&
       Math.abs(index - this.index) === this.count &&
@@ -1795,7 +1792,7 @@ export class ReadingPages {
     } else {
       if(this.annotationLayout || this.presentedView) {
         const source=await this.preparePresentation(Math.sign(index-this.index));
-        if(source && navigation===this.navigation && generation===this.generation && !this.r.scope.signal.aborted)this.commitPresentation(source);
+        if(source && navigation===this.navigation && generation===this.generation && !this.r.popElement && !this.r.scope.signal.aborted)this.commitPresentation(source);
       }else this.commitPage(index);
     }
   }

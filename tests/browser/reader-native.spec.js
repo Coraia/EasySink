@@ -55,7 +55,7 @@ async function overCardBody(page, card) {
   });
   await page.mouse.move(point.clientX, point.clientY);
 }
-async function prepared(page, request, layout = 'single', {desktop = false, text = null} = {}) {
+async function prepared(page, request, layout = 'single', {desktop = false, wheel = false, text = null} = {}) {
   await page.addInitScript(layout => {
     localStorage.setItem('wr2:page-layout', JSON.stringify(layout));
     localStorage.setItem('wr2:page-motion', JSON.stringify('curl'));
@@ -68,6 +68,8 @@ async function prepared(page, request, layout = 'single', {desktop = false, text
         window.__e2eNativePointer = {clientX: event.clientX, clientY: event.clientY};
       }, {capture: true});
     });
+  } else if (wheel) {
+    await page.route('**/api/reading/native-trackpad', route => route.fulfill({json: {available: false}}));
   } else {
     await page.route('**/api/reading/native-trackpad', route => route.fulfill({ json: {
       available: true, platform: 'darwin', url: 'ws://127.0.0.1:8769/events?token=fixture' } }));
@@ -81,7 +83,7 @@ async function prepared(page, request, layout = 'single', {desktop = false, text
   await page.goto(`/?readingPerf=1#/read/${doc.id}`);
   await expect(page.locator('.reader')).toHaveAttribute('data-document-id', String(doc.id));
   await expect(page.locator('.reader')).toHaveAttribute('data-ready', 'true');
-  await expect(page.locator('.reader')).toHaveAttribute('data-trackpad-mode', 'native');
+  await expect(page.locator('.reader')).toHaveAttribute('data-trackpad-mode', wheel ? 'wheel-compatibility' : 'native');
   await expect(page.locator('.reader')).toHaveAttribute('data-pagination-ready', 'true');
   await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
   await over(page);
@@ -209,17 +211,43 @@ test('tools, zoom, Escape and disconnect do not commit a held page; a source sel
   await page.locator('#reading-edge-next').click();
   await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '1');
 });
-test('an open word card keeps vertical card scrolling but its source word yields to horizontal paging', async ({ page, request }) => {
-  await prepared(page, request, 'single', {desktop: true});
-  const word = page.locator('#article [data-word="conviction"]').first();
-  await word.click();
+for (const wheel of [false, true]) test(`word card blocks every paging entry (${wheel ? 'wheel compatibility' : 'native phases'})`, async ({page, request}, info) => {
+  test.setTimeout(60000);
+  await prepared(page, request, 'single', {desktop: !wheel, wheel});
+  await page.locator('#reading-edge-next').click();
+  await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '1');
+  await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
+  await page.evaluate(() => {
+    const painter=document.querySelector('.reader').__curlRendererTest;
+    const attach=painter.attach.bind(painter);
+    window.__cardGuardScenes=0;
+    painter.attach=(...args)=>{window.__cardGuardScenes++;return attach(...args);};
+  });
   const card = page.locator('.annotation-pop');
-  await expect(card).toBeVisible();
-  await page.getByRole('button', {name: '关闭注释', exact: true}).hover();
-  await phase(page, 1, 900, 0, 0, false);
-  await phase(page, 8, 0, 0, 0, false);
-  await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '0');
-  await expect(card).toBeVisible();
+  const openCard=async()=>{
+    if(!await card.count()) await page.locator('#article [data-word="conviction"]').first().click();
+    await expect(card).toBeVisible();
+  };
+  const state=()=>page.evaluate(()=>{
+    const painter=document.querySelector('.reader').__curlRendererTest,p=painter.pages;
+    const a=p.r.captureView().visibleAnchor;
+    return {index:p.index,block:a.block_id,start:a.start,scene:Boolean(painter.scene),
+      scenes:window.__cardGuardScenes,animating:p.animating,card:Boolean(p.r.popElement)};
+  });
+  const checks=[];
+  const blocked=async(name,action)=>{
+    await openCard();const before=await state();
+    await action();await page.waitForTimeout(350);
+    const after=await state();checks.push({name,before,after});
+    expect({index:after.index,block:after.block,start:after.start,scenes:after.scenes})
+      .toEqual({index:before.index,block:before.block,start:before.start,scenes:before.scenes});
+    expect(after.scene).toBe(false);expect(after.animating).toBe(false);
+  };
+  await openCard();
+  const save=card.locator('[data-collection-word]');
+  await expect(save).toBeEnabled();await save.click();
+  await expect(save).toHaveAttribute('aria-pressed','true');
+  await expect(save).toBeEnabled();
   await card.evaluate(element => {
     element.style.height = '180px';
     element.style.overflow = 'auto';
@@ -233,18 +261,59 @@ test('an open word card keeps vertical card scrolling but its source word yields
   const scrollTop = await card.evaluate(element => element.scrollTop);
   await page.mouse.wheel(0, 180);
   await expect.poll(() => card.evaluate(element => element.scrollTop)).toBeGreaterThan(scrollTop);
-  await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '0');
-  await expect(card).toBeVisible();
-  await phase(page, 1, 900);
-  await phase(page, 8);
+  const scrolled=await card.evaluate(element=>element.scrollTop);
   await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '1');
+  await expect(card).toBeVisible();
+  if(!wheel) for(const location of ['card','paper']) for(const dx of [900,-900])
+    await blocked(`native ${location} ${dx}`,async()=>{
+      if(location==='card')await overCardBody(page,card);else await over(page);
+      await phase(page,1,dx,0,0,false);await phase(page,8,0,0,0,false);
+    });
+  for(const location of ['card','paper']) for(const dx of [900,-900])
+    await blocked(`wheel ${location} ${dx}`,async()=>{
+      if(location==='card')await overCardBody(page,card);else await over(page);
+      await page.mouse.wheel(dx,0);
+    });
+  for(const key of ['ArrowRight','ArrowLeft','PageDown','PageUp','Space'])
+    await blocked(`key ${key}`,async()=>{
+      await page.locator('#reading-edge-next').focus();await page.keyboard.press(key);
+    });
+  for(const direction of ['next','prev']) {
+    const edge=page.locator(`#reading-edge-${direction}`);
+    await blocked(`button ${direction}`,()=>edge.click());
+    await blocked(`keyboard button ${direction}`,async()=>{await edge.focus();await page.keyboard.press('Enter');});
+    await blocked(`drag ${direction}`,async()=>{
+      const box=await edge.boundingBox(),x=box.x+box.width/2,y=box.y+box.height/2;
+      await page.mouse.move(x,y);await page.mouse.down();
+      await page.mouse.move(x+(direction==='next'?-420:420),y,{steps:5});await page.mouse.up();
+    });
+  }
+  await blocked('forced and direct entries',()=>page.evaluate(async()=>{
+    const p=document.querySelector('.reader').__curlRendererTest.pages;
+    window.__forcedCardTurn=p.beginTurn(1,innerHeight/2,true)!==null;
+    await p.adjacent(1);await p.adjacent(-1);await p.turn(p.index+1,true);await p.turn(p.index-1,false);
+  }));
+  expect(await page.evaluate(()=>window.__forcedCardTurn)).toBe(false);
+  if(await card.count())await page.getByRole('button',{name:'关闭注释',exact:true}).click();
   await expect(card).toBeHidden();
-  await over(page);
-  await phase(page, 1, -900);
-  await phase(page, 8);
-  await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '0');
-  await word.click();
-  await expect(page.locator('.annotation-pop')).toBeVisible();
+  for(const [direction,index] of [['next',2],['prev',1]]) {
+    await page.locator(`#reading-edge-${direction}`).click();
+    await expect(page.locator('.reader')).toHaveAttribute('data-page-index',String(index));
+    await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm','true');
+  }
+  for(const [key,index] of [['ArrowRight',2],['ArrowLeft',1]]) {
+    await page.keyboard.press(key);
+    await expect(page.locator('.reader')).toHaveAttribute('data-page-index',String(index));
+    await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm','true');
+  }
+  for(const [dx,index] of [[900,2],[-900,1]]) {
+    await over(page);
+    if(wheel)await page.mouse.wheel(dx,0);else {await phase(page,1,dx);await phase(page,8);}
+    await expect(page.locator('.reader')).toHaveAttribute('data-page-index',String(index));
+    await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm','true');
+  }
+  await info.attach('word-card-paging-guard.json',{body:JSON.stringify({wheel,scrollTop,scrolled,checks,
+    afterClose:await state(),scope:'Synthetic browser data; native phases are fixtures, not physical trackpad evidence'},null,2),contentType:'application/json'});
 });
 for (const complete of [false, true]) test(`real annotation reflow preserves the ${complete ? 'landed' : 'cancelled'} source window`, async ({page, request}, info) => {
   test.setTimeout(60000);
@@ -264,8 +333,10 @@ for (const complete of [false, true]) test(`real annotation reflow preserves the
   if (await need.getAttribute('aria-pressed') !== 'true') await need.click();
   await expect(need).toHaveAttribute('aria-pressed', 'true');
   await expect(need).toBeEnabled();
-  // Keep the same chain as the WK failure: a real dirty update completes a
-  // turn, then another real update cancels/commits on that landed spread.
+  // The withdrawn open-card gesture now requires an explicit close. Keep
+  // real dirty mutations and the source-window/revision assertions below.
+  await page.getByRole('button', {name:'关闭注释', exact:true}).click();
+  await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm','true');
   await page.locator('#reading-edge-next').click();
   await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
   await expect.poll(() => page.evaluate(() => JSON.parse(document.querySelector('.reader').dataset.curlMetrics).at(-1).completed)).toBe(true);
@@ -343,6 +414,15 @@ for (const complete of [false, true]) test(`real annotation reflow preserves the
   expect(before.signature).not.toBe(clean.signature);
   expect(before.pending).toBe(true);
   expect(before.location).toBeTruthy();
+  await page.getByRole('button', {name:'关闭注释', exact:true}).click();
+  await expect(page.locator('.annotation-pop')).toBeHidden();
+  await expect.poll(()=>page.evaluate(()=>{
+    const p=document.querySelector('.reader').__curlRendererTest.pages;
+    return Boolean(p.wordReflow.pendingLayout || p.wordReflow.flushing || p.r.annotationRefreshPending || p.r.restoring);
+  })).toBe(false);
+  const afterClose=await page.evaluate(()=>window.__sourceWitness());
+  expect(afterClose.first.block_id).toBe(before.first.block_id);
+  expect(afterClose.first.start).toBe(before.first.start);
   const edge = await page.locator('#reading-edge-next').boundingBox();
   const x = edge.x + edge.width / 2, y = edge.y + edge.height / 2;
   await page.mouse.move(x, y); await page.mouse.down();
@@ -366,7 +446,7 @@ for (const complete of [false, true]) test(`real annotation reflow preserves the
       trace: window.__anchorRepro, metric: JSON.parse(root.dataset.curlMetrics).at(-1),
       annotations: p.activeAnnotations.filter(a => a.target === 'unaided').length};
   }, before);
-  await info.attach('semantic-anchor.json', {body: JSON.stringify({complete, clean, before, ...result}, null, 2), contentType: 'application/json'});
+  await info.attach('semantic-anchor.json', {body: JSON.stringify({complete, clean, before, afterClose, ...result}, null, 2), contentType: 'application/json'});
   await info.attach('semantic-anchor-stable.png', {body: await page.screenshot(), contentType: 'image/png'});
   expect(result.metric.completed).toBe(complete);
   expect(result.metric.reason).toBe(complete ? 'flick' : 'spring-back');
@@ -448,7 +528,9 @@ test('geometry coalescing and retired documents reject old annotation tickets', 
   await info.attach('geometry-and-retired-ticket.json',{body:JSON.stringify({geometry,retired},null,2),contentType:'application/json'});
 });
 
-test('double spread keeps the physical turn face and source continuity with cards on either leaf', async ({ page, request }, info) => {
+// Retained historical reproduction only: open-card paging was withdrawn.
+// The active guard and close-before-turn anchor cases above replace this contract.
+test.skip('double spread keeps the physical turn face and source continuity with cards on either leaf', async ({ page, request }, info) => {
   test.setTimeout(60000);
   const theology = Array.from({length: 72}, (_, index) =>
     `SOURCE SECTION ${String(index).padStart(2, '0')}. The small research team prepared a plan for the harbor, ` +
