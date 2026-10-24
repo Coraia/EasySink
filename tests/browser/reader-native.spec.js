@@ -277,12 +277,18 @@ test('double spread keeps the physical turn face and source continuity with card
       };
       return texture;
     };
-    const reader = renderer.pages.r, closePop = reader.closePop.bind(reader), attach = renderer.attach.bind(renderer),
-      reflow = renderer.pages.wordReflow, flush = reflow.flush.bind(reflow);
-    window.__faceRepro = {closes: [], attaches: [], flushes: 0};
+    const pages = renderer.pages, reader = pages.r, closePop = reader.closePop.bind(reader),
+      attach = renderer.attach.bind(renderer), reflow = pages.wordReflow,
+      flush = reflow.flush.bind(reflow), paginate = pages.reflow.bind(pages);
+    window.__faceRepro = {closes: [], attaches: [], flushes: 0, reflows: 0, reflowReasons: []};
     reflow.flush = (...args) => {
       window.__faceRepro.flushes++;
       return flush(...args);
+    };
+    pages.reflow = (...args) => {
+      window.__faceRepro.reflows++;
+      window.__faceRepro.reflowReasons.push(args[1]?.reason || null);
+      return paginate(...args);
     };
     reader.closePop = () => {
       const before = {at: performance.now(), connected: Boolean(reader.popElement?.isConnected),
@@ -345,6 +351,22 @@ test('double spread keeps the physical turn face and source continuity with card
         end: Number(node.dataset.sourceEnd), rect: {left: box.left, top: box.top, width: box.width, height: box.height}};
     }, side);
   };
+  const projectAnnotationChange = label => page.evaluate(async label => {
+    const pages = document.querySelector('.reader').__curlRendererTest.pages,
+      focus = pages.wordReflow.anchor,
+      index = pages.activeAnnotations.findIndex(item =>
+        item.block.id !== focus.block_id || item.start > focus.start || item.end < focus.end);
+    if (index < 0) throw new Error('fixture needs a second visible annotation');
+    const current = pages.activeAnnotations[index], changed = {...current, note: `${current.note} ${label}`};
+    pages.activeAnnotations[index] = changed;
+    const registry = pages.r.annotations.indexOf(current);
+    if (registry >= 0) pages.r.annotations[registry] = changed;
+    await pages.wordReflow.update();
+    // Repeated uncovered notifications must merge into one canonical reflow.
+    pages.r.emit('reading-uncovered');
+    pages.r.emit('reading-uncovered');
+    return {pending: Boolean(pages.wordReflow.pendingLayout), reflows: window.__faceRepro.reflows};
+  }, label);
   const heldScene = () => page.evaluate(() => {
     const root = document.querySelector('.reader'), renderer = root.__curlRendererTest,
       scene = renderer.scene, article = document.querySelector('#article').getBoundingClientRect(),
@@ -397,10 +419,9 @@ test('double spread keeps the physical turn face and source continuity with card
     await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
     const before = {index: baseIndex, sourcePosition: await sourcePosition(), leaves: await leafContent(),
       warmPlan: JSON.parse(await page.locator('.reader').getAttribute('data-curl-warm-plan'))};
-    const cardTarget = await openCard(item.card);
-    if (item.pendingReflow) await page.evaluate(() => {
-      document.querySelector('.reader').__curlRendererTest.pages.wordReflow.pendingLayout ||= {reconcile: true};
-    });
+    const reflowsBefore = await page.evaluate(() => window.__faceRepro.reflows),
+      cardTarget = await openCard(item.card);
+    if (item.pendingReflow) expect((await projectAnnotationChange(item.name)).pending).toBe(true);
     let pointerStart;
     if (cardTarget) {
       await overCardBody(page, page.locator('.annotation-pop'));
@@ -412,6 +433,7 @@ test('double spread keeps the physical turn face and source continuity with card
     await expect.poll(async () => page.evaluate(() => Boolean(
       document.querySelector('.reader').__curlRendererTest.scene))).toBe(true);
     await expect.poll(async () => page.locator('#page-curl-layer').getAttribute('data-pin')).not.toBeNull();
+    await expect(page.locator('#page-curl-layer')).toHaveCSS('opacity', '1');
     await expect(page.locator('.annotation-pop')).toBeHidden();
     const initial = await heldScene(), initialTarget = await anchorLocation(cardTarget);
     await info.attach(`${item.name}-initial.png`, {body: await page.screenshot(), contentType: 'image/png'});
@@ -437,6 +459,7 @@ test('double spread keeps the physical turn face and source continuity with card
     if (cardTarget) expect(cardTarget.actualSide).toBe(item.card);
     await phase(page, 8);
     await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+    await expect(page.locator('#page-curl-layer')).toHaveCSS('opacity', '0');
     const landedIndex = Number(await page.locator('.reader').getAttribute('data-page-index'));
     expect(item.direction > 0 ? landedIndex > baseIndex : landedIndex < baseIndex).toBe(true);
     const after = {index: landedIndex, sourcePosition: await sourcePosition(), leaves: await leafContent()};
@@ -457,28 +480,32 @@ test('double spread keeps the physical turn face and source continuity with card
       const pages = document.querySelector('.reader').__curlRendererTest.pages;
       return {pending: Boolean(pages.wordReflow.pendingLayout), flushing: Boolean(pages.wordReflow.flushing)};
     })).toEqual({pending: false, flushing: false});
+    // A completed presentation turn carries the changed layout forward; it
+    // must not additionally rebuild canonical pagination. Pure card turns are
+    // likewise presentation-only.
+    expect(await page.evaluate(() => window.__faceRepro.reflows)).toBe(reflowsBefore);
     evidence.push({...item, cardTarget, pointerStart, initial, initialTarget, held, heldTarget,
       before, after, returned});
   }
   // A short gesture exercises the other half of the ownership contract:
   // cancellation must hand the frozen presentation back to canonical reflow.
-  const cancelTarget = await openCard('right'), cancelFlushes = await page.evaluate(() => {
-    const before = window.__faceRepro.flushes;
-    document.querySelector('.reader').__curlRendererTest.pages.wordReflow.pendingLayout ||= {reconcile: true};
-    return before;
-  });
+  const cancelTarget = await openCard('right'), cancelFlushes = await page.evaluate(() => window.__faceRepro.flushes),
+    cancelDirty = await projectAnnotationChange('cancel'), cancelReflows = cancelDirty.reflows;
+  expect(cancelDirty.pending).toBe(true);
   await overCardBody(page, page.locator('.annotation-pop'));
   await phase(page, 1, 13);
   await expect.poll(async () => page.evaluate(() => Boolean(
     document.querySelector('.reader').__curlRendererTest.scene))).toBe(true);
   await phase(page, 8);
   await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+  await expect(page.locator('#page-curl-layer')).toHaveCSS('opacity', '0');
   await expect(page.locator('.reader')).toHaveAttribute('data-page-index', String(baseIndex));
   await expect.poll(() => page.evaluate(() => {
     const pages = document.querySelector('.reader').__curlRendererTest.pages;
     return {animating: pages.animating, pending: Boolean(pages.wordReflow.pendingLayout),
       flushing: Boolean(pages.wordReflow.flushing), flushes: window.__faceRepro.flushes};
   })).toEqual({animating: false, pending: false, flushing: false, flushes: cancelFlushes + 1});
+  expect(await page.evaluate(() => window.__faceRepro.reflows)).toBe(cancelReflows + 1);
   const cancelled = await sourcePosition();
   expect(cancelled.block_id).toBe(basePosition.block_id);
   expect(cancelled.start).toBe(basePosition.start);
@@ -490,17 +517,19 @@ test('double spread keeps the physical turn face and source continuity with card
     const pages = document.querySelector('.reader').__curlRendererTest.pages;
     window.__faceRepro.preparePresentation = pages.preparePresentation;
     pages.preparePresentation = async () => { throw new Error('fixture presentation failure'); };
-    pages.wordReflow.pendingLayout ||= {reconcile: true};
     return window.__faceRepro.flushes;
-  });
+  }), errorDirty = await projectAnnotationChange('error'), errorReflows = errorDirty.reflows;
+  expect(errorDirty.pending).toBe(true);
   await overCardBody(page, page.locator('.annotation-pop'));
   await phase(page, 1, 13);
   await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+  await expect(page.locator('#page-curl-layer')).toHaveCSS('opacity', '0');
   await expect.poll(() => page.evaluate(() => {
     const pages = document.querySelector('.reader').__curlRendererTest.pages;
     return {index: pages.index, pending: Boolean(pages.wordReflow.pendingLayout),
       flushing: Boolean(pages.wordReflow.flushing), flushes: window.__faceRepro.flushes};
   })).toEqual({index: baseIndex, pending: false, flushing: false, flushes: errorFlushes + 1});
+  expect(await page.evaluate(() => window.__faceRepro.reflows)).toBe(errorReflows + 1);
   await page.evaluate(() => {
     const pages = document.querySelector('.reader').__curlRendererTest.pages;
     pages.preparePresentation = window.__faceRepro.preparePresentation;
@@ -513,12 +542,13 @@ test('double spread keeps the physical turn face and source continuity with card
   // late. No retired turn may attach a canvas after its run/scope changed.
   const abortTarget = await openCard('right');
   await overCardBody(page, page.locator('.annotation-pop'));
+  const abortDirty = await projectAnnotationChange('abort');
+  expect(abortDirty.pending).toBe(true);
   const abortBefore = await page.evaluate(() => {
     const renderer = document.querySelector('.reader').__curlRendererTest,
       nativeFrame = window.requestAnimationFrame.bind(window);
-    renderer.pages.wordReflow.pendingLayout ||= {reconcile: true};
     window.__staleCardFrame = {renderer, nativeFrame, callback: null,
-      attaches: window.__faceRepro.attaches.length};
+      attaches: window.__faceRepro.attaches.length, reflows: window.__faceRepro.reflows};
     window.requestAnimationFrame = callback => {
       if (!window.__staleCardFrame.callback) {
         window.__staleCardFrame.callback = callback;
@@ -526,7 +556,7 @@ test('double spread keeps the physical turn face and source continuity with card
       }
       return nativeFrame(callback);
     };
-    return {attaches: window.__staleCardFrame.attaches};
+    return {attaches: window.__staleCardFrame.attaches, reflows: window.__staleCardFrame.reflows};
   });
   await phase(page, 1, 13);
   await expect.poll(() => page.evaluate(() => Boolean(window.__staleCardFrame.callback))).toBe(true);
@@ -538,10 +568,12 @@ test('double spread keeps the physical turn face and source continuity with card
     await new Promise(resolve => state.nativeFrame(() => state.nativeFrame(resolve)));
     return {aborted: pages.r.scope.signal.aborted, scene: Boolean(state.renderer.scene),
       attaches: window.__faceRepro.attaches.length,
+      reflows: window.__faceRepro.reflows,
+      opacity: state.renderer.layer.style.opacity,
       pending: Boolean(pages.wordReflow.pendingLayout), flushing: Boolean(pages.wordReflow.flushing)};
   });
   expect(aborted).toEqual({aborted: true, scene: false, attaches: abortBefore.attaches,
-    pending: false, flushing: false});
+    reflows: abortBefore.reflows, opacity: '0', pending: false, flushing: false});
   evidence.push({name: 'right-card-next-abort', cardTarget: abortTarget, ...aborted});
   await info.attach('double-spread-face-source-continuity.json', {
     body: JSON.stringify(evidence, null, 2), contentType: 'application/json',

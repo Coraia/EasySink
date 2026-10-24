@@ -252,6 +252,10 @@ export class ReadingPages {
     delete $(".reader")?.dataset.pageTurning;
     clearTimeout(this.animationTimeout);
     this.animationToken = (this.animationToken || 0) + 1;
+    // A mounted WebGL canvas can retain its last submitted stationary face in
+    // WKWebView after gl.clear(). Remove it from composition synchronously;
+    // the next valid turn reveals the same retained surface after its first draw.
+    if(this.painter.layer)this.painter.layer.style.opacity="0";
     this.painter.finish();
     this.animating = false;
     this.wordReflow?.resumeAfterTurn();
@@ -1340,6 +1344,7 @@ export class ReadingPages {
     });
     const turnRun=this.animationToken,turnPainter=this.painter,turnScene=turnPainter.scene;
     this.animating = true;
+    if(turnPainter.layer)turnPainter.layer.style.opacity="0";
     // A page turn owns the transient assistance surface. Closing the card here
     // leaves the selection/retained annotation data intact and prevents the
     // overlay from swallowing later phases of the same horizontal gesture.
@@ -1363,6 +1368,10 @@ export class ReadingPages {
       turnRun === this.animationToken &&
       !this.r.scope.signal.aborted;
     const canAttach = () => valid() && this.painter===turnPainter && turnPainter.scene===turnScene;
+    const drawTurn = (...args) => {
+      this.painter.draw(...args);
+      if(valid() && this.painter.scene && this.painter.layer)this.painter.layer.style.opacity="1";
+    };
     const done = (complete, reason) => {
       if (!valid()) return;
       this.painter.record(complete, reason, preview.requested, preview.settle, preview.setup);
@@ -1393,7 +1402,7 @@ export class ReadingPages {
             Math.sign(delta) * Math.min(0.06, Math.abs(delta));
           preview.following = Math.abs(delta) > 0.06;
         }
-        this.painter.draw(
+        drawTurn(
           preview.progress,
           preview.grab,
           preview.dy,
@@ -1489,7 +1498,7 @@ export class ReadingPages {
         preview.dy = dy * (1 - ease);
         // A release may cancel a queued input frame. Preserve that input's
         // latency evidence on the first settling draw instead of losing it.
-        this.painter.draw(preview.progress, preview.grab, preview.dy, preview.inputAt, "settling");
+        drawTurn(preview.progress, preview.grab, preview.dy, preview.inputAt, "settling");
         preview.inputAt = 0;
         if (t < 1 || !confirmed || Math.abs(to - preview.progress) > 0.00001)
           preview.raf = requestAnimationFrame(frame);
@@ -1549,7 +1558,7 @@ export class ReadingPages {
         preview.raf = 0;
         preview.progress = release.complete ? 1 : 0;
         preview.dy = 0;
-        this.painter.draw(preview.progress, preview.grab, 0, preview.inputAt, "settling");
+        drawTurn(preview.progress, preview.grab, 0, preview.inputAt, "settling");
         preview.inputAt = 0;
         done(release.complete, release.reason);
       },

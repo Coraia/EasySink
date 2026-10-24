@@ -23,7 +23,6 @@ export class AnnotationReflow {
       }
     });
     pages.r.on('reading-uncovered',()=>{
-      if(this.pendingLayout) pages.invalidateLayout();
       this.resumeAfterTurn();
     });
   }
@@ -145,8 +144,11 @@ export class AnnotationReflow {
       // A page turn owns the visible presentation. Canonical reflow calls
       // finishAnimation(), so running it here would cancel that active turn.
       if(this.pages.animating) {this.flushTimer=setTimeout(run,16);return;}
-      if(this.pendingLayout || this.signature) void this.flush();
-      else {this.dispose();this.pages.painter.warm();}
+      // A remembered endpoint is not dirty. Only an unpublished canonical
+      // layout may request pagination; opening/closing a word card and turning
+      // a page must otherwise stay presentation-only.
+      if(this.pendingLayout) void this.flush();
+      else if(!this.flushing) {this.dispose();this.pages.painter.warm();}
     };
     this.flushTimer=setTimeout(run,0);
   }
@@ -803,7 +805,9 @@ export class AnnotationReflow {
     if(!this.pendingLayout || !this.eligible()) return;
     this.pendingLayout=null;
     const serial=this.flushSerial=this.serial;
-    const started=this.pages.reflow(this.pages.position(),{keepDOM:true,reason:'annotation',reuseEpoch:true});
+    // This is the single invalidation boundary for a queued annotation layout.
+    // Repeated uncovered/turn-exit events are merged by pendingLayout/flushing.
+    const started=this.pages.reflow(this.pages.position(),{keepDOM:true,reason:'annotation'});
     const flow=this.pages.flowReady;
     const pending=(async()=>{
       const landed=await started,complete=landed && await flow;
