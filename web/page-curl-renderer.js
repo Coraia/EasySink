@@ -1162,11 +1162,14 @@ export class PageCurlRenderer {
     cancelAnimationFrame(this.raf);
     this.scene = null;
     this.pendingTextures = [];
-    // Detach before clearing. CSS hidden/opacity alone does not reliably retire
-    // a WKWebView WebGL IOSurface, and can leave its stationary page visible
-    // over the already-correct canonical DOM after a cancelled turn.
-    this.canvas.remove();
+    // CSS hidden/opacity and even DOM detachment do not reliably retire a
+    // WKWebView WebGL IOSurface. Clear and release the drawing buffer while the
+    // context is still live, then detach it; warm() may allocate a transparent
+    // buffer off-DOM for the next turn without retaining this landed face.
     this.clearSurface();
+    if (this.gl && !this.gl.isContextLost()) this.gl.flush();
+    this.canvas.width = this.canvas.height = 0;
+    this.canvas.remove();
     for (const child of [...this.layer.children]) if (child !== this.canvas) child.remove();
     delete this.layer.dataset.pin;
     delete this.layer.dataset.binding;
