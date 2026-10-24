@@ -36,7 +36,7 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
     if (card) {
       // A word card is scrollable assistance, not a modal. Keep vertical card
       // scrolling, but let a deliberate horizontal gesture turn the paper.
-      return horizontal;
+      return horizontal && !target.closest('a,button,input,textarea,select,[contenteditable]');
     }
     if (!target.closest('#reading-stage')) return false;
     return !target.closest('a,input,textarea,select,[contenteditable],#reading-selection,#translation-pane,.inline-grammar,#tool-panel,#reader-chrome') &&

@@ -26,8 +26,8 @@ from resource_policy import native_clone, preflight
 ROOT = Path(__file__).resolve().parents[2]
 ICON = ROOT / "desktop/Assets/EasySink.icns"
 VERSION = "1.3.0"
-BUILD = "30"
-RELEASE_STATUS = "Presentation warm safety fix; native performance not formally released."
+BUILD = "31"
+RELEASE_STATUS = "Word-card horizontal paging safety fix; native performance not formally released."
 PDFJS_ROOT = ROOT / "web/prototypes/pdf-lab/vendor/pdfjs-6.4.299"
 PDFJS_MANIFEST = PDFJS_ROOT / "SOURCE.json"
 PDF_PINS = {

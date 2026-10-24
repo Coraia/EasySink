@@ -42,6 +42,19 @@ async function over(page) {
   });
   await page.mouse.move(point.clientX, point.clientY);
 }
+async function overCardBody(page, card) {
+  const point = await card.evaluate(element => {
+    const box = element.getBoundingClientRect();
+    for (const y of [.2, .4, .6, .8]) for (const x of [.2, .4, .6, .8]) {
+      const clientX = box.left + box.width * x, clientY = box.top + box.height * y;
+      const target = document.elementFromPoint(clientX, clientY);
+      if (element.contains(target) && !target.closest('a,button,input,textarea,select,[contenteditable]'))
+        return {clientX, clientY};
+    }
+    throw new Error('No non-control word-card point');
+  });
+  await page.mouse.move(point.clientX, point.clientY);
+}
 async function prepared(page, request, layout = 'single', {desktop = false} = {}) {
   await page.addInitScript(layout => {
     localStorage.setItem('wr2:page-layout', JSON.stringify(layout));
@@ -197,6 +210,11 @@ test('an open word card keeps vertical card scrolling but its source word yields
   await word.click();
   const card = page.locator('.annotation-pop');
   await expect(card).toBeVisible();
+  await page.getByRole('button', {name: '关闭注释', exact: true}).hover();
+  await phase(page, 1, 900, 0, 0, false);
+  await phase(page, 8, 0, 0, 0, false);
+  await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '0');
+  await expect(card).toBeVisible();
   await card.evaluate(element => {
     element.style.height = '180px';
     element.style.overflow = 'auto';
@@ -206,7 +224,7 @@ test('an open word card keeps vertical card scrolling but its source word yields
     element.append(probe);
   });
   expect(await card.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
-  await card.hover({position: {x: 40, y: 120}});
+  await overCardBody(page, card);
   const scrollTop = await card.evaluate(element => element.scrollTop);
   await page.mouse.wheel(0, 180);
   await expect.poll(() => card.evaluate(element => element.scrollTop)).toBeGreaterThan(scrollTop);
