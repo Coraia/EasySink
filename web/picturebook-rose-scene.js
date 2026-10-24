@@ -466,7 +466,15 @@ export async function createRoseScene({ host, signal, onError }) {
       move("seated", waterPose ? 0 : moment.pose === "seated" ? 1 : 0, 5);
       move("standing", waterPose ? 0 : moment.pose === "standing" ? 1 : 0, 5);
       move("globe", action === "globe" ? 1 : moment.globe, 2.5);
-      move("screen", action === "screen" ? 1 : moment.screen, 2.5);
+      move(
+        "screen",
+        moment.allowScreen === false
+          ? 0
+          : action === "screen"
+            ? 1
+            : moment.screen,
+        2.5,
+      );
       move(
         "night",
         action === "night" ? 1 : action === "sunrise" ? 0 : moment.night,

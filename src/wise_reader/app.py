@@ -23,6 +23,7 @@ from wise_reader.plugins import PluginContext, mount_plugins
 from wise_reader.plugins.importer import start_url_import
 from wise_reader.profile import DOMAINS, EXAM_VOCAB
 from wise_reader.picturebook import register_picturebook
+from wise_reader.picturebook_edition import children_document_ids
 from wise_reader.reading_assist import close_assistance, register as register_reading_assist
 from wise_reader.settings import ROOT, Settings
 from wise_reader.store import Store, _now
@@ -135,7 +136,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if errors:
             raise BaseExceptionGroup("Application lifecycle failed", errors)
 
-    app = FastAPI(title="Wise Reader", lifespan=lifespan)
+    app = FastAPI(title="EasySink", lifespan=lifespan)
     app.state.engine = engine
     app.state.store = store
     app.state.tester = tester
@@ -147,7 +148,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"ok": True, "version": "0.2.0", "product_version": "1.2.0", "web_revision": "20261018-keyboard-paging-tuned"}
+        return {"ok": True, "version": "0.2.0", "product_version": "1.3.0", "web_revision": "20261023-product-restore"}
 
     @app.get("/api/jobs")
     def job_list():
@@ -230,11 +231,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/documents")
     def list_documents():
         archived = {r["doc_id"] for r in store.query("SELECT doc_id FROM wr_archive")}
+        children = children_document_ids(store)
         result = []
         committer = getattr(app.state, "url_committer", None)
-        for row in store.list_documents():
-            with URLCommitter.document_access(store, row['id'], committer) as info:
-                result.append({**row, 'archived': row['id'] in archived, **(info or {})})
+        for row in URLCommitter.list_documents(store, committer):
+            result.append({**row, 'archived': row['id'] in archived,
+                           'reading_space': 'children' if row['id'] in children else 'standard'})
         return result
 
     @app.get("/api/documents/{doc_id}")
@@ -251,6 +253,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     code = {'source_removed': 410, 'unavailable': 409}.get(state, 503)
                     return JSONResponse(info, status_code=code, headers={'Cache-Control': 'private, no-store'})
                 result = engine.present(doc_id, profile, density=density, compact=compact)
+                child_book = store.query_one(
+                    "SELECT b.id FROM wr_chapter c JOIN wr_book b ON b.id=c.book_id"
+                    " WHERE c.doc_id=? AND b.source LIKE 'picturebook:%' LIMIT 1", (doc_id,))
+                result["reading_space"] = "children" if doc_id in children_document_ids(store) else "standard"
+                result["children_book_id"] = child_book["id"] if child_book else None
                 if info is not None:
                     result.update(info)
                 pdf = getattr(app.state, "pdf", None)

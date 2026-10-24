@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
@@ -34,6 +35,9 @@ class Snapshot(BaseModel):
     my_meaning: str = Field(default="", max_length=20000)
     body: str = Field(default="", max_length=100000)
     understood: StrictBool | None = None
+    annotation_preference: Literal["known", "need", "auto"] | None = None
+    usage: dict | None = None
+    preference_note: str = Field(default="", max_length=12000)
     retained: StrictBool = False
     note: str = Field(default="", max_length=12000)
     detail: str = Field(default="", max_length=12000)
@@ -318,6 +322,10 @@ def validate_import(data):
                 raise HTTPException(422, "记录种类与分组不一致")
             if category != "notes" and (not parsed.anchor or parsed.anchor.kind != "text" or parsed.quote != parsed.anchor.quote or not parsed.quote.strip()):
                 raise HTTPException(422, "收藏或反馈缺少有效文字快照")
+            if parsed.usage is not None:
+                from wise_reader.usage_feedback import valid_usage
+                if not valid_usage(parsed.usage, parsed.quote):
+                    raise HTTPException(422, "适用表达与反馈原文不一致")
             if category == "notes" and not parsed.body.strip():
                 raise HTTPException(422, "导入笔记不能为空")
             if category != "notes":

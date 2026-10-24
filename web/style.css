@@ -1034,7 +1034,8 @@ body.reading #app {
   left: 0;
   color: var(--accent);
 }
-.annotation {
+.annotation,
+.annotation-slot {
   cursor: pointer;
   border-radius: 3px;
   border-bottom: 1px dotted var(--gloss);
@@ -1044,7 +1045,8 @@ body.reading #app {
 .annotation:focus {
   background: var(--accent-soft);
 }
-.gloss {
+.gloss,
+.annotation-gloss-space {
   font-family: -apple-system, "PingFang SC", sans-serif;
   font-size: max(14px, 0.64em);
   color: var(--gloss);
@@ -1053,11 +1055,13 @@ body.reading #app {
   line-height: 1.4;
   user-select: none;
 }
-.gloss:before {
+.gloss:before,
+.annotation-gloss-space:before {
   content: "〈";
   opacity: 0.6;
 }
-.gloss:after {
+.gloss:after,
+.annotation-gloss-space:after {
   content: "〉";
   opacity: 0.6;
 }
@@ -1830,11 +1834,24 @@ dialog::backdrop {
   margin-top: 12px;
 }
 
-.annotation[data-kind="word"] {
+.annotation[data-kind="word"],
+.annotation-slot[data-kind="word"] {
   display: inline-block;
   max-width: 100%;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+.annotation-slot {
+  position: relative;
+}
+.annotation-gloss-space {
+  visibility: hidden;
+}
+.annotation-gloss-update {
+  position: absolute;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 /* Bookmarks belong to source blocks and never enter selected or spoken text. */
 #article .table-row {
@@ -2661,6 +2678,28 @@ body.paged-reading #app {
   background: var(--paper);
   border: 1px solid var(--border);
 }
+.paged-reader .translation-heading {
+  position: sticky;
+  top: 0;
+  z-index: 41;
+  background: var(--paper);
+}
+.translation-heading [data-close-translation] {
+  min-width: 36px;
+  min-height: 36px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.translation-heading [data-close-translation] svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .paged-reader .has-translation .reading-spread {
   min-height: 0;
   min-width: 0;
@@ -3404,4 +3443,86 @@ dialog.ai-reading-dialog[open] {
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+}
+
+/* Single word cards and range actions share compact, labeled action icons. */
+.annotation-pop { padding:16px 18px; }
+.word-card-title { display:flex;align-items:center;gap:6px; }
+.word-card-title h3 { flex:1;min-width:0;overflow-wrap:anywhere;margin:0; }
+.annotation-pop .word-card-title .close { position:static;flex:none;width:30px;height:30px;display:grid;place-items:center; }
+.annotation-pop svg,.reading-selection svg { width:18px;height:18px;flex-shrink:0; }
+.annotation-pop button { display:inline-flex;align-items:center;justify-content:center;gap:5px; }
+.annotation-pop > .meta { font-size:11px;margin:6px 0;color:var(--muted); }
+.annotation-pop p { margin:6px 0 10px; }
+.annotation-pop .word-save-action { padding:5px 6px;font-size:11px;border:0;background:transparent; }
+.annotation-pop .word-save-action[aria-pressed="true"] { color:var(--accent);background:var(--accent-soft); }
+.annotation-pop .word-pronunciation { margin:3px 0 6px;gap:8px; }
+.annotation-pop .word-pronunciation button { border:0;padding:4px 6px;font-size:11px; }
+.annotation-pop .dictionary-senses { margin:5px 0 8px;padding-left:0;list-style:none; }
+.annotation-pop .dictionary-caption,.annotation-pop .dictionary-full summary { font-size:11px; }
+.annotation-pop .dictionary-full { margin-top:4px; }
+.annotation-pop .word-context { display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 8px;margin-top:10px; }
+.annotation-pop .word-context h4 { margin:0;align-self:center;font-size:13px;grid-area:1/1; }
+.annotation-pop [data-context-generate],.annotation-pop [data-context-regenerate] { grid-area:1/2;padding:6px 8px;font-size:12px; }
+.annotation-pop .word-context > :not(h4):not([data-context-generate]):not([data-context-regenerate]) { grid-column:1/-1; }
+.annotation-pop [data-context-status]:empty { display:none; }
+.paged-reader .reading-selection { padding:7px;background:var(--ink);color:var(--paper);border:0;border-radius:12px;max-width:min(568px,calc(100vw - 24px)); }
+.paged-reader .selection-actions { display:flex;flex-wrap:wrap;gap:2px; }
+.paged-reader .selection-actions button { display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1 0 54px;gap:6px;color:inherit;background:transparent;border:0;padding:8px 5px;font-size:12px;min-height:58px; }
+.paged-reader .selection-actions button:hover,.paged-reader .selection-actions button[aria-pressed="true"] { background:color-mix(in srgb,var(--paper) 17%,transparent);color:inherit; }
+.paged-reader .selection-actions[hidden] { display:none; }
+@media (pointer:coarse) { .annotation-pop button { min-height:44px; } }
+.annotation-pop .word-card-title h3 { line-height:1.2; }
+.annotation-pop[data-annotation-source="dictionary"] > .meta { display:none; }
+.annotation-pop .dictionary-candidates { margin:6px 0; }
+.annotation-pop .word-context > [data-context-result]:empty,.annotation-pop .word-context > [data-context-history]:empty { display:none; }
+.annotation-pop .word-gloss-detail { font-size:11px;margin:5px 0; }
+@media (max-width:600px) { .paged-reader .selection-actions { display:grid;grid-template-columns:repeat(4,minmax(0,1fr)); } }
+
+/* Native word-action flow: real source once; inert compositor copies only while moving. */
+.annotation-reflow-measure { position:fixed;visibility:hidden;pointer-events:none;column-fill:auto;z-index:-1; }
+.annotation-reflow-measure [data-block] { margin:0 0 1.15em;widows:1;orphans:1; }
+.annotation-reflow-measure .annotation { display:inline; }
+.reflow-glyph-note::before,.reflow-glyph-note::after,.reflow-note-piece::before,.reflow-note-piece::after { content:none; }
+.annotation-reflow-leaf { position:relative;overflow:hidden; }
+.reflow-piece { position:absolute;display:inline-block!important;white-space:pre!important;margin:0!important;padding:0!important;border:0!important;line-height:normal!important;pointer-events:auto; }
+.reflow-note-piece { user-select:none; }
+.reflow-moving { color:transparent!important;text-shadow:none!important; }
+.annotation-reflow-ghosts { position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:2; }
+.reflow-motion-group { position:absolute;will-change:transform,opacity;contain:layout style;pointer-events:none; }
+.annotation-reflow-ghosts .reflow-piece { pointer-events:none;user-select:none; }
+.reflow-prefix-space { font:inherit!important;letter-spacing:inherit!important;padding:0!important;user-select:none; }
+.reflow-prefix-space::before,.reflow-prefix-space::after { content:none!important; }
+.reflow-target-annotated { text-decoration:underline dotted var(--gloss);text-underline-offset:.22em; }
+.paged-reader .annotation-pop { contain:layout style;isolation:isolate;transform:translateZ(0); }
+.annotation-reflow-measure { contain:layout style; }
+.reflow-reservation-text { font:inherit;letter-spacing:inherit;line-height:inherit;padding:0; }
+.reflow-source-line { position:absolute;display:block;width:10000px;white-space:pre;pointer-events:none; }
+.reflow-inline-piece { position:relative;display:inline!important;white-space:pre!important;margin:0!important;padding:0!important;border:0!important;pointer-events:auto; }
+.annotation-inline-stage { position:fixed;visibility:hidden;pointer-events:none;contain:layout style;border:1px solid transparent;box-sizing:border-box;padding:0;z-index:-1; }
+
+/* Reading notices use the banner's title space while its tools are open. */
+body:has(.paged-reader[data-chrome="open"]) #toast {
+  --toast-reader-inset: max(26px, calc((100vw - 1440px) / 2));
+  top: 8px;
+  bottom: auto;
+  left: calc(var(--toast-reader-inset) + 62px);
+  right: auto;
+  width: max-content;
+  min-width: 0;
+  max-width: calc(100vw - var(--toast-reader-inset) - var(--toast-reader-inset) - 192px);
+  max-height: 48px;
+  padding: 8px 12px;
+  gap: 12px;
+  transform: none;
+  align-items: flex-start;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+body:has(.paged-reader[data-chrome="open"]) #toast button {
+  flex: 0 0 auto;
+}
+body:has(.paged-reader[data-chrome="open"]):has(#toast:not([hidden]))
+  .reading-banner :is(.banner-title, #reader-save) {
+  visibility: hidden;
 }

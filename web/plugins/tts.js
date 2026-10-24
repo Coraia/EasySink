@@ -1,3 +1,4 @@
+import { setReadingAction } from "../reading-action-icons.js";
 import { sameSelection } from "../source-selection.js";
 import { $, $$, api, local } from "../core.js";
 
@@ -65,27 +66,30 @@ export function install(ctx) {
       const update = (button, value, idle) => {
         if (!button) return;
         const own = active() && same(value);
-        button.textContent = own
+        const label = own
           ? mode === "loading"
             ? "取消朗读"
             : "停止朗读"
           : idle;
+        if (button.closest("#reading-selection")) setReadingAction(button, own ? "stop" : "sound", own ? "停止" : "朗读", label);
+        else button.textContent = label;
         button.setAttribute("aria-pressed", String(own));
       };
       update($("#tool-tts"), anchor, "朗读");
       update($('[data-selection-action="speech"]'), r.selection, "朗读选区");
       $$("[data-read-block]").forEach((button) => {
         const b = r.doc.blocks.find((b) => b.id === button.dataset.readBlock);
-        update(button, r.anchorFor(b.id, 0, b.text.length), "听这一段");
+        update(button, r.paragraphAnchor(b.id), "听这一段");
       });
       const word = r.popElement && $("[data-word-speak]", r.popElement);
       if (word) {
         const own = active() && same(r.popAnchor);
-        word.textContent = own
+        const label = own
           ? mode === "loading"
             ? "取消发音"
             : "停止发音"
           : "听发音";
+        setReadingAction(word, own ? "stop" : "sound", own ? "停止" : "发音", label);
         word.setAttribute("aria-pressed", String(own));
       }
     };
@@ -222,7 +226,7 @@ export function install(ctx) {
         (() => {
           const f = r.pages.pages[r.pages.index][0],
             b = r.doc.blocks.find((b) => b.id === f.id);
-          return r.anchorFor(b.id, 0, b.text.length);
+          return r.paragraphAnchor(b.id);
         })();
       r.focus.close();
       toggle(a);
@@ -233,7 +237,7 @@ export function install(ctx) {
       if (!button) return;
       r.closePop();
       const b = r.doc.blocks.find((b) => b.id === button.dataset.readBlock);
-      toggle(r.anchorFor(b.id, 0, b.text.length));
+      toggle(r.paragraphAnchor(b.id));
     });
     for (const event of ["before-page", "before-selection"]) r.on(event, stop);
     for (const event of ["draw", "selection-render", "speech-controls"])

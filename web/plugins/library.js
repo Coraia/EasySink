@@ -132,7 +132,8 @@ export function install(ctx) {
         view.documents.splice(index, 1);
     }
     const activeBooks = books.filter(
-      (book) => !isPDF(book) || !recycledBookIds.has(String(pdfBookId(book))),
+      (book) => !book.source.startsWith("picturebook:") &&
+        (!isPDF(book) || !recycledBookIds.has(String(pdfBookId(book)))),
     );
     view.collections = activeBooks.map((b) => {
       const remembered =
@@ -143,7 +144,7 @@ export function install(ctx) {
           ...b,
           cardKey: `pdf-${pdfBookId(b)}`,
           statusHref: `#/pdf-status/${encodeURIComponent(pdfBookId(b))}`,
-          coverLabel: "WISE READER / PDF",
+          coverLabel: "EASYSINK / PDF",
           subtitle: pdfSubtitle(b),
           href: docId
             ? `#/read/${docId}`
@@ -177,7 +178,7 @@ export function install(ctx) {
       const continued = chapter?.doc_id === remembered;
       return {
         ...b,
-        coverLabel: "WISE READER / " + b.source.toUpperCase(),
+        coverLabel: "EASYSINK / " + b.source.toUpperCase(),
         subtitle: `${b.chapter_count} 章 · ${b.author || "已导入"}`,
         readingChapter: chapter ? `${continued ? "续读" : "从"}第 ${chapter.idx + 1} 章 · ${chapter.title}` : "",
         href: chapter ? `#/read/${chapter.doc_id}` : `#/book/${b.id}`,
@@ -201,6 +202,10 @@ export function install(ctx) {
   const route = ctx.route("book", async (scope, id) => {
     const b = await api("/library/books/" + id, { signal: scope.signal });
     if (scope.signal.aborted) return;
+    if (b.source.startsWith("picturebook:")) {
+      ctx.navigate("#/children");
+      return;
+    }
     if (isPDF(b)) {
       if (b.pdf?.lifecycle === "recycled") {
         ctx.navigate(`#/pdf/${encodeURIComponent(pdfBookId(b))}`);

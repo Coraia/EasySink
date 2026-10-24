@@ -15,6 +15,16 @@ def edition():
     return json.loads((ASSETS / "book.json").read_text())
 
 
+def children_document_ids(store):
+    # Exact text identity of the old bundled six-scene sample, exported by
+    # web/picturebook-story.js. Keep its data, but retire its adult-shelf entry.
+    demo_hash = "f0924fcf1c3d9c7626970113e5baa9b37b1da8769b74d69d4f477393c36bcd50"
+    return {row["doc_id"] for row in store.query(
+        "SELECT c.doc_id FROM wr_chapter c JOIN wr_book b ON b.id=c.book_id"
+        " WHERE b.source LIKE 'picturebook:%'"
+        " UNION SELECT id AS doc_id FROM document WHERE text_hash=?", (demo_hash,))}
+
+
 def story_plan(doc, blocks):
     book = edition()
     digest = hashlib.sha256(doc["text"].encode()).hexdigest()
@@ -32,6 +42,26 @@ def story_plan(doc, blocks):
 
 
 def register_edition(app, store):
+    @app.get("/api/picturebook/shelf")
+    def shelf():
+        # Ownership comes from the installed catalog source, never a book title
+        # or the adult reader's last selected presentation mode.
+        book = edition()
+        installed = store.query_one(
+            "SELECT * FROM wr_book WHERE source=? ORDER BY id LIMIT 1",
+            ("picturebook:" + book["id"],),
+        )
+        chapters = store.query(
+            "SELECT c.idx,c.title,c.doc_id FROM wr_chapter c"
+            " JOIN document d ON d.id=c.doc_id WHERE c.book_id=? ORDER BY c.idx",
+            (installed["id"],),
+        ) if installed else []
+        return {"purchases_enabled": False, "books": [{
+            "catalog_id": book["id"], "title": "小王子", "english_title": "The Little Prince",
+            "author": book["author"], "book_id": installed["id"] if installed else None,
+            "chapter_count": len(book["chapters"]), "chapters": chapters,
+        }]}
+
     @app.post("/api/picturebook/little-prince/install")
     def install():
         book = edition()

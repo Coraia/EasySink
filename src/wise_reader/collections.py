@@ -75,6 +75,9 @@ def migrate(store):
     CREATE INDEX IF NOT EXISTS wr_collection_chapter_doc ON wr_chapter(doc_id,id);
     CREATE INDEX IF NOT EXISTS wr_collection_chapter_book ON wr_chapter(book_id,idx);
     """)
+    from wise_reader.reading_learning import migrate as migrate_learning
+    migrate_learning(store)
+    store.execute("CREATE INDEX IF NOT EXISTS wr_feedback_preference_updated ON wr_collection_feedback(updated_at,id) WHERE deleted=0 AND json_extract(data,'$.annotation_preference') IS NOT NULL")
     if exists(store, "wr_note"):
         store.execute("CREATE INDEX IF NOT EXISTS wr_collection_note_scope ON wr_note(doc_id,created_at)")
     if exists(store, "wr_context_attempt"):
@@ -103,8 +106,9 @@ def key(snapshot, kind):
 
 
 class Collections:
-    def __init__(self, store):
+    def __init__(self, store, lexicon=None):
         self.store = store
+        self.lexicon = lexicon
 
     def row(self, record_id, category="collections", active=True):
         row = self.store.query_one(f"SELECT * FROM {TABLES[category]} WHERE id=?" + (" AND deleted=0" if active else ""), (record_id,))
@@ -377,12 +381,49 @@ class Collections:
             updated = self._write(old, deleted=True)
             return {"undo_token": self._undo_token("collections", {old["id"]: old}, [updated], adoption_changes)}
 
+    def usage_preview(self, doc_id, anchor):
+        from wise_reader.usage_feedback import choices
+        snap = validate(self.store, doc_id, anchor)
+        return {"choices": choices(self.store, snap)}
+
+    def usage_feedback(self, doc_id, anchor, action, scope_id, fields):
+        from wise_reader.usage_feedback import selected_scope
+        with self.store.transaction():
+            from wise_reader.reading_learning import estimate, record_feedback
+            before_model = estimate(self.store, self.lexicon, self.store.get_profile())
+            snap = validate(self.store, doc_id, anchor)
+            old = self.store.query_one("SELECT * FROM wr_collection_feedback WHERE dedupe=? AND deleted=0", (key(snap, "feedback"),))
+            data = json.loads(old["data"]) if old else {**snap, "understood": None, "retained": False, "note": "", "detail": "", "target": ""}
+            usage = selected_scope(self.store, snap, scope_id)
+            data["usage"] = usage
+            if action != "scope":
+                if action == "need":
+                    data["preference_note"] = fields.get("note", "").strip()
+                data["annotation_preference"] = action
+                data["understood"] = None
+                if action == "known":
+                    data["retained"] = False
+            if data.get("annotation_preference") == "need":
+                data["preference_note"] = data.get("preference_note", "").strip()
+                if not data["preference_note"]:
+                    raise HTTPException(422, "此处没有可复用的释义；取得语境解释后可仅在此处保留")
+            if old and data == json.loads(old["data"]):
+                return {"state": item(old), "undo_token": None, "model": before_model}
+            updated = self._write(old, data=data, category="feedback") if old else self._insert(data, "feedback", "feedback")
+            token = self._undo_token("feedback", {old["id"]: old} if old else {}, [updated])
+            record_feedback(self.store, self.lexicon, item(updated), action, token, before_model)
+            return {"state": item(updated), "undo_token": token, "model": estimate(self.store, self.lexicon, self.store.get_profile())}
+
     def feedback(self, doc_id, anchor, fields):
         with self.store.transaction():
             snap = validate(self.store, doc_id, anchor)
             old = self.store.query_one("SELECT * FROM wr_collection_feedback WHERE dedupe=? AND deleted=0", (key(snap, "feedback"),))
             data = json.loads(old["data"]) if old else {**snap, "understood": None, "retained": False, "note": "", "detail": "", "target": ""}
             data.update(fields)
+            if data.get("retained"):
+                data["note"] = data.get("note", "").strip()
+                if not data["note"]:
+                    raise HTTPException(422, "此处尚无可保留的释义；可先取得并采用语境解释")
             if old and data == json.loads(old["data"]):
                 return {"state": item(old), "undo_token": None}
             updated = self._write(old, data=data, category="feedback") if old else self._insert(data, "feedback", "feedback")
@@ -429,6 +470,8 @@ class Collections:
                 if not value["deleted"]:
                     restored.append(item(value))
             self.store.execute("UPDATE wr_collection_undo SET used=1 WHERE token=?", (token,))
+            from wise_reader.reading_learning import retract_feedback
+            retract_feedback(self.store, token)
             return {"ok": True, "items": restored}
 
     def list(self, doc_id=None, book_id=None, kind=None, q="", limit=50, offset=0):
@@ -451,7 +494,9 @@ class Collections:
         feedback = self.store.query("SELECT * FROM wr_collection_feedback WHERE doc_id=? AND deleted=0 ORDER BY id LIMIT ?", (doc_id, MAX_ROWS + 1))
         if len(collections) > MAX_ROWS or len(feedback) > MAX_ROWS:
             raise HTTPException(413, "本章记录过多，请使用分页收藏列表")
-        return {"items": [item(r) for r in collections], "feedback": [item(r) for r in feedback]}
+        from wise_reader.usage_feedback import project
+        values = [item(r) for r in feedback]
+        return {"items": [item(r) for r in collections], "feedback": values, "usage_matches": project(self.store, doc_id, values)}
 
     def source(self, record_id):
         saved = item(self.row(record_id))

@@ -124,6 +124,7 @@ export async function createCastScene({ host, signal, casts, onError }) {
       needed.add(s.background);
       s.actors.forEach((a) => needed.add(a.asset));
       Object.values(s.memory || {}).forEach((m) => needed.add(m.asset));
+      if (s.editorialMemory) needed.add(s.editorialMemory.asset);
       if (s.birds) needed.add("bird");
     }
     // Pose substitutions retain identity and are loaded only in relevant chapters.
@@ -345,10 +346,12 @@ export async function createCastScene({ host, signal, casts, onError }) {
         );
         im.setAttribute("width", t.image.width);
         im.setAttribute("height", t.image.height);
+        // A viewBox only clips at the SVG viewport. Letterboxing can expose
+        // adjacent atlas cells in WebKit, so clip the source rectangle too.
+        const defs = document.createElementNS(svg.namespaceURI, "defs");
+        const clip = document.createElementNS(svg.namespaceURI, "clipPath");
+        clip.id = "cast-memory-asset-clip";
         if (d.cut === 4) {
-          const defs = document.createElementNS(svg.namespaceURI, "defs");
-          const clip = document.createElementNS(svg.namespaceURI, "clipPath");
-          clip.id = "cast-memory-sheep-clip";
           const polygon = document.createElementNS(svg.namespaceURI, "polygon");
           polygon.setAttribute(
             "points",
@@ -367,10 +370,17 @@ export async function createCastScene({ host, signal, casts, onError }) {
               .join(" "),
           );
           clip.append(polygon);
-          defs.append(clip);
-          svg.append(defs);
-          im.setAttribute("clip-path", "url(#cast-memory-sheep-clip)");
+        } else {
+          const rect = document.createElementNS(svg.namespaceURI, "rect");
+          rect.setAttribute("x", r[0] * t.image.width);
+          rect.setAttribute("y", r[1] * t.image.height);
+          rect.setAttribute("width", r[2] * t.image.width);
+          rect.setAttribute("height", r[3] * t.image.height);
+          clip.append(rect);
         }
+        defs.append(clip);
+        svg.append(defs);
+        im.setAttribute("clip-path", "url(#cast-memory-asset-clip)");
         svg.append(im);
         const text = document.createElement("span");
         text.textContent = m.label;
@@ -383,15 +393,18 @@ export async function createCastScene({ host, signal, casts, onError }) {
         action = active.action,
         target = active.target;
       const wave = Math.sin((time - beat) * 3.5);
-      memoryCard(active.memoryItem || moment.memoryActive);
+      memoryCard(
+        active === moment
+          ? moment.memoryActive
+          : active.memoryItem || moment.memoryActive,
+      );
       label.hidden = !moment.label;
       label.textContent = moment.label || "";
       const blend = instant ? 1 : 1 - Math.exp(-dt * 7),
         specs = moment.actors.map((a) => ({ ...a }));
-      if (moment.train)
-        trainPhase = (trainPhase + dt * (action === "train" ? 2.6 : 0.8)) % 18;
+      if (moment.train) trainPhase += dt * (action === "train" ? 2.6 : 0.8);
       const prince = specs.find((a) => a.id === "prince");
-      if (prince) {
+      if (prince && !moment.lockPose) {
         if (moment.fall) {
           prince.asset = "resting";
           prince.h = 2.1;
@@ -404,8 +417,9 @@ export async function createCastScene({ host, signal, casts, onError }) {
           prince.asset = "waving";
         } else if (action === "sad" && prince.asset === "prince")
           prince.asset = "sad";
-        if (moment.depart) prince.x -= Math.min(2, (time - beat) * 0.45);
       }
+      if (prince && moment.depart)
+        prince.x -= Math.min(3, (time - beat) * 0.45);
       if (moment.birds)
         for (let i = 0; i < 3; i++)
           specs.push(
@@ -454,13 +468,13 @@ export async function createCastScene({ host, signal, casts, onError }) {
         }
         if (chosen && action === "chair")
           x += Math.sin(Math.min(1, (time - beat) / 2) * Math.PI) * 0.65;
-        if (chosen && action === "snake")
+        if (chosen && action === "snake" && !moment.snakeWrapped)
           x += Math.sin((time - beat) * 1.5) * 0.3;
         if (chosen && action === "hat") angle = -0.065 * (0.5 + 0.5 * wave);
         if (chosen && action === "telescope") angle = 0.06 * Math.sin(time);
         if (chosen && action === "bottle") angle = 0.025 * wave;
         if (chosen && action === "box") angle = 0.025 * wave;
-        if (moment.walk && spec.id === "prince")
+        if (moment.walk && ["prince", "walkPair"].includes(spec.id))
           x += Math.sin(time * 0.8) * 0.35;
         a.group.position.set(x, y, spec.z);
         a.group.scale.set(spec.flip, 1, 1);
@@ -617,6 +631,9 @@ export async function createCastScene({ host, signal, casts, onError }) {
       host.dataset.time = time.toFixed(3);
       host.dataset.lamp = String(!!moment.lampOn);
       host.dataset.bucket = String(moment.bucket || 0);
+      host.dataset.sourceState = moment.sourceState || moment.key;
+      host.dataset.background = moment.background;
+      host.dataset.trainNumber = String(moment.trainNumber || 0);
       host.dataset.motion = JSON.stringify(
         specs.map((s) => {
           const a = pool.get(s.id + ":" + s.asset);
@@ -673,7 +690,11 @@ export async function createCastScene({ host, signal, casts, onError }) {
     schedule();
     return {
       setMoment(next) {
-        if (next.trainDirection !== moment.trainDirection) trainPhase = 5;
+        if (
+          next.trainDirection !== moment.trainDirection ||
+          next.trainNumber !== moment.trainNumber
+        )
+          trainPhase = 5;
         moment = next;
         beat = time;
         word = null;

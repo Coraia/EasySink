@@ -1,5 +1,5 @@
-import { anchorSegments, combineSelection, sourceExcerpt } from "../source-selection.js";
-import { $, $$, e, api, local, date, toast } from "../core.js";
+import { anchorSegments, combineSelection, sourceExcerpt, sameSelection } from "../source-selection.js";
+import { $, $$, e, api, local, date, toast, Scope } from "../core.js";
 import { noteStore, imageReference } from "./notes-store.js?v=20261008-pdf";
 const pencil =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h11l3 3v15H5zM8 8h8M8 12h8M8 16h5"/></svg>';
@@ -35,6 +35,36 @@ export function imageAnchor(reader, block) {
   };
 }
 export function install(ctx) {
+  const entries = new Set();
+  const word = ctx.hook("word", ({ reader, pop, anchor, scope }) => {
+    const notes = reader.notesController;
+    if (!notes || !notes.validOccurrenceAnchor(anchor) || scope.signal.aborted) return;
+    const entryScope = new Scope(), section = document.createElement("section");
+    section.className = "word-notes-entry";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "text-button";
+    section.append(button);
+    (pop.querySelector(":scope > header") || pop.firstElementChild)?.after(section);
+    const dispose = () => entryScope.dispose();
+    entries.add(dispose);
+    scope.cleanup(dispose);
+    entryScope.cleanup(() => { section.remove(); entries.delete(dispose); });
+    const render = () => {
+      const action = notes.getOccurrenceNoteAction(anchor);
+      if (!action) return dispose();
+      button.textContent = action.label;
+      button.disabled = action.disabled;
+      button.setAttribute("aria-label", action.label);
+    };
+    entryScope.on(reader.events, "notes-change", render);
+    entryScope.on(reader.events, "draw", render);
+    entryScope.on(button, "click", () => {
+      if (!scope.signal.aborted && !reader.scope.signal.aborted && reader.popElement === pop)
+        notes.openOccurrenceNotes(anchor);
+    });
+    render();
+  });
   const read = ctx.hook("read", async (reader) => {
     await new ReaderNotes(reader).mount();
   });
@@ -92,6 +122,8 @@ export function install(ctx) {
     });
   });
   return () => {
+    word();
+    for (const dispose of [...entries]) dispose();
     read();
     route();
   };
@@ -101,6 +133,7 @@ export class ReaderNotes {
   constructor(reader) {
     this.r = reader;
     this.notes = [];
+    this.loaded = false;
     this.filter = "book";
     this.book = reader.doc.chapter?.book_id ?? reader.doc.pdf?.book_id;
     this.ids = this.book
@@ -167,6 +200,7 @@ export class ReaderNotes {
       { signal: this.r.scope.signal },
     );
     if (!this.r.scope.signal.aborted) {
+      this.loaded = true;
       this.noteIndex = null;
       this.paint();
       this.badge();
@@ -176,6 +210,7 @@ export class ReaderNotes {
     return noteStore.drafts(this.ids);
   }
   badge() {
+    this.r.emit("notes-change");
     const button = $("#tool-notes");
     if (!button || this.r.scope.signal.aborted) return;
     $(".note-count", button)?.remove();
@@ -209,6 +244,69 @@ export class ReaderNotes {
     this.badge();
     if (this.editor === entry) this.saveState(entry);
     if (this.r.panelId === "notes" && !this.editor) this.drawList();
+  }
+  validOccurrenceAnchor(anchor) {
+    if (!anchor || anchor.kind === "image" || anchor.version !== this.r.doc.version) return false;
+    const parts = anchorSegments(anchor);
+    return parts.length > 0 && parts.every(part => {
+      const block = this.r.doc.blocks.find(b => b.id === part.block_id);
+      return block && Number.isInteger(part.start) && Number.isInteger(part.end) &&
+        part.start >= 0 && part.end > part.start && part.end <= block.text.length &&
+        typeof part.quote === "string" && block.text.slice(part.start, part.end) === part.quote;
+    }) && anchor.quote === parts.map(part => part.quote).join("\n\n");
+  }
+  occurrenceNotes(anchor) {
+    if (!this.validOccurrenceAnchor(anchor)) return { notes: [], drafts: [] };
+    const selected = anchorSegments(anchor);
+    const matches = note => String(note.doc_id) === String(this.r.doc.id) &&
+      this.validOccurrenceAnchor(note.anchor) && note.quote === note.anchor.quote &&
+      anchorSegments(note.anchor).some(part => selected.some(target =>
+        part.block_id === target.block_id && part.start < target.end && part.end > target.start));
+    return { notes: this.notes.filter(matches), drafts: this.drafts().filter(matches) };
+  }
+  getOccurrenceNoteAction(anchor) {
+    if (!this.validOccurrenceAnchor(anchor) || this.r.scope.signal.aborted) return null;
+    const { notes, drafts } = this.occurrenceNotes(anchor);
+    return { count: notes.length, draftCount: drafts.length, disabled: !this.loaded,
+      label: !this.loaded ? "笔记载入中…" : notes.length ? `本处笔记 ${notes.length}` : drafts.length ? "继续笔记" : "记一笔" };
+  }
+  openOccurrenceNotes(value) {
+    if (this.r.scope.signal.aborted || !this.loaded || !this.validOccurrenceAnchor(value)) return;
+    // The notes action owns this copy before closePop disposes the word scope.
+    const anchor = structuredClone(value), found = this.occurrenceNotes(anchor);
+    this.r.closePop();
+    if (!found.notes.length && found.drafts.length === 1) {
+      this.edit(found.drafts[0], "occurrence");
+      return;
+    }
+    if (!found.notes.length && !found.drafts.length) {
+      if (!sameSelection(this.occurrenceFresh?.anchor, anchor)) this.occurrenceFresh = {
+        doc_id: this.r.doc.id, book_id: this.book, anchor, quote: anchor.quote,
+        client_id: crypto.randomUUID(), body: "",
+      };
+      this.edit(this.occurrenceFresh, "occurrence");
+      return;
+    }
+    this.r.panel("note-occurrence", "本处笔记", '<div data-occurrence-notes></div>', (el, scope) => {
+      const draw = () => {
+        const { notes, drafts } = this.occurrenceNotes(anchor);
+        $("[data-occurrence-notes]", el).innerHTML = notes.map(note => this.card(note)).join("") +
+          drafts.map(draft => `<div class="note-draft-row"><span class="meta">未保存草稿</span><button class="text-button" data-note-resume="${e(draft.client_id)}">继续笔记</button></div>`).join("") +
+          '<button class="text-button" data-note-add>＋ 再记一笔</button>';
+      };
+      draw();
+      scope.on(this.r.events, "notes-change", draw);
+      scope.on(el, "click", event => {
+        this.cardAction(event, "occurrence");
+        const resume = event.target.closest("[data-note-resume]");
+        if (resume) {
+          const draft = this.occurrenceNotes(anchor).drafts.find(d => d.client_id === resume.dataset.noteResume);
+          if (draft) this.edit(draft, "occurrence");
+        }
+        if (event.target.closest("[data-note-add]") && this.validOccurrenceAnchor(anchor))
+          this.fresh(anchor, "occurrence");
+      });
+    });
   }
   resolved(n) {
     if (n.doc_id !== this.r.doc.id) return null;
@@ -600,7 +698,7 @@ export class ReaderNotes {
   edit(note, origin) {
     if (origin === "source" && note.anchor && note.anchor.kind !== "image")
       this.r.choose(this.resolved(note) || note.anchor);
-    const rect = this.sourceRect(note.anchor),
+    const rect = origin === "source" ? this.sourceRect(note.anchor) : null,
       entry = noteStore.entry(note);
     if (this.drafts().some((d) => d.client_id === entry.client_id)) {
       if (entry.state === "idle") entry.state = "draft";

@@ -4,23 +4,29 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>Wise Reader · 留在故事里</title>
-    <link
-      rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%232f5949'/%3E%3Ctext x='11' y='44' font-family='Georgia' font-size='36' fill='%23fff'%3EW%3C/text%3E%3C/svg%3E"
-    />
+    <meta name="application-name" content="EasySink" />
+    <meta name="description" content="EasySink，轻松读进去。英文原文在前，理解就在旁边。" />
+    <meta name="theme-color" content="#FFF9F0" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="EasySink" />
+    <title>EasySink · 轻松读进去</title>
+    <link rel="icon" type="image/svg+xml" href="/static/assets/brand/easysink-icon.svg" />
+    <link rel="alternate icon" type="image/png" sizes="32x32" href="/static/assets/brand/favicon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/assets/brand/apple-touch-icon.png" />
+    <link rel="manifest" href="/static/manifest.webmanifest" />
     <link rel="modulepreload" href="/static/plugin-host.js" />
     <link
       rel="stylesheet"
       href="/static/style.css?v=20261018-page-fit-continuous"
     />
+    <link rel="stylesheet" href="/static/brand.css" />
   </head>
   <body>
     <a class="skip" href="#app">跳到内容</a>
     <header class="top">
-      <a class="brand" href="#/"
-        ><span class="brand-mark">w.</span
-        ><span>wise reader<small>读懂，读进去。</small></span></a
+      <a class="brand" href="#/" aria-label="EasySink · 返回书架"
+        ><img class="easysink-brand-icon" src="/static/assets/brand/easysink-icon.svg" width="42" height="42" alt="" />
+        <span>EasySink<small>轻松读进去。</small></span></a
       >
       <div id="header-context">你的英文阅读空间</div>
       <div class="top-actions">
@@ -49,7 +55,7 @@
         ><a href="#/evidence" data-nav="evidence"><span>◉</span> 本机阅读证据</a
         ><a href="#/labs" data-nav="labs">功能管理 <span id="feature-count">18</span></a>
         <p>让理解自然发生。<br />让好奇心继续向前。</p>
-        <small>WISE READER · 1.2</small>
+        <small>EASYSINK · 1.3 · 产品恢复候选</small>
       </div>
     </aside>
     <main id="app" tabindex="-1"></main>
@@ -57,7 +63,7 @@
     <dialog id="dialog"></dialog>
     <script
       type="module"
-      src="/static/app.js?v=20261018-keyboard-paging-tuned"
+      src="/static/app.js?v=20261023-product-restore"
     ></script>
   </body>
 </html>

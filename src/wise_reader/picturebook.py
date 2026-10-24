@@ -74,7 +74,17 @@ def register_picturebook(app, store, ai):
     def status(doc_id: int):
         doc, version, blocks = document(doc_id)
         rows = store.query("SELECT * FROM wr_picturebook_art WHERE doc_id=? AND version=?", (doc_id, version))
-        return {"items": [payload(row) for row in rows], "configured": ai.public()["illustration"]["available"], "story_plan": story_plan(doc, blocks)}
+        plan = story_plan(doc, blocks)
+        # Child assistance is content-derived, independent of adult vocabulary
+        # estimates and of the objects that happen to have animated actors.
+        vocabulary = {}
+        if plan:
+            lexicon = app.state.engine.lexicon
+            for word in sorted(set(re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)*", doc["text"].lower()))):
+                entry = lexicon.lookup(word)
+                if entry:
+                    vocabulary[word] = {"note": entry.gloss(), "phonetic": entry.phonetic, "rank": entry.rank}
+        return {"items": [payload(row) for row in rows], "configured": ai.public()["illustration"]["available"], "story_plan": plan, "vocabulary": vocabulary}
 
     @app.get("/api/documents/{doc_id}/illustrations/{art_key}.webp")
     def image(doc_id: int, art_key: str):

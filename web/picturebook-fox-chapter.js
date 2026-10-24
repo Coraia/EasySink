@@ -206,7 +206,7 @@ export function buildFoxChapter(doc) {
       rose: 0,
       action: speaker,
     };
-    if (act.key === "meeting" && i === 2) line.scene.fox = 0.25;
+    if (act.key === "meeting" && i === 2) line.scene.fox = 0;
     if (act.key === "rose") line.scene.rose = 1;
     if (act.key === "wheat")
       line.scene.action = /wind|wheat|gold|grain|hair/.test(t)
@@ -243,6 +243,11 @@ export function buildFoxChapter(doc) {
     if (act.key === "secret") line.scene.action = "heart";
     if (act.key === "responsibility")
       Object.assign(line.scene, { rose: 1, action: "care" });
+    if (line.scene.rose) line.scene.label = "自己的玫瑰留在故乡 · 回忆";
+    if (act.key === "patience")
+      line.scene.label = "狐狸教他怎样慢慢靠近 · 方法示意";
+    if (act.key === "ritual")
+      line.scene.label = "狐狸设想约定时刻的等待 · 想象";
     line.cue = /sit down/.test(t)
       ? "他们安静地坐下，给彼此留一点距离。"
       : /closer/.test(t)

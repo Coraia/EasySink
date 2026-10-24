@@ -16,7 +16,7 @@ import { Reader } from "./reader.js?v=20261018-keyboard-paging-tuned";
 import { renderAI } from "./ai-settings.js";
 import { installReadingTrackpad } from "./reading-trackpad.js?v=20261018-page-turn-latency-selection";
 import { installDesktopLifecycle } from "./desktop-lifecycle.js";
-import { installPicturebook } from "./picturebook.js";
+import { installReadingSpaces, mountShelfTabs } from "./reading-spaces.js";
 installDesktopLifecycle();
 const hooks = new Map(),
   routes = new Map();
@@ -91,7 +91,7 @@ const ctx = {
 };
 const host = new PluginHost(ctx);
 ctx.host = host;
-const picturebook = installPicturebook(ctx);
+installReadingSpaces(ctx);
 // App-owned input stream survives chapter loading; it reads no stale Reader.
 installReadingTrackpad(ctx);
 const palette = [
@@ -106,7 +106,7 @@ function cards(items) {
   return items
     .map((d, i) => {
       if (d.cardKey) return `<article class="book-card" data-card-key="${e(d.cardKey)}"><div class="book-cover" style="--cover:${palette[i % palette.length]}"><small>${e(d.coverLabel)}</small><div class="cover-title">${e(d.title)}</div></div><div class="book-info"><h3>${e(d.title)}</h3><div class="row"><span data-card-subtitle>${e(d.subtitle)}</span><span>·</span><span>${date(d.created_at)}</span></div><div data-card-status>${d.statusHTML || ""}</div><footer><a class="book-card-open" data-card-open href="${e(d.href)}" aria-label="${e(d.title)} · 打开"><span data-card-action>${e(d.action)}</span><span aria-hidden="true"> ↗</span></a><a class="book-card-status-link" href="${e(d.statusHref)}">处理详情</a></footer></div></article>`;
-      return `<a class="book-card" href="${d.href || "#/read/" + d.id}"><div class="book-cover" style="--cover:${palette[i % palette.length]}"><small>${e(d.coverLabel || "WISE READER / ARTICLE")}</small><div class="cover-title">${e(d.title)}</div></div><div class="book-info"><h3>${e(d.title)}</h3><div class="row"><span>${e(d.subtitle || `${d.word_count?.toLocaleString() || 0} 词`)}</span><span>·</span><span>${date(d.created_at)}</span></div>${d.readingChapter ? `<p class="meta">${e(d.readingChapter)}</p>` : ""}<footer><span>${e(d.action || "打开阅读")}</span><span>↗</span></footer></div></a>`;
+      return `<a class="book-card" href="${d.href || "#/read/" + d.id}"><div class="book-cover" style="--cover:${palette[i % palette.length]}"><small>${e(d.coverLabel || "EASYSINK / ARTICLE")}</small><div class="cover-title">${e(d.title)}</div></div><div class="book-info"><h3>${e(d.title)}</h3><div class="row"><span>${e(d.subtitle || `${d.word_count?.toLocaleString() || 0} 词`)}</span><span>·</span><span>${date(d.created_at)}</span></div>${d.readingChapter ? `<p class="meta">${e(d.readingChapter)}</p>` : ""}<footer><span>${e(d.action || "打开阅读")}</span><span>↗</span></footer></div></a>`;
     })
     .join("");
 }
@@ -118,8 +118,7 @@ async function route() {
   const hash = location.hash.replace(/^#\/?/, "");
   const [requestedName, id] = hash.split("/");
   const name = requestedName === "picturebook" ? "read" : requestedName;
-  if (requestedName === "picturebook" && /^\d+$/.test(id)) picturebook.activate();
-  document.body.classList.remove("reading", "immersive", "paged-reading", "picturebook-reading");
+  document.body.classList.remove("reading", "immersive", "paged-reading", "picturebook-reading", "children-space");
   if (name === "read" && /^\d+$/.test(id))
     document.body.classList.add("paged-reading");
   $("#header-context").textContent = "你的英文阅读空间";
@@ -146,12 +145,12 @@ async function route() {
     if (scope.signal.aborted) return;
     ctx.profile = profile;
     if (reading) {
-      if (picturebook.enabled()) await picturebook.mount(doc, scope);
+      if (doc.reading_space === "children")
+        ctx.navigate(doc.children_book_id ? `#/living-book/${doc.id}` : "#/children");
       else {
         ctx.reader = new Reader(ctx, scope, doc);
         ctx.reader.preparation = preparation;
         await ctx.reader.mount();
-        if (!scope.signal.aborted) picturebook.readerSwitch(ctx.reader);
       }
     } else if (name === "profile" || name === "settings")
       await renderProfile(scope);
@@ -177,9 +176,11 @@ async function route() {
   }
 }
 async function renderHome(scope) {
-  const documents = await api("/documents", { signal: scope.signal });
+  const documents = (await api("/documents", { signal: scope.signal }))
+    .filter((doc) => doc.reading_space !== "children");
   if (scope.signal.aborted) return;
   ctx.root.innerHTML = `<div class="page"><div class="page-head"><div><div class="eyebrow">YOUR READING SPACE</div><h1>留在故事里。</h1><p>从一篇文章开始，让语言不再打断思考。</p></div><div class="row" id="home-actions"><button class="primary" id="new-reading">＋ 添加阅读</button></div></div><section class="welcome ${documents.length ? "compact" : ""}"><div class="welcome-copy"><div class="eyebrow">READ WITH UNDERSTANDING</div><h2>好的阅读体验，<br>是忘记自己在读英文。</h2><p>只解释你需要的词、表达与背景。无需先做测试，开始阅读后，辅助会随你的反馈调整。</p><div class="row wrap"><button id="try-sample">体验一篇示例 <span>→</span></button><button id="try-grammar-sample" class="text-button">体验长难句</button><a class="text-button" href="#/profile">调整我的阅读辅助</a></div></div><div class="reading-sample"><p>Curiosity is a quiet form of <span>courage <small>勇气</small></span>.</p><div class="caption">英文在前，理解就在旁边。</div></div></section><div id="home-continue"></div><div id="book-collections"></div><div class="section-heading"><h2>我的阅读</h2><span id="shelf-count" role="status">正在整理书架…</span></div><div class="shelf-tools"><div class="filters" role="group" aria-label="内容筛选"><button class="filter active" data-filter="all">全部</button><button class="filter" data-filter="recent">最近添加</button><button class="filter" data-filter="archived">已归档</button></div><input type="search" id="shelf-search" placeholder="搜索标题…" aria-label="搜索书架"></div><div class="book-grid" id="article-grid"></div></div>`;
+  mountShelfTabs(ctx, scope, "standard", $(".page", ctx.root));
   let filter = "all";
   const view = { scope, documents, collections: [], chapterIds: new Set() };
   const draw = () => {

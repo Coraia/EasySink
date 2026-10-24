@@ -1,3 +1,4 @@
+import { setReadingAction } from "./reading-action-icons.js";
 import { $, e, api } from "./core.js";
 import { anchorSegments } from "./source-selection.js";
 import { offerAISetup } from "./ai-setup-guard.js";
@@ -84,12 +85,13 @@ export function installContextPopup(r, pop, anchor, scope) {
     result.hidden = Boolean(adopted);
     adopt.hidden = !pop.adoptContext || !selectedRecord || Boolean(controller);
     adopt.disabled = adopting || adopted;
-    adopt.textContent = adopted ? "已用于此处释义 ✓" : adopting ? "正在采用…" : "用于此处释义";
+    setReadingAction(adopt, "check", adopted ? "已采用" : adopting ? "正在采用…" : "用于此处", adopted ? "已用于此处释义" : "用于此处释义");
     const busy = Boolean(controller);
     const guarded = plan?.attempt && plan.attempt.state !== "succeeded";
     generate.hidden = !busy && Boolean(selectedRecord || guarded);
     generate.disabled = !busy && !plan;
-    generate.textContent = busy ? "取消解释" : "解释这里的意思";
+    setReadingAction(generate, busy ? "stop" : "explain", busy ? "取消" : "解释", busy ? "取消解释" : "解释这里的意思");
+    setReadingAction(regenerate, "reset", "重新解释");
     regenerate.hidden = busy || (!selectedRecord && !guarded);
     regenerate.disabled = !plan || plan.attempt?.state === "pending";
     $("[data-context-refresh]", section).hidden = busy || Boolean(plan && !guarded);

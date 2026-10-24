@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">EasySink</title>
+  <desc id="desc">Three blue lines of source text with one small amber annotation.</desc>
+  <g fill="#4A93DE">
+    <rect x="124" y="280" width="776" height="88" rx="44"/>
+    <rect x="126" y="438" width="688" height="88" rx="44"/>
+    <rect x="126" y="652" width="552" height="88" rx="44"/>
+  </g>
+  <rect x="560" y="550" width="254" height="62" rx="31" fill="#F2B64E"/>
+</svg>

@@ -59,6 +59,51 @@ class FeedbackIn(BaseModel):
         return self
 
 
+class UsagePreviewIn(BaseModel):
+    doc_id: int = Field(ge=1)
+    anchor: Anchor
+
+
+class UsageFeedbackIn(UsagePreviewIn):
+    action: Literal["known", "need", "auto", "scope"]
+    scope_id: str = Field(default="pending", max_length=80)
+    note: str = Field(default="", max_length=12000)
+    detail: str = Field(default="", max_length=12000)
+    target: str = Field(default="", max_length=1000)
+
+
+class LearningSpan(BaseModel):
+    block_id: str = Field(min_length=1, max_length=240)
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+    automatic: bool = True
+
+
+class LearningModel(BaseModel):
+    algorithm: str = Field(default="explicit-lexeme-map-v1", max_length=80)
+    vocab_size: int = Field(ge=500, le=50000)
+    baseline_vocab_size: int = Field(ge=500, le=50000)
+    sample_lexemes: int = Field(default=0, ge=0)
+
+
+class LearningExposureIn(BaseModel):
+    doc_id: int = Field(ge=1)
+    version: str = Field(min_length=1, max_length=200)
+    visit_id: str = Field(min_length=16, max_length=80)
+    dwell_ms: int = Field(ge=0, le=300000)
+    trigger: Literal["dwell", "feedback"] = "dwell"
+    ranges: list[LearningSpan] = Field(min_length=1, max_length=128)
+    annotations: list[LearningSpan] = Field(default_factory=list, max_length=2000)
+    baseline_annotations: list[LearningSpan] = Field(default_factory=list, max_length=2000)
+    model: LearningModel
+
+    @model_validator(mode="after")
+    def dwell_contract(self):
+        if self.trigger == "dwell" and self.dwell_ms < 1500:
+            raise ValueError("Stable exposure requires 1500ms")
+        return self
+
+
 class UndoIn(BaseModel):
     token: str = Field(min_length=1, max_length=128)
 
@@ -102,7 +147,7 @@ class CleanupIn(Scope):
 
 
 def register(app: FastAPI, ctx) -> None:
-    service = Collections(ctx.store)
+    service = Collections(ctx.store, ctx.engine.lexicon)
 
     def observe(request, kind, call, details=None):
         evidence = getattr(app.state, "evidence", None)
@@ -137,6 +182,27 @@ def register(app: FastAPI, ctx) -> None:
         return observe(request, "feedback_declaration", lambda: service.feedback(body.doc_id, body.anchor, fields),
             {"doc_id": body.doc_id, "version": body.anchor.version, "anchor": body.anchor.model_dump(mode="json"),
              **{k: fields[k] for k in ("understood", "retained") if k in fields}})
+
+    @router.post("/usage-preview")
+    def usage_preview(body: UsagePreviewIn):
+        return service.usage_preview(body.doc_id, body.anchor)
+
+    @router.post("/usage-feedback")
+    def usage_feedback(body: UsageFeedbackIn, request: Request):
+        return observe(request, "usage_feedback_declaration", lambda: service.usage_feedback(
+            body.doc_id, body.anchor, body.action, body.scope_id,
+            {k: getattr(body, k) for k in ("note", "detail", "target")}),
+            {"doc_id": body.doc_id, "action": body.action, "scope_id": body.scope_id})
+
+    @router.post("/learning/exposure")
+    def learning_exposure(body: LearningExposureIn):
+        from wise_reader.reading_learning import capture
+        return capture(ctx.store, body)
+
+    @router.get("/learning/stats/{doc_id}")
+    def learning_stats(doc_id: int, bucket_words: int = Query(500, ge=100, le=5000), offset: int = Query(0, ge=0)):
+        from wise_reader.reading_learning import summary
+        return summary(ctx.store, ctx.engine.lexicon, doc_id, bucket_words, offset)
 
     @router.post("/undo")
     def undo(body: UndoIn, request: Request):

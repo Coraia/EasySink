@@ -32,7 +32,7 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
   }
   function inPaper(target) {
     return target instanceof Element && Boolean(target.closest('#reading-stage')) &&
-      !target.closest('a,input,textarea,select,[contenteditable],#reading-selection,#translation-pane,.inline-grammar') &&
+      !target.closest('a,input,textarea,select,[contenteditable],#reading-selection,#translation-pane,.inline-grammar,.annotation-pop,#tool-panel,#reader-chrome') &&
       (!target.closest('button') || Boolean(target.closest('.reading-edge-grip')));
   }
   function gate() {
@@ -112,16 +112,18 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
     const leaf = document.querySelector('#article .page-leaf').getBoundingClientRect();
     const article = document.getElementById('article'), leaves = [...article.children];
     const gap = pages.count === 2 ? leaves[1].getBoundingClientRect().left - leaves[0].getBoundingClientRect().right : 0;
-    const g = active = { id: ++serial, pages, direction, session, waiting,
+    const g = active = { id: ++serial, pages, direction, session, waiting, wasQueued: waiting,
       clientY, distance: direction * x, dy: -y, progress: 0, lastAt: at,
       turnDistance: session?.turnDistance || leaf.width * 2 + gap,
       height: session?.height || leaf.height, ended: false };
     if (waiting) pending.push(g); else if (session) flight = g;
     movement(g, direction * x, at); draw(g, at);
     log('began', { id: g.id, direction, waiting, boundary: !session && !waiting }); gate();
+    if (waiting && flight?.ended) flight.session?.handoffRelease?.();
   }
   function release(g, forced = false, reason = 'native-ended') {
     if (g.ended) return;
+    if (g.wasQueued && reason === 'native-ended') reason = 'native-queued-ended';
     g.ended = true; g.complete = !forced && completes(g);
     if (active === g) active = null;
     counts.releases++;

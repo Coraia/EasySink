@@ -1,6 +1,6 @@
 import { combineSelection } from "./source-selection.js";
 
-const nonSource = ".gloss,.bookmark-marker,.note-marker";
+const nonSource = ".gloss,.annotation-gloss-space,.bookmark-marker,.note-marker";
 
 export function* sourceRuns(root = document.querySelector("#article")) {
   for (const block of root?.querySelectorAll("[data-block]:not([data-pdf-object])") || []) {

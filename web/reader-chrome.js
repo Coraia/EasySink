@@ -319,6 +319,7 @@ export function installReaderChrome(r) {
       )
         return;
       if (!target.closest(".paged-reader")) return;
+      if (r.clickPaging?.explicit) return;
       consume(ev);
       r.pages.adjacent(ev.clientX < innerWidth / 2 ? -1 : 1);
     },
@@ -478,8 +479,9 @@ export function installCoreReaderTools(r) {
           r.pages.invalidatePaint();
         });
         scope.on($("#reader-layout", el), "change", (ev) => {
+          const anchor = r.captureView().visibleAnchor || r.position();
           local.set("page-layout", ev.target.value);
-          r.pages.reflow(r.position());
+          r.pages.reflow(anchor, {reason: "columns"});
         });
         scope.on($("#reader-motion", el), "change", (ev) => {
           local.set("page-motion", ev.target.value);

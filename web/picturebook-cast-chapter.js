@@ -3,6 +3,7 @@ import {
   bookVocabulary,
 } from "./picturebook-living-chapter.js";
 import { castScenes } from "./picturebook-cast-catalog.js";
+import { refineCastMoment } from "./picturebook-continuity.js";
 
 export const castVocabulary = {
   ...bookVocabulary,
@@ -59,14 +60,17 @@ export function actionFor(scene, action) {
 
 export function buildCastChapter(doc, plan) {
   const chapter = buildLivingChapter(doc, plan);
+  const sourceState = {};
   let lampOn = false,
-    bucketHeight = 0;
+    bucketHeight = 0,
+    childhoodDrawing = "drawing";
   for (const line of chapter.lines) {
     const recipe = castScenes[line.scene.key];
     if (!recipe) throw Error("本章独立角色尚未匹配原文。");
     const s = {
       ...recipe,
       actors: recipe.actors.map((a) => ({ ...a })),
+      targets: { ...recipe.targets },
       frame: line.scene.frame,
       key: line.scene.key,
     };
@@ -84,14 +88,36 @@ export function buildCastChapter(doc, plan) {
       if (b >= 9) bucketHeight = 1;
       s.bucket = bucketHeight;
     }
-    if (n === 1 && b === 5)
-      s.actors.find((a) => a.id === "drawing").asset =
-        /inside|grown-ups|explanation/.test(t) ? "drawingInside" : "drawing";
-    if (n === 2 && s.key === "ch02-02")
-      s.actors.find((a) => a.id === "drawing").asset =
-        b === 9 ? "drawingInside" : "drawingSheep";
+    if (n === 1) {
+      if (b === 5 && /so then i drew the inside/.test(t))
+        childhoodDrawing = "drawingInside";
+      if (b >= 7) childhoodDrawing = "drawing";
+      s.actors.find((a) => a.id === "drawing").asset = childhoodDrawing;
+    }
+    if (n === 2 && s.key === "ch02-02") {
+      // Drawings persist through the reaction and change at the act of drawing.
+      // Never reveal the next drawing before the source has reached it.
+      const drawing = s.actors.find((a) => a.id === "drawing");
+      if (b < 9) s.actors = s.actors.filter((a) => a.id !== "drawing");
+      else if (b === 9) {
+        drawing.asset = "drawing";
+        s.label = "先画了蟒蛇吞象 · 不是小羊";
+      } else if (b <= 11) {
+        drawing.asset = "drawingSick";
+        s.label = "第一只 · 病弱的小羊";
+      } else if (b <= 13) {
+        drawing.asset = "drawingRam";
+        s.label = "第二只 · 有角的公羊";
+      } else if (b <= 15) {
+        drawing.asset = "drawingOld";
+        s.label = "第三只 · 年老的羊";
+      } else {
+        drawing.asset = "drawingCrate";
+        s.label = "最后 · 三个透气孔的箱子";
+      }
+    }
     if (n === 2 && s.key === "ch02-03")
-      s.actors.find((a) => a.id === "box").asset = "drawingBox";
+      s.actors.find((a) => a.id === "box").asset = "drawingCrate";
     if (n === 3 && s.key === "ch03-02")
       s.actors.find((a) => a.id === "box").asset = "drawingBox";
     if (n === 2 && b < 2) s.actors = s.actors.filter((a) => a.id !== "prince");
@@ -110,6 +136,7 @@ export function buildCastChapter(doc, plan) {
       s.depart = true;
     if (n === 12 && /went away|took his leave/.test(t)) s.depart = true;
     if (n === 9 && b >= 3) s.globe = /globe|shelter/.test(t);
+    refineCastMoment(s, line, n, sourceState);
     const matches = [...t.matchAll(/\b[a-z]+\b/g)]
       .map((m) => m[0])
       .filter((w) => castVocabulary[w]);
@@ -140,7 +167,9 @@ export function buildCastChapter(doc, plan) {
       Object.assign(s, { action: "echo", target: "echo" });
     if (n === 6 && /sunset|sun go|sun goes/.test(t))
       Object.assign(s, { action: "sunset", target: "sun" });
-    s.memoryActive = chosen?.memoryItem || null;
+    if (s.sourceAction)
+      Object.assign(s, { action: s.sourceAction, target: s.sourceTarget });
+    s.memoryActive = s.editorialMemory || chosen?.memoryItem || null;
     s.words = Object.keys(castVocabulary).filter((w) =>
       actionFor(s, castVocabulary[w][1]),
     );

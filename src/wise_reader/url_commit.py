@@ -1050,6 +1050,88 @@ class URLCommitter:
             return receipt('unavailable', 'closure_invalid')
 
     @staticmethod
+    def _document_list_candidates(store: Store) -> set[int] | None:
+        """None means prefiltering is unproven: retain every per-document check."""
+        try:
+            con = sqlite3.connect(store.path.resolve().as_uri() + '?mode=ro', uri=True, timeout=1)
+            try:
+                con.execute('BEGIN')
+                tables = {r[0] for r in con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'wr_url_%'")}
+                if not tables:
+                    return set()
+                if not {'wr_url_snapshot', 'wr_url_request', 'wr_url_observation', 'wr_url_asset'} <= tables:
+                    return None
+                ids = [r[0] for r in con.execute('SELECT doc_id FROM wr_url_snapshot WHERE doc_id IS NOT NULL')]
+                # A committed request without its snapshot must still be checked.
+                # Compile the same ordering columns as the original lookup, too.
+                ids.extend(r[0] for r in con.execute(
+                    "SELECT doc_id FROM wr_url_request WHERE state='committed' AND doc_id IS NOT NULL "
+                    'ORDER BY completed_at,request_id'))
+                if any(type(doc_id) is not int or doc_id <= 0 for doc_id in ids):
+                    return None
+                return set(ids)
+            finally:
+                con.close()
+        except (sqlite3.Error, OSError):
+            return None
+
+    @staticmethod
+    def _document_list_stamp(store: Store) -> tuple[int, int, int] | None:
+        """Caller holds Store; None requires the original locked validation."""
+        try:
+            schema = store._con.execute('PRAGMA main.schema_version').fetchone()
+            data = store._con.execute('PRAGMA main.data_version').fetchone()
+            changes = store._con.total_changes
+            if (schema is None or data is None or type(changes) is not int
+                    or type(schema[0]) is not int or type(data[0]) is not int):
+                return None
+            return changes, schema[0], data[0]
+        except (sqlite3.Error, OSError):
+            return None
+
+    @staticmethod
+    def list_documents(store: Store, committer: URLCommitter | None) -> list[dict]:
+        """Read one shelf list; only proven non-URL rows skip source validation."""
+        if committer is not None and committer.store is not store:
+            raise ImportFailure('unknown')
+        with committer._gate if committer is not None else nullcontext():
+            with store._lock:
+                rows = store.list_documents()
+                candidates = URLCommitter._document_list_candidates(store) if rows else set()
+                for row in rows:
+                    if type(row['id']) is not int or row['id'] <= 0:
+                        raise ImportFailure('invalid_document_id')
+                if candidates == set():
+                    return [dict(row) for row in rows]
+                filter_stamp = URLCommitter._document_list_stamp(store)
+            result = []
+            for row in rows:
+                doc_id = row['id']
+                with store._lock:
+                    before = URLCommitter._document_list_stamp(store)
+                    if before is None or before != filter_stamp:
+                        # Do not carry a non-URL exemption across a database change.
+                        candidates = None
+                    if candidates is not None and doc_id not in candidates:
+                        result.append(dict(row))
+                        continue
+                    if before is None:
+                        info = URLCommitter._document_info(store, doc_id, committer)
+                        result.append({**row, **(info or {})})
+                        continue
+                # The URL gate protects publication/retained files. Each original
+                # check owns a read transaction; progress writes need no Store hold.
+                info = URLCommitter._document_info(store, doc_id, committer)
+                with store._lock:
+                    # Library deletion and annotation jobs also write via Store,
+                    # without the URL gate. Revalidate once if any write intervened.
+                    if URLCommitter._document_list_stamp(store) != before:
+                        info = URLCommitter._document_info(store, doc_id, committer)
+                    result.append({**row, **(info or {})})
+            return result
+
+    @staticmethod
     @contextmanager
     def document_access(store: Store, doc_id: int, committer: URLCommitter | None):
         """Hold the local publication/delete locks through the caller's presentation."""

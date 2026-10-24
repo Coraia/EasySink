@@ -1,0 +1,64 @@
+:root {
+  --brand-blue: #4a93de;
+  --brand-amber: #f2b64e;
+  --brand-paper: #fff9f0;
+}
+.easysink-brand-icon {
+  display: block;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+.brand {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 650;
+  letter-spacing: -0.7px;
+}
+
+.brand small {
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 1px;
+}
+
+.cs-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cs-brand > .easysink-wordmark,
+.pb-brand > .easysink-wordmark {
+  margin-right: 0;
+  color: inherit;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 650;
+  letter-spacing: -0.7px;
+}
+
+.cs-brand .easysink-wordmark small {
+  margin: 5px 0 0;
+  letter-spacing: 1px;
+}
+
+.pb-brand > .easysink-brand-icon {
+  width: 36px;
+  height: 36px;
+}
+
+@media (max-width: 720px) {
+  .cs-brand > .easysink-brand-icon,
+  .pb-brand > .easysink-brand-icon {
+    width: 34px;
+    height: 34px;
+  }
+}
+@media (max-width: 650px) {
+  .brand > .easysink-brand-icon {
+    width: 35px;
+    height: 35px;
+  }
+}
+/* End EasySink brand overrides. */

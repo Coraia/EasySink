@@ -23,6 +23,7 @@ export const roseVocabulary = {
   breakfast: ["早餐", "water"],
   water: ["水", "water"],
   sprinkling: ["洒水", "water"],
+  "sprinkling-can": ["洒水壶", "water"],
   can: ["水壶", "water"],
   tended: ["照料", "water"],
   thorns: ["花刺", "thorns"],
@@ -185,11 +186,38 @@ export function buildRoseChapter(doc, plan) {
     if (index === 58 || index === 59 || index === 65)
       line.scene.action = "fragrance";
     line.cue = act.cue;
+    if (act.scene.key === "water" && line.blockIndex < 10) {
+      Object.assign(line.scene, { pose: "seated", action: "rose" });
+      line.scene.label = "玫瑰提出早餐请求 · 还没有取来水壶";
+      line.cue = line.scene.label;
+    } else if (act.scene.key === "water" && line.blockIndex >= 11) {
+      Object.assign(line.scene, { pose: "standing", action: "rose" });
+    }
+    if (["wind", "night"].includes(act.scene.key)) {
+      line.scene.label =
+        act.scene.key === "wind"
+          ? "玫瑰请求挡风屏 · 保护方式的示意"
+          : "玫瑰希望夜里盖上玻璃罩 · 想象";
+      line.cue = line.scene.label;
+    }
+    if (act.scene.key === "cough") {
+      line.scene.screen = 0;
+      line.scene.allowScreen = false;
+      line.scene.label = "挡风屏还没有找来，玫瑰在催促";
+    }
+    line.scene.words = Object.keys(roseVocabulary).filter(
+      (word) => word !== "can" || /sprinkling-can/i.test(line.text),
+    );
     // The opening compares the rose with the planet's earlier, simple flowers.
     // Those flowers have one ring of petals; they are not rose buds.
-    if (index <= 2) {
+    if (index <= 3) {
       Object.assign(line.scene, {
-        key: ["rose-introduction", "simple-flowers", "single-ring"][index],
+        key: [
+          "rose-introduction",
+          "simple-flowers",
+          "single-ring",
+          "simple-flowers-fade",
+        ][index],
         bloom: 1,
         growth: 1,
         night: 0,
@@ -197,18 +225,20 @@ export function buildRoseChapter(doc, plan) {
         keepRose: true,
         meadow: index > 0 ? 1 : 0,
         detail: index === 2 ? 1 : 0,
-        action: ["rose", "flowers", "single-ring"][index],
+        action: ["rose", "flowers", "single-ring", "flowers"][index],
         frame: plan.frames[index === 0 ? 1 : 0],
       });
       line.caption = [
         "慢慢认识这朵花",
         "回看玫瑰到来以前",
         "那些小花，只有一圈花瓣",
+        "那些朝开夕谢的小花",
       ][index];
       line.cue = [
         "故事从这朵特别的玫瑰说起，小王子静静望着她。",
         "玫瑰仍在眼前；上方的回忆里，是她到来以前那些朴素的小花。",
         "原文的 They 指回忆里的小花：只有一圈花瓣，不占地方，也不给谁添麻烦。",
+        "这句仍在回忆以前的小花：早晨开放，晚上就凋谢了。玫瑰的幼芽还没登场。",
       ][index];
     }
     const last = pages.at(-1);

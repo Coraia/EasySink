@@ -3,8 +3,10 @@ export function install(ctx) {
   const home = ctx.hook("home", async (view) => {
     const { scope } = view;
     const list = await api("/progress", { signal: scope.signal });
-    if (scope.signal.aborted || !list.length) return;
-    const p = list[0];
+    if (scope.signal.aborted) return;
+    const ownDocuments = new Set(view.documents.map(doc => doc.id));
+    const p = list.find(position => ownDocuments.has(position.doc_id));
+    if (!p) return;
     const book = view.collections?.find((book) =>
       book.chapters?.some((chapter) => chapter.doc_id === p.doc_id),
     );
@@ -21,7 +23,32 @@ export function install(ctx) {
       scope = reader.scope;
     let timer = null,
       last = null,
+      confirmed = null,
       queue = Promise.resolve();
+    const capturePosition = () => {
+      const pages = reader.pages, word = pages?.wordReflow;
+      // A navigation target may be inside the visible spread. Resume must use
+      // its first source, sampled only after the actual layout has settled.
+      if (!reader.restoring && !document.hidden && !reader.popElement &&
+          !scope.signal.aborted && pages?.complete && pages.layoutComplete &&
+          Number.isInteger(pages.layoutEpoch) && pages.stableEpoch === pages.layoutEpoch &&
+          !pages.displayPending && !pages.animating && !pages.canonicalDirty &&
+          !pages.retainedLayoutPending && !reader.annotationRefreshPending &&
+          !word?.pendingLayout && !word?.flushing && !word?.pendingCanonical &&
+          !["preparing", "playing"].includes(word?.owner?.dataset.reflowPhase)) {
+        const view = reader.captureView(), anchor = view.visibleAnchor;
+        const offset = pages.offsets?.get(anchor?.block_id);
+        if (view.documentId === id && view.sourceVersion === reader.doc.version &&
+            view.layoutEpoch === pages.layoutEpoch && anchor?.version === reader.doc.version &&
+            Number.isInteger(anchor.start) && anchor.start >= 0 &&
+            Number.isFinite(offset) && Number.isFinite(pages.length))
+          confirmed = {...anchor, ratio: Math.min(1,
+            (offset + anchor.start) / Math.max(1, pages.length))};
+      }
+      // Never substitute a lookup/selection target when the paper is obscured
+      // or being redrawn. Keep the last confirmed source in this revision.
+      return confirmed?.version === reader.doc.version ? confirmed : null;
+    };
     const save = () => {
       if (!last) return queue;
       const anchor = last;
@@ -55,11 +82,12 @@ export function install(ctx) {
     if (!local.get(`jump:${id}`))
       await reader.restore(
         pending || saved.anchor || { ratio: saved.scroll_ratio },
-        { automatic: true, mark: false },
+        { automatic: true, mark: false, alignStart: true },
       );
     const changed = () => {
-      if (reader.restoring || document.hidden) return;
-      last = reader.position();
+      const anchor = capturePosition();
+      if (!anchor) return;
+      last = anchor;
       clearTimeout(timer);
       timer = setTimeout(save, 650);
     };
@@ -67,12 +95,7 @@ export function install(ctx) {
     scope.on(
       window,
       "scroll",
-      () => {
-        if (reader.restoring || document.hidden) return;
-        last = reader.position();
-        clearTimeout(timer);
-        timer = setTimeout(save, 650);
-      },
+      changed,
       { passive: true },
     );
     scope.on(window, "pagehide", () => {
@@ -80,7 +103,7 @@ export function install(ctx) {
       save();
     });
     scope.on(window, "reader-before-close", event => {
-      if (!reader.restoring) last = reader.position();
+      last = capturePosition() || last;
       clearTimeout(timer);
       if (last) local.set(`position-pending:${id}`, last);
       event.detail.waitUntil(save().then(() => !local.get(`position-pending:${id}`)));

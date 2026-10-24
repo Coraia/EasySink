@@ -20,9 +20,9 @@ def filter_candidates(l0, l1, profile, word_count, density=None, verdicts=None):
     eligible = []
     for a in l0 + l1:
         key = target(a)
-        if profile.knows(key) or verdicts.get(key) == "known":
+        if not a.forced and (profile.knows(key) or verdicts.get(key) == "known"):
             continue
-        forced = profile.struggles_with(key) or verdicts.get(key) == "unknown"
+        forced = a.forced or profile.struggles_with(key) or verdicts.get(key) == "unknown"
         if a.kind == Kind.WORD:
             if not forced and (a.suppressed or 0 < a.rarity <= threshold):
                 continue
@@ -44,7 +44,7 @@ def filter_candidates(l0, l1, profile, word_count, density=None, verdicts=None):
     for a in eligible:
         key = target(a)
         span = set(range(a.first_token, a.last_token + 1))
-        if (not profile.repeat and key in seen) or span & occupied:
+        if (not profile.repeat and key in seen and a.source != "usage-preference") or span & occupied:
             continue
         if not a.forced and automatic_count >= budget:
             continue

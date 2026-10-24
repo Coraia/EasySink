@@ -35,6 +35,13 @@ def _download(url: str, dest: Path) -> None:
 
 
 def build_indexes(db_path: Path) -> None:
+    # A development slot references its sealed dictionary. Never open that
+    # reference or another read-only baseline with a SQLite write connection.
+    db_path = Path(db_path)
+    if (db_path.is_symlink() or not db_path.is_file()
+            or not db_path.stat().st_mode & 0o222
+            or not db_path.parent.stat().st_mode & 0o222):
+        raise ValueError("Dictionary indexing requires an independent writable file and directory")
     print("[idx ] 构建词频索引…")
     con = sqlite3.connect(db_path)
     con.execute("CREATE INDEX IF NOT EXISTS idx_frq ON stardict(frq)")

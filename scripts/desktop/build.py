@@ -20,8 +20,10 @@ import sys
 import time
 import tomllib
 from pathlib import Path
+from resource_policy import native_clone, preflight
 
 ROOT = Path(__file__).resolve().parents[2]
+ICON = ROOT / "desktop/Assets/EasySink.icns"
 PDFJS_ROOT = ROOT / "web/prototypes/pdf-lab/vendor/pdfjs-6.4.299"
 PDFJS_MANIFEST = PDFJS_ROOT / "SOURCE.json"
 PDF_PINS = {
@@ -32,7 +34,8 @@ PDF_PINS = {
 DIRECT = ("fastapi", "uvicorn", "httpx", "pydantic", "pydantic-settings", "python-multipart", "markdown-it-py")
 SCRIPTS = ("scripts/pdf_lab_convert.py", "scripts/formula_recognize.py",
            "scripts/setup_mineru_runtime.py", "scripts/desktop/backend.py",
-           "scripts/desktop/runtime.py", "scripts/desktop/prepare_ocr.py")
+           "scripts/desktop/launch_policy.py", "scripts/desktop/runtime.py",
+           "scripts/desktop/prepare_ocr.py")
 
 
 def run(command, **kwargs):
@@ -85,7 +88,7 @@ def source_files():
 
 def source_hashes():
     sources = [*source_files(), *(ROOT / "desktop").glob("*.swift"),
-               Path(__file__), ROOT / "scripts/desktop/dependencies.lock", ROOT / "uv.lock"]
+               Path(__file__), ICON, ROOT / "scripts/desktop/dependencies.lock", ROOT / "uv.lock"]
     return {str(p.relative_to(ROOT)): sha(p) for p in sorted(sources)}
 
 
@@ -111,9 +114,7 @@ def resources(app):
                 raise RuntimeError("Bundled dictionary changed; use a new output directory.")
             continue
         # APFS clone-on-write: never hardlink mutable source files into a release.
-        cloned = subprocess.run(["/bin/cp", "-c", str(source), str(target)], capture_output=True)
-        if cloned.returncode:
-            shutil.copyfile(source, target)
+        native_clone(source, target)
         target.chmod(0o444)
 
 
@@ -230,7 +231,15 @@ def main():
     parser.add_argument("--dependency-lock", type=Path)
     parser.add_argument("--refresh-app", action="store_true")
     parser.add_argument("--archive", action="store_true", help="Also produce a compressed distributable ZIP")
+    parser.add_argument("--disk-growth-bytes", type=int, required=True)
+    parser.add_argument("--ram-bytes", type=int, required=True)
+    parser.add_argument("--cpu-fraction", type=float, required=True)
     args = parser.parse_args()
+    capacity_root = args.output.resolve()
+    while not capacity_root.exists():
+        capacity_root = capacity_root.parent
+    resource_budget = preflight(capacity_root, disk_growth_bytes=args.disk_growth_bytes,
+                                ram_bytes=args.ram_bytes, cpu_fraction=args.cpu_fraction)
     # The current canonical lock is authoritative even on a source-only refresh.
     # Otherwise newly added runtime dependencies would silently remain absent.
     args.dependency_lock = (args.dependency_lock or ROOT / "scripts/desktop/dependencies.lock").resolve()
@@ -241,20 +250,29 @@ def main():
     if not uv:
         parser.error("uv is required only on the build machine")
     require_pdfjs()
+    if not ICON.is_file() or ICON.is_symlink():
+        parser.error("desktop/Assets/EasySink.icns must be a regular checked-in build input")
     swift = sorted((ROOT / "desktop").glob("*.swift"))
     if not (ROOT / "desktop/App.swift").is_file():
         parser.error("Main must supply desktop/App.swift first")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    bundle = output / "Wise Reader.app"
+    bundle = output / "EasySink.app"
     marker = output / "desktop-build-inputs.json"
-    if bundle.exists() and not (args.refresh_app and marker.exists()):
+    if args.refresh_app and not (bundle.is_dir() and marker.is_file()
+            and (bundle / "Contents/Resources/python/bin/python3").is_file()
+            and (bundle / "Contents/Resources/python/BUILD").is_file()):
+        parser.error("--refresh-app requires this builder's existing EasySink.app, runtime and build-inputs marker")
+    if bundle.exists() and not args.refresh_app:
         parser.error("Output exists; --refresh-app reuses this builder's runtime/dictionary, or choose --output DIR")
     frozen_sources = source_hashes()
     requested_lock_hash = sha(args.dependency_lock)
     contents = bundle / "Contents"
     macos = contents / "MacOS"
     macos.mkdir(parents=True, exist_ok=True)
+    resource_root = contents / "Resources"
+    resource_root.mkdir(parents=True, exist_ok=True)
+    resource_root.chmod(0o755)
     snapshot = output / "desktop-source"
     snapshot.mkdir(exist_ok=True)
     swift_inputs = []
@@ -269,14 +287,21 @@ def main():
          "-framework", "AppKit", "-framework", "WebKit"])
     (contents / "Info.plist").write_bytes(plistlib.dumps({
         "CFBundleExecutable": "WiseReader", "CFBundleIdentifier": "com.coraia.wisereader.candidate",
-        "CFBundleName": "Wise Reader", "CFBundleDisplayName": "Wise Reader",
-        "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.2.0",
-        "CFBundleVersion": "17", "LSMinimumSystemVersion": "13.0",
+        "CFBundleName": "EasySink", "CFBundleDisplayName": "EasySink",
+        "CFBundleIconFile": "EasySink.icns",
+        "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.3.0",
+        "CFBundleVersion": "29", "LSMinimumSystemVersion": "13.0",
         "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication",
         "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
     }, sort_keys=True))
-    app = contents / "Resources/app"
-    python_root = contents / "Resources/python"
+    icon_target = resource_root / "EasySink.icns"
+    if icon_target.exists():
+        icon_target.chmod(0o644)
+    copy(ICON, icon_target)
+    if sha(icon_target) != frozen_sources[str(ICON.relative_to(ROOT))]:
+        raise RuntimeError("Packaged EasySink icon changed during build; freeze and rebuild.")
+    app = resource_root / "app"
+    python_root = resource_root / "python"
     if args.refresh_app:
         original = json.loads(marker.read_text())
         info, runtime = original["runtime"], Path(original["runtime_source"])
@@ -308,8 +333,8 @@ def main():
             if not packaged.is_file() or sha(packaged) != digest:
                 raise RuntimeError(f"Packaged source changed during build: {relative}; freeze and rebuild.")
     audit_native_runtime(python_root, output)
-    readonly_resources(contents / "Resources")
-    inputs = {"runtime": info, "runtime_source": str(runtime), "runtime_build": (python_root / "BUILD").read_text().strip(),
+    readonly_resources(resource_root)
+    inputs = {"resource_budget": resource_budget, "runtime": info, "runtime_source": str(runtime), "runtime_build": (python_root / "BUILD").read_text().strip(),
               "dependency_lock_sha256": sha(lock), "swift_sources": {"desktop/" + p.name: sha(p) for p in swift_inputs},
               "builder_sha256": sha(Path(__file__)), "uv_lock_sha256": sha(ROOT / "uv.lock"),
               "source_sha256": frozen_sources}
@@ -324,7 +349,7 @@ def main():
              "optional_ocr_bundled_bytes": 0, "optional_ocr_download_bytes": None,
              "ocr_accuracy_passed": False, "build_elapsed_seconds": time.monotonic() - started}
     if args.archive:
-        archive = output / "Wise Reader.zip"
+        archive = output / "EasySink.zip"
         if archive.exists():
             archive.unlink()
         run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", bundle, archive])

@@ -5,6 +5,7 @@ import json
 import math
 
 from .text_normalization import normalize_block
+from .paragraph_groups import paragraph_projection, apply_paragraph_groups
 
 OBJECT = "\ufffc"
 
@@ -43,10 +44,14 @@ def inline_objects(original, value, source):
 
 def build_representation(pages, book_id, source_sha256):
     blocks, text, position = [], [], 0
+    furniture, paragraph_groups = paragraph_projection(pages)
     for page in pages:
         if page.get("quality_state") == "rejected":
             continue
+        first = len(blocks)
         for original in page["blocks"]:
+            if original is furniture.get(page['page_number']):
+                continue
             normalization = None
             asset = original.get("asset_url")
             kind = original["type"]
@@ -103,12 +108,25 @@ def build_representation(pages, book_id, source_sha256):
             blocks.append(block)
             text.append(value)
             position = block["end"]
+        label = furniture.get(page['page_number'])
+        if label and len(blocks) > first:
+            source = {**label['source'], 'width': page['width'], 'height': page['height'],
+                'rotation': page.get('rotation', 0), 'crop_box': page.get('crop_box'),
+                'book_id': book_id, 'source_sha256': source_sha256,
+                'conversion_task_id': page.get('conversion_task_id', ''),
+                'object_id': 'pdf-' + label['id']}
+            blocks[first]['page_furniture'] = [{'id': 'pdf-' + label['id'],
+                'role': 'printed-page-label', 'text': label['text'], 'source': source,
+                'evidence': 'detached-bottom-margin+adjacent-consecutive-label'}]
+    apply_paragraph_groups(blocks, paragraph_groups)
     canonical = "\n\n".join(text)
     revision = hashlib.sha256(json.dumps({"text": canonical, "blocks": blocks}, ensure_ascii=False,
         sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     for block in blocks:
         block["source"]["object_id"] = block["id"]
         block["source"]["revision"] = revision
+        for item in block.get('page_furniture', []):
+            item['source']['revision'] = revision
         for item in block.get("inline_objects", []):
             item["source"]["object_id"] = block["id"]
             item["source"]["revision"] = revision

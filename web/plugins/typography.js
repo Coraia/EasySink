@@ -44,31 +44,32 @@ export function install(ctx) {
         (el, scope) => {
           $("#type-font", el).value = prefs.font || "serif";
           scope.on($("#type-font", el), "change", (ev) => {
-            const anchor = r.position();
+            const anchor = r.captureView().visibleAnchor || r.position();
             prefs.font = ev.target.value;
             apply();
             local.set("typography", prefs);
-            r.pages.reflow(anchor);
+            r.pages.reflow(anchor, {reason: "font"});
             $("#type-state", el).textContent = "已自动保存 ✓";
           });
           scope.on(el, "input", (ev) => {
             const input = ev.target.closest("[data-type]");
             if (!input) return;
-            const anchor = r.position();
+            const anchor = r.captureView().visibleAnchor || r.position();
             prefs[input.dataset.type] = +input.value;
             apply();
             local.set("typography", prefs);
             $("#type-value-" + input.dataset.type, el).textContent =
               input.value;
-            r.pages.reflow(anchor);
+            r.pages.reflow(anchor, {reason: input.dataset.type});
             $("#type-state", el).textContent = "已自动保存 ✓";
           });
           scope.on($("#reset-type", el), "click", () => {
+            const anchor = r.captureView().visibleAnchor || r.position();
             prefs = { size: 22, line: 1.95, width: 760, font: "serif" };
             apply();
             local.set("typography", prefs);
             r.closePanel();
-            r.pages.reflow(r.position());
+            r.pages.reflow(anchor, {reason: "typography-reset"});
           });
         },
       ),

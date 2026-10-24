@@ -1,5 +1,6 @@
 // Opt-in, bounded, in-memory capture. No localStorage/IndexedDB copy of source.
 import { api, setEvidenceObserver, toast } from './core.js';
+import { annotationInk } from './annotation-ink.js';
 
 const bytes = value => new TextEncoder().encode(JSON.stringify(value)).length;
 const id = () => crypto.randomUUID();
@@ -220,10 +221,9 @@ export class ReadingEvidence {
       }
       if (snapshot.truncated) break;
     }
-    for (const gloss of document.querySelectorAll('#article .annotation .gloss')) {
-      if (!visible(gloss)) continue;
-      const parent = gloss.closest('[data-annotation]'), a = r.annotations[Number(parent.dataset.annotation)];
-      const item = {text:gloss.textContent,source:a?.source,block_id:a?.block?.id,start:a?.start,end:a?.end};
+    for (const [index,text] of annotationInk({text:true})) {
+      const a = r.annotations[index];
+      const item = {text,source:a?.source,block_id:a?.block?.id,start:a?.start,end:a?.end};
       snapshot.annotations.push(item);
       if (!fits()) {snapshot.annotations.pop();snapshot.truncated=true;break;}
     }

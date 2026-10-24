@@ -1,6 +1,10 @@
 import { $, e, api, local } from "./core.js";
 import { sourceUrlRanges, overlapsSourceUrl, sourceUrlParts } from "./source-urls.js";
 import { pdfInlineStyles, pdfInlineObjects, renderPdfInline } from "./pdf-inline.js";
+import { AnnotationReflow } from "./annotation-reflow.js";
+import { captureAnnotationLayout } from "./annotation-layout.js";
+
+const PRESENTATION_HISTORY_LIMIT = 4;
 
 import { PageCurlRenderer } from "./page-curl-renderer.js?v=20261018-page-turn-latency-selection";
 
@@ -10,6 +14,7 @@ import { installReadingEdgeDrag } from "./reading-edge-drag.js?v=20261007-native
 export class ReadingPages {
   constructor(reader) {
     this.r = reader;
+    this.wordReflow = new AnnotationReflow(this);
     this.pages = [];
     this.index = 0;
     this.anchor = null;
@@ -30,10 +35,17 @@ export class ReadingPages {
     this.measure.setAttribute("aria-hidden", "true");
     document.querySelector(".reader").append(this.measure);
     const scope = reader.scope;
-    scope.on($("#article"), "pointerdown", () => {
-      // A slow boundary load must not steal a new word lookup or text selection.
-      if (this.preview?.boundary) this.finishAnimation("range-interrupted");
+    scope.on($("#article"), "pointerdown", (event) => {
+      if (event.button !== 0 || !event.target.closest(".source-fragment,[data-word],[data-annotation]")) return;
+      this.interruptForSourceIntent();
     }, {capture: true});
+    scope.on($("#article"), "keydown", (event) => {
+      if (((event.key === "Enter" || event.key === " ") && event.target.matches("[data-word],[data-annotation]")) ||
+          (event.shiftKey && /^(Arrow|Home|End)/.test(event.key))) this.interruptForSourceIntent();
+    }, {capture: true});
+    // choose/clearSelection announces intent before changing its anchor. This
+    // also covers handle adjustments and selection from a non-pointer action.
+    reader.on("before-selection", () => this.interruptForSourceIntent());
     let pixelRatio = devicePixelRatio || 1;
     scope.on(window, "resize", () => {
       if (pixelRatio === (devicePixelRatio || 1)) return;
@@ -45,6 +57,8 @@ export class ReadingPages {
       this.clearRanges();
       ++this.generation;
       ++this.navigation;
+      this.invalidateLayout();
+      this.resolveFlow?.(false);
       clearTimeout(this.timer);
       this.wake();
       this.measure.remove();
@@ -55,7 +69,9 @@ export class ReadingPages {
       const rect = $(".reading-columns")?.getBoundingClientRect();
       if (!rect || !this.layoutChanged(rect)) return;
       clearTimeout(timer);
-      timer = setTimeout(() => this.reflow(this.position()), 100);
+      const anchor = this.lastViewAnchor || this.position();
+      this.invalidateLayout({geometry: true});
+      timer = setTimeout(() => this.reflow(anchor, {reason: "viewport"}), 100);
     });
     resize.observe($(".reading-columns"));
     resize.observe($("#article"));
@@ -72,6 +88,61 @@ export class ReadingPages {
       Math.abs(article.width - (this.articleWidth || 0)) > 1 ||
       Math.abs(article.height - (this.articleHeight || 0)) > 1
     );
+  }
+  invalidateLayout({geometry = false} = {}) {
+    this.layoutEpoch = (this.layoutEpoch || 0) + 1;
+    this.stableEpoch = null;
+    this.layoutComplete = false;
+    if (geometry) {
+      this.geometryEpoch = (this.geometryEpoch || 0) + 1;
+      this.annotationLayout = null;
+      this.wordReflow?.dispose();
+    }
+    for (const finish of [...(this.stableWaiters || [])]) finish(false);
+    return this.layoutEpoch;
+  }
+  whenStable({epoch = this.layoutEpoch, signal} = {}) {
+    if (signal?.aborted || this.r.scope.signal.aborted || epoch !== this.layoutEpoch)
+      return Promise.resolve(false);
+    if (this.markStable()) return Promise.resolve(true);
+    return new Promise(resolve => {
+      const finish = value => {
+        this.stableWaiters.delete(finish);
+        signal?.removeEventListener("abort", abort);
+        this.r.scope.signal.removeEventListener("abort", abort);
+        resolve(value);
+      };
+      const abort = () => finish(false);
+      (this.stableWaiters ||= new Set()).add(finish);
+      signal?.addEventListener("abort", abort, {once: true});
+      this.r.scope.signal.addEventListener("abort", abort, {once: true});
+      if (signal?.aborted || this.r.scope.signal.aborted || epoch !== this.layoutEpoch) finish(false);
+    });
+  }
+  currentLayoutLanding() {
+    const landed=this.layoutLanding;
+    return Boolean(landed && landed.epoch===this.layoutEpoch && landed.generation===this.generation &&
+      landed.navigation===this.navigation && landed.documentId===this.r.doc.id && landed.version===this.r.doc.version &&
+      landed.leaf?.isConnected && landed.leaf.parentElement===landed.article && !this.canonicalDirty && !this.r.scope.signal.aborted);
+  }
+  markStable() {
+    const word = this.wordReflow;
+    if (!this.layoutComplete || !this.complete || this.displayPending || this.r.restoring ||
+        this.animating || this.retainedLayoutPending || word?.pendingLayout || word?.flushing || word?.pendingCanonical ||
+        (word?.owner?.isConnected && ["preparing", "playing"].includes(word.owner.dataset.reflowPhase)) ||
+        this.r.scope.signal.aborted) return;
+    this.stableEpoch = this.layoutEpoch;
+    this.lastViewAnchor = this.r.captureView?.().visibleAnchor || null;
+    for (const finish of [...(this.stableWaiters || [])]) finish(true);
+    return true;
+  }
+  geometrySignature() {
+    const article = $("#article"), prose = article.querySelector(".reading-prose") || article;
+    const css = getComputedStyle(prose);
+    return JSON.stringify([this.width, this.height, this.count, this.measure.style.width,
+      css.fontFamily, css.fontSize, css.fontWeight, css.fontStyle, css.lineHeight,
+      css.letterSpacing, css.wordSpacing, css.fontKerning, css.fontFeatureSettings,
+      local.get("page-layout", "auto"), $("#translation-pane").hidden]);
   }
   layout() {
     const article = $("#article"),
@@ -119,6 +190,16 @@ export class ReadingPages {
   }
   leafMarkup(index) {
     const fragments = this.pages[index] || [];
+    // The edited spread is a temporary presentation, never a page boundary.
+    // Preserve its current faces for a turn; a continuation packet owns its
+    // destination faces without feeding them back into canonical pagination.
+    const frozen = index >= this.index && index < this.index + this.count
+      ? this.annotationLayout?.[index - this.index] : null;
+    if (frozen) {
+      const leaf = frozen.leaf.cloneNode(true);
+      leaf.dataset.pageIndex = index;
+      return leaf.outerHTML;
+    }
     return `<section class="page-leaf" data-page-index="${index}"><div class="leaf-heading">${e(this.r.doc.title)}</div><div class="reading-prose">${this.fragmentsMarkup(fragments)}</div></section>`;
   }
   fragmentsMarkup(fragments) {
@@ -143,9 +224,14 @@ export class ReadingPages {
     return html;
   }
   invalidatePaint() {
-    this.finishAnimation();
-    this.painter.invalidate();
-    this.painter.warm();
+    // A quiet word edit invalidates page textures, but has no curl frame to
+    // finish. Clearing a retained full-screen Retina GL buffer here stalls
+    // unrelated text animation on every feedback click.
+    if (this.animating || this.preview || this.painter.scene) this.finishAnimation();
+    const quietWord = this.wordReflow.eligible() && !this.animating && !this.preview && !this.painter.scene;
+    const retired = this.painter.invalidate({deferTextures:quietWord,preserveSurface:quietWord});
+    if (retired.length) this.wordReflow.retireTextures(retired);
+    if (!this.wordReflow.eligible()) this.painter.warm();
   }
   finishAnimation(reason = "cancelled") {
     this.edge?.cancel(reason);
@@ -157,6 +243,7 @@ export class ReadingPages {
       cancelAnimationFrame(preview.raf);
       clearTimeout(preview.timeout);
       clearTimeout(preview.confirmTimer);
+      clearTimeout(preview.settleTimer);
       clearTimeout(preview.loadingTimer);
       this.painter.record(false, reason, preview.requested, undefined, preview.setup);
       if (preview.boundary) this.recordBoundary(preview, false, reason);
@@ -166,13 +253,207 @@ export class ReadingPages {
     this.animationToken = (this.animationToken || 0) + 1;
     this.painter.finish();
     this.animating = false;
+    this.markStable();
   }
-  adjacent(direction, reason = "tap") {
+  interruptForSourceIntent() {
+    ++this.navigation;
+    if (this.preview || this.animating) this.finishAnimation("source-intent");
+    // Release only navigation waiters; canonical flow continues for the new intent.
+    this.wake();
+  }
+  presentationIdentity() {
+    const css=getComputedStyle($("#article .reading-prose") || $("#article"));
+    return JSON.stringify([this.r.doc.id,this.r.doc.version,this.generation,this.layoutEpoch,
+      this.width,this.height,this.count,this.measure.style.width,css.font,css.lineHeight,css.letterSpacing,
+      $("#translation-pane").hidden,this.activeAnnotations.map(a=>[a.block.id,a.start,a.end,a.note,a.kind,a.source])]);
+  }
+  presentationTextureGeneration(view) {
+    return view.textureGeneration ||= `${this.generation}:view:${this.viewSerial=(this.viewSerial||0)+1}`;
+  }
+  clearPresentation() {
+    this.presentedView=null;this.viewTrail=null;this.viewTrailIndex=0;this.viewIdentity=null;
+  }
+  presentationPoints(snapshots) {
+    const parts=snapshots.flatMap(page=>page.fragments).filter(f=>f.end>f.start || this.visualBlock(this.blocks.get(f.id)));
+    const first=parts[0],last=parts.at(-1);
+    return{start:first?{block_id:first.id,start:first.start}:null,
+      end:last?{block_id:last.id,start:last.end,afterObject:this.visualBlock(this.blocks.get(last.id))}:null};
+  }
+  carryAfter(state, cursor) {
+    if(!cursor || !state?.overflowGloss) return [];
+    const order=new Map(this.r.doc.blocks.map((b,i)=>[b.id,i])),groups=new Map();
+    for(const glyph of state.overflowGloss) {
+      if(order.get(glyph.block_id)>order.get(cursor.block_id) ||
+          (glyph.block_id===cursor.block_id && glyph.end>cursor.start)) continue;
+      const item=this.activeAnnotations.find(a=>a.block.id===glyph.block_id && a.start===glyph.start && a.end===glyph.end);
+      if(!item)continue;
+      const key=JSON.stringify([glyph.block_id,glyph.start,glyph.end]);
+      if(!groups.has(key))groups.set(key,{block_id:glyph.block_id,start:glyph.start,end:glyph.end,
+        note:item.note,glyphStart:glyph.glyphStart,text:""});
+      groups.get(key).text+=glyph.text;
+    }
+    const segment=new Intl.Segmenter(undefined,{granularity:"grapheme"});
+    return [...groups.values()].filter(carry=>
+      [...segment.segment(`〈${carry.note}〉`)].slice(carry.glyphStart).map(s=>s.segment).join("")===carry.text);
+  }
+  currentPresentation() {
+    const identity=this.presentationIdentity();
+    if(this.viewIdentity===identity && this.viewTrail?.[this.viewTrailIndex]) {
+      const current=this.viewTrail[this.viewTrailIndex];
+      this.presentationTextureGeneration(current);
+      return current;
+    }
+    this.wordReflow.finish();
+    const snapshots=captureAnnotationLayout(this);
+    if(!snapshots)return null;
+    for(const page of snapshots)page.leaf.querySelectorAll('.reflow-moving').forEach(n=>n.classList.remove('reflow-moving'));
+    const points=this.presentationPoints(snapshots);
+    if(!points.start || !points.end)return null;
+    const priorIdentity=this.presentedView?.identity && JSON.parse(this.presentedView.identity);
+    const validCarry=items=>priorIdentity?.[0]===this.r.doc.id && priorIdentity?.[1]===this.r.doc.version
+      ? (items||[]).filter(item=>this.activeAnnotations.some(a=>a.block.id===item.block_id && a.start===item.start && a.end===item.end && a.note===item.note)) : [];
+    const state=this.wordReflow.canonicalState,owner=state?.context?.anchor,focus=this.wordReflow.anchor;
+    const ownsState=focus && owner?.block_id===focus.block_id && owner.start===focus.start && owner.end===focus.end;
+    const current={snapshots,...points,identity,canonicalIndex:this.index,
+      incomingCarry:validCarry(this.presentedView?.incomingCarry),
+      outgoingCarry:ownsState?this.carryAfter(state,points.end):validCarry(this.presentedView?.outgoingCarry)};
+    this.presentationTextureGeneration(current);
+    this.viewIdentity=identity;this.viewTrail=[current];this.viewTrailIndex=0;
+    return current;
+  }
+  presentationOutside(direction) {
+    if(!this.annotationLayout && !this.presentedView)return null;
+    const current=this.currentPresentation();
+    if(!current)return null;
+    const cursor=direction>0?current.end:current.start,
+      order=this.r.doc.blocks.findIndex(b=>b.id===cursor.block_id),block=this.blocks.get(cursor.block_id);
+    return direction>0?order===this.r.doc.blocks.length-1 && cursor.start===block.text.length && !current.outgoingCarry.length
+      : order===0 && cursor.start===0 && !current.incomingCarry.length;
+  }
+  async preparePresentation(direction, {from=null}={}) {
+    if(from && (from.version!==undefined && from.version!==this.r.doc.version ||
+      !Number.isInteger(from.start) || from.start<0 || from.start>this.blocks.get(from.block_id)?.text.length)) return null;
+    const current=from?{identity:this.presentationIdentity(),end:from,outgoingCarry:[]}:this.currentPresentation();
+    if(!current)return null;
+    const historyIndex=this.viewTrailIndex+direction,prior=from?null:this.viewTrail?.[historyIndex];
+    if(prior?.identity===current.identity)return this.presentationPacket(prior,{historyIndex});
+    const identity=current.identity,navigation=this.navigation;
+    const valid=()=>!this.r.scope.signal.aborted && this.presentationIdentity()===identity && this.navigation===navigation;
+    const packet=Object.create(ReadingPages.prototype),measure=this.measure.cloneNode(false);
+    this.measure.parentElement.append(measure);
+    Object.assign(packet,{r:this.r,blocks:this.blocks,fragments:this.fragments,urlRanges:this.urlRanges,
+      inlineStyles:this.inlineStyles,inlineObjects:this.inlineObjects,urlImages:this.urlImages,
+      measure,width:this.width,height:this.height,count:this.count,pages:[],index:0,complete:false,
+      viewStart:direction>0?current.end:null,incomingCarry:direction>0?current.outgoingCarry:[],
+      excludedCarry:direction<0?current.incomingCarry:[]});
+    const builder=direction>0?packet.buildPages():packet.reversePages(current.start);
+    try {
+      let done=false;
+      while(!done && packet.pages.length<this.count) {
+        if(!valid())return null;
+        const deadline=performance.now()+4;
+        do {
+          const next=builder.next();done=next.done;
+          if(!done && next.value===null)break;
+          if(!done)packet.pages.push(next.value);
+        }while(!done && packet.pages.length<this.count && performance.now()<deadline);
+        if(!done && packet.pages.length<this.count)await new Promise(resolve=>setTimeout(resolve,0));
+      }
+      if(!valid())return null;
+      if(direction<0)packet.pages.reverse();
+      if(!packet.pages.length)return null;
+      while(packet.pages.length<this.count)packet.pages.push([]);
+      const snapshots=packet.pages.map((fragments,i)=>{
+        const holder=document.createElement('div');holder.innerHTML=packet.leafMarkup(i);
+        return{fragments,leaf:holder.firstElementChild};
+      });
+      const points=this.presentationPoints(snapshots);
+      if(!points.start || !points.end)return null;
+      const view={snapshots,...points,identity,canonicalIndex:this.pageFor(points.start),
+        incomingCarry:packet.incomingCarry,outgoingCarry:[]};
+      return this.presentationPacket(view,{direction});
+    }finally{builder.return?.();measure.remove();}
+  }
+  presentationPacket(view, intent) {
+    const packet=Object.create(ReadingPages.prototype);
+    Object.assign(packet,{r:this.r,blocks:this.blocks,fragments:this.fragments,urlRanges:this.urlRanges,
+      inlineStyles:this.inlineStyles,inlineObjects:this.inlineObjects,urlImages:this.urlImages,
+      pages:view.snapshots.map(p=>p.fragments),annotationLayout:view.snapshots,index:0,count:this.count,
+      generation:this.presentationTextureGeneration(view),complete:true,view,intent});
+    return packet;
+  }
+  commitPresentation(packet) {
+    const navigation=this.navigation;
+    const stale=()=>this.r.scope.signal.aborted || navigation!==this.navigation || packet.view.identity!==this.presentationIdentity();
+    if(stale())return false;
+    const {view,intent}=packet;
+    this.wordReflow.dispose();
+    if(stale())return false;
+    this.r.emit('before-navigation');
+    if(stale())return false;
+    this.r.emit('before-page');
+    if(stale())return false;
+    this.r.closePop();this.r.cancelHighlight?.();
+    if(stale())return false;
+    this.r.selection=null;getSelection()?.removeAllRanges();
+    // A canonical index can identify a different visible source window. Each
+    // presentation now owns a stable texture generation, so retain bounded LRU
+    // textures for an actual history return instead of forcing every turn cold.
+    if(stale())return false;
+    // No history or view mutation may precede a callback that can supersede it.
+    if(intent.historyIndex!==undefined)this.viewTrailIndex=intent.historyIndex;
+    else if(intent.direction>0) {
+      this.viewTrail=this.viewTrail.slice(0,this.viewTrailIndex+1);this.viewTrail.push(view);++this.viewTrailIndex;
+    }else{this.viewTrail.unshift(view);this.viewTrailIndex=0;}
+    const dropped=Math.max(0,this.viewTrailIndex-PRESENTATION_HISTORY_LIMIT+1);
+    if(dropped){this.viewTrail.splice(0,dropped);this.viewTrailIndex-=dropped;}
+    if(this.viewTrail.length>PRESENTATION_HISTORY_LIMIT)this.viewTrail.splice(PRESENTATION_HISTORY_LIMIT);
+    this.presentedView=view;this.annotationLayout=view.snapshots;
+    this.index=view.canonicalIndex;this.anchor=this.r.anchorFor(view.start.block_id,view.start.start,view.start.start);
+    this.render();
+    // draw may start a newer navigation after this view has already committed.
+    if(!stale())this.r.emit('position');
+    return true;
+  }
+  *reversePages(cursor) {
+    let order=this.r.doc.blocks.findIndex(b=>b.id===cursor.block_id),end=cursor.start,page=[],used=0,slice=performance.now();
+    const height=this.height;
+    const measure=function*(part){
+      this.measure.innerHTML=this.markup(part,true);
+      const node=this.measure.firstElementChild,css=getComputedStyle(node),value=node.getBoundingClientRect().height+parseFloat(css.marginTop)+parseFloat(css.marginBottom)+2;
+      if(performance.now()-slice>=4){yield null;slice=performance.now();}return value;
+    }.bind(this);
+    while(order>=0) {
+      const block=this.r.doc.blocks[order],object=this.visualBlock(block);
+      if(object && (block.id!==cursor.block_id || cursor.afterObject)) {
+        const part={id:block.id,start:0,end:block.text.length,object:true},h=yield*measure(part);
+        if(page.length && used+h>height){yield page;page=[];used=0;continue;}
+        page.unshift(part);used+=Math.min(height,h);--order;end=this.r.doc.blocks[order]?.text.length||0;continue;
+      }
+      if(!end || object){--order;end=this.r.doc.blocks[order]?.text.length||0;continue;}
+      const starts=[...block.text.slice(0,end).matchAll(/\S+\s*|\s+/g)].map(m=>m.index);
+      if(!starts.length){--order;end=this.r.doc.blocks[order]?.text.length||0;continue;}
+      let lo=0,hi=starts.length-1,best=-1,bestHeight=0;
+      while(lo<=hi){const mid=(lo+hi)>>1,h=yield*measure({id:block.id,start:starts[mid],end});
+        if(h<=height-used){best=mid;bestHeight=h;hi=mid-1;}else lo=mid+1;}
+      if(best<0 && page.length){yield page;page=[];used=0;continue;}
+      if(best<0){best=starts.length-1;bestHeight=height;}
+      const start=starts[best];page.unshift({id:block.id,start,end});used+=bestHeight;end=start;
+      if(start>0){yield page;page=[];used=0;}
+      else{--order;end=this.r.doc.blocks[order]?.text.length||0;}
+    }
+    if(page.length)yield page;
+  }
+  async adjacent(direction, reason = "tap") {
+    const intent=this.navigation;
+    if (this.wordReflow.pendingLayout || this.wordReflow.flushing) await this.wordReflow.flush();
+    if(this.r.scope.signal.aborted || intent!==this.navigation)return;
     if (this.r.focus.isOpen() || this.animating || this.displayPending) return;
-    const target = this.index > 0
+    const presentationOutside=this.presentationOutside(direction);
+    const target = presentationOutside!==null ? this.index+direction*this.count : this.index > 0
       ? Math.max(0, this.index + direction * this.count)
       : this.index + direction * this.count;
-    if (target < 0 || (this.complete && target >= this.pages.length)) {
+    if (presentationOutside===true || (presentationOutside===null && (target < 0 || (this.complete && target >= this.pages.length)))) {
       const next = this.neighbor(direction);
       if (next) {
         const rect = $("#article").getBoundingClientRect();
@@ -337,6 +618,7 @@ export class ReadingPages {
     $(".reader").dataset.rangeTurns = JSON.stringify(this.r.ctx.rangeTurns);
   }
   adopt(pages) {
+    this.invalidateLayout({geometry: true});
     this.layout();
     // A comparison pane or a viewport change can alter the landing geometry.
     // Preserve the target source, never reuse pagination measured at another width.
@@ -350,6 +632,8 @@ export class ReadingPages {
     this.complete = true;
     this.index = pages.index;
     this.anchor = this.firstAnchor();
+    this.geometryIdentity = this.geometrySignature();
+    this.layoutComplete = true;
     $(".reader").dataset.paginationReady = "true";
     this.render();
     return Promise.resolve();
@@ -371,24 +655,31 @@ export class ReadingPages {
         false,
       );
   }
-  indexSource() {
-    this.r.annotations = [];
+  indexSource({preserveAnnotations = false} = {}) {
+    if (!preserveAnnotations) this.r.annotations = [];
+    const prior = new Map(this.r.annotations.map((a, index) =>
+      [JSON.stringify([a.block.id,a.start,a.end,a.note,a.source]),index]));
+    this.activeAnnotations = [];
     this.fragments = new Map();
-    this.urlRanges = new Map();
-    this.inlineStyles = new Map();
-    this.inlineObjects = new Map();
+    if (!preserveAnnotations) {
+      this.urlRanges = new Map();
+      this.inlineStyles = new Map();
+      this.inlineObjects = new Map();
+    }
     this.blocks = new Map();
     this.offsets = new Map();
     this.length = 0;
     for (const block of this.r.doc.blocks) {
       this.blocks.set(block.id, block);
-      this.inlineStyles.set(block.id, pdfInlineStyles(block));
-      this.inlineObjects.set(block.id, this.r.doc.pdf
-        ? pdfInlineObjects(block, this.r.doc.pdf.book_id) : []);
+      if (!preserveAnnotations) {
+        this.inlineStyles.set(block.id, pdfInlineStyles(block));
+        this.inlineObjects.set(block.id, this.r.doc.pdf
+          ? pdfInlineObjects(block, this.r.doc.pdf.book_id) : []);
+      }
       this.offsets.set(block.id, this.length);
       this.length += block.text.length;
-      const urls = sourceUrlRanges(block.text || "");
-      this.urlRanges.set(block.id, urls);
+      const urls = preserveAnnotations ? this.urlRanges.get(block.id) : sourceUrlRanges(block.text || "");
+      if (!preserveAnnotations) this.urlRanges.set(block.id, urls);
       let cursor = 0;
       this.fragments.set(
         block.id,
@@ -396,18 +687,28 @@ export class ReadingPages {
           const item = { ...f, start: cursor, end: cursor + f.text.length };
           cursor = item.end;
           if (overlapsSourceUrl(urls, item.start, item.end)) item.type = "plain";
-          if (item.type !== "plain")
-            item.annotation =
-              this.r.annotations.push({
+          if (item.type !== "plain") {
+            const annotation = {
                 ...f,
                 start: item.start,
                 end: item.end,
                 block,
-              }) - 1;
+              };
+            const key = JSON.stringify([block.id,item.start,item.end,item.note,item.source]);
+            item.annotation = prior.get(key) ?? this.r.annotations.push(annotation) - 1;
+            this.activeAnnotations.push(this.r.annotations[item.annotation]);
+          }
           return item;
         }),
       );
     }
+    const source = JSON.stringify([this.r.doc.id, this.r.doc.version]);
+    const annotations = JSON.stringify(this.activeAnnotations.map(a =>
+      [a.block.id, a.start, a.end, a.kind, a.text, a.note, a.target, a.source]));
+    if (source !== this.sourceIdentity || annotations !== this.annotationIdentity)
+      this.invalidateLayout({geometry: this.sourceIdentity !== undefined && source !== this.sourceIdentity});
+    this.sourceIdentity = source;
+    this.annotationIdentity = annotations;
   }
   words(text, offset, block) {
     return sourceUrlParts(text, offset, this.urlRanges.get(block) || [])
@@ -460,7 +761,12 @@ export class ReadingPages {
     }
     const tag =
       { heading: "h2", quote: "blockquote", code: "pre", "list-item": "div" }[b.type] || "p";
-    const text = (this.fragments.get(b.id) || [])
+    const carry=this.viewStart?.block_id===b.id && this.viewStart.start===start
+      ? (this.incomingCarry||[]).map(item=>{
+        const index=this.r.annotations.findIndex(a=>a.block.id===item.block_id && a.start===item.start && a.end===item.end && a.note===item.note);
+        return index<0?"":`<span class="annotation" data-annotation="${index}" data-kind="continuation" role="button" tabindex="0"><span class="gloss reflow-note-piece" data-reflow-key="${e(JSON.stringify([item.block_id,item.start,item.end,item.glyphStart]))}" aria-hidden="true">${e(item.text)}</span></span>`;
+      }).join("") : "";
+    const text = carry+(this.fragments.get(b.id) || [])
       .filter((f) => f.start < end && f.end > start)
       .map((f) => {
         const a = Math.max(start, f.start),
@@ -474,7 +780,10 @@ export class ReadingPages {
           ? renderPdfInline(source, a, styles, render, objects)
           : render(source, a);
         if (f.type === "plain") return rendered;
-        return `<span class="annotation" role="button" tabindex="0" data-target="${e(f.target)}" data-kind="${e(f.kind)}" data-annotation="${f.annotation}" aria-label="${e(source)}：${e(f.note)}"><span class="source-text">${rendered}</span>${z === f.end ? `<span class="gloss" aria-hidden="true">${e(f.note)}</span>` : ""}</span>`;
+        const cut=this.excludedCarry?.find(item=>item.block_id===b.id && item.start===f.start && item.end===f.end && item.note===f.note);
+        const prefix=cut?[...new Intl.Segmenter(undefined,{granularity:"grapheme"}).segment(`〈${f.note}〉`)].slice(0,cut.glyphStart).map(s=>s.segment).join(""):null;
+        const gloss=z!==f.end?"":cut?(prefix?`<span class="gloss reflow-note-piece" data-reflow-key="${e(JSON.stringify([b.id,f.start,f.end,0]))}" aria-hidden="true">${e(prefix)}</span>`:""):`<span class="gloss" aria-hidden="true">${e(f.note)}</span>`;
+        return `<span class="annotation" role="button" tabindex="0" data-target="${e(f.target)}" data-kind="${e(f.kind)}" data-annotation="${f.annotation}" aria-label="${e(source)}：${e(f.note)}"><span class="source-text">${rendered}</span>${gloss}</span>`;
       })
       .join("");
     const source = `<${tag} data-block="${b.id}" data-start="${start}" data-end="${end}" class="${b.type === "list-item" ? "list-block" : b.type}">${text}</${tag}>`;
@@ -536,9 +845,26 @@ export class ReadingPages {
     this.waiters.splice(0).forEach((resolve) => resolve());
   }
   // Build exact pages cooperatively. The first completed page is usable immediately.
-  async reflow(anchor = this.position()) {
+  async reflow(anchor = this.position(), {keepDOM = false, reason = keepDOM ? "annotation" : "layout", reuseEpoch = false} = {}) {
     if (this.r.scope.signal.aborted) return;
+    const geometryChange=["font","size","line","width","typography-reset","viewport","columns"].includes(reason);
+    let geometryIntent=null;
+    if(geometryChange && this.validAnchor(anchor)) {
+      const prior=this.geometryRestore;
+      // Rapid inputs retain the original source start until the newest layout
+      // lands. An intervening source navigation starts a different intent.
+      if(prior && prior.navigation===this.navigation && prior.documentId===this.r.doc.id && prior.version===this.r.doc.version) anchor=prior.anchor;
+      geometryIntent={anchor:structuredClone(anchor),navigation:this.navigation,documentId:this.r.doc.id,version:this.r.doc.version};
+    }
+    this.geometryRestore=geometryIntent;
+    const epoch = reuseEpoch && this.layoutEpoch
+      ? this.layoutEpoch : this.invalidateLayout({geometry: reason !== "annotation"});
     const generation = ++this.generation;
+    this.layoutLanding=null;
+    this.resolveFlow?.(false);
+    this.flowReady = new Promise(resolve => { this.resolveFlow = resolve; });
+    const retainedNavigation = this.navigation;
+    if (!keepDOM) this.wordReflow.dispose();
     if (this.r.doc.source && !this.r.doc.pdf) {
       await this.prepareUrlImages();
       if (this.r.scope.signal.aborted || generation !== this.generation) return;
@@ -546,16 +872,25 @@ export class ReadingPages {
     this.clearRanges();
     clearTimeout(this.timer);
     this.wake();
-    this.finishAnimation();
-    this.painter.invalidate();
+    if (this.animating || this.preview || this.painter.scene) this.finishAnimation();
+    this.painter.invalidate({preserveSurface:keepDOM});
+    // Explicit size/layout changes release word-action layout reservations.
     this.layout();
+    const geometry = this.geometrySignature();
+    if (this.geometryIdentity !== undefined && geometry !== this.geometryIdentity) {
+      this.annotationLayout = null;
+      this.geometryEpoch = (this.geometryEpoch || 0) + 1;
+      this.wordReflow.dispose();
+      keepDOM = false;
+    }
+    this.geometryIdentity = geometry;
     // Keep the currently visible source during font/density/column changes.
     // Replacing it with page one while seeking a late anchor causes a visible jump.
     this.displayPending = Boolean(
       this.validAnchor(anchor) && $("#article").children.length,
     );
     this.pages = [];
-    this.index = 0;
+    if (!keepDOM) this.index = 0;
     this.complete = false;
 
     $(".reader").dataset.paginationReady = "false";
@@ -573,19 +908,25 @@ export class ReadingPages {
         if (next.done) {
           this.complete = true;
           if (!this.pages.length) this.pages = [[]];
+          if (keepDOM && retainedNavigation === this.navigation) {
+            this.index = this.pageFor(anchor);
+            this.anchor = this.validAnchor(anchor) || this.firstAnchor();
+          }
+          this.canonicalDirty = false;
           this.measure.replaceChildren();
           $(".reader").dataset.paginationReady = "true";
           $(".reader").dataset.paginationMs = (
             performance.now() - this.flowStarted
           ).toFixed(1);
-          this.painter.warm();
-          this.warmRanges();
+          if (!keepDOM) { this.painter.warm(); this.warmRanges(); }
+          this.resolveFlow?.(true);
           break;
         }
         if (next.value === null) break;
         this.pages.push(next.value);
       } while (performance.now() < deadline);
-      if (this.pages.length && !this.displayPending && this.painted !== generation) {
+      if ((this.pages.length >= this.count || (this.complete && this.pages.length)) &&
+          !keepDOM && !this.displayPending && this.painted !== generation) {
         this.painted = generation;
         this.anchor = this.firstAnchor();
         this.render();
@@ -594,7 +935,39 @@ export class ReadingPages {
       if (!this.complete) this.timer = setTimeout(advance, 0);
     };
     advance();
-    return this.restore(anchor, false, {reflow: true});
+    let landing;
+    if (keepDOM) {
+      this.displayPending = false;
+      if (retainedNavigation === this.navigation) this.anchor = anchor;
+      landing = Promise.resolve(true);
+    } else {
+      landing = this.restore(anchor, false, {reflow: true, alignStart:Boolean(geometryIntent)});
+      if(geometryIntent && this.geometryRestore===geometryIntent) geometryIntent.navigation=this.navigation;
+    }
+    Promise.all([this.flowReady, landing]).then(([complete, landed]) => {
+      if (epoch !== this.layoutEpoch || generation !== this.generation) return;
+      this.layoutComplete = Boolean(complete && (landed || this.currentLayoutLanding()));
+      if(this.layoutComplete && geometryIntent && this.geometryRestore===geometryIntent) this.geometryRestore=null;
+      if (this.layoutComplete) this.markStable();
+      else for (const finish of [...(this.stableWaiters || [])]) finish(false);
+    }).catch(() => {
+      if (epoch === this.layoutEpoch)
+        for (const finish of [...(this.stableWaiters || [])]) finish(false);
+    });
+    return landing;
+  }
+  *flowSegments() {
+    const blocks=this.r.doc.blocks,from=this.viewStart?blocks.findIndex(b=>b.id===this.viewStart.block_id):0;
+    if(from<0)return;
+    for(let i=from;i<blocks.length;i++) {
+      const block=blocks[i],start=i===from&&this.viewStart?this.viewStart.start:0;
+      if(i===from&&this.viewStart?.afterObject)continue;
+      if(start===block.text.length && !this.visualBlock(block)) {
+        if(i===from&&this.incomingCarry?.length)yield{block,start,end:start,carryOnly:true};
+        continue;
+      }
+      yield{block,start,end:block.text.length};
+    }
   }
   *buildPages() {
     const height = this.height;
@@ -620,7 +993,20 @@ export class ReadingPages {
       }
       return measured;
     }.bind(this);
-    for (const b of this.r.doc.blocks) {
+    for (const segment of this.flowSegments()) {
+      if (segment.pages) {
+        if (page.length) yield page;
+        yield* segment.pages;
+        page = [];
+        used = 0;
+        continue;
+      }
+      const b = segment.block;
+      if(segment.carryOnly) {
+        const part={id:b.id,start:segment.start,end:segment.end,annotationCarry:true},h=yield*measure(part);
+        if(h>height)throw new Error("注释续页超出当前页面，请保留当前阅读位置后调整排版。");
+        page.push(part);used+=h;continue;
+      }
       if (this.visualBlock(b)) {
         const part = {id: b.id, start: 0, end: b.text.length, object: true};
         const objectHeight = yield* measure(part);
@@ -635,11 +1021,11 @@ export class ReadingPages {
       }
       const ends = [...b.text.matchAll(/\S+\s*/g)].map(
         (m) => m.index + m[0].length,
-      );
+      ).filter(end => end > segment.start && end <= segment.end);
       if (!ends.length) continue;
-      ends[ends.length - 1] = b.text.length;
+      ends[ends.length - 1] = segment.end;
       let i = 0,
-        start = 0;
+        start = segment.start;
       while (i < ends.length) {
         let lo = i + 1,
           hi = Math.min(ends.length, i + 240),
@@ -757,13 +1143,13 @@ export class ReadingPages {
       ),
     };
   }
-  navigationUI() {
+  navigationUI({geometry = true} = {}) {
     const total = this.pages.length,
       last = Math.min(total, this.index + this.count);
     $("#reading-page-total").textContent =
       `${this.r.doc.chapter && !this.r.doc.pdf ? "本章 " : ""}${this.index + 1}${last > this.index + 1 ? "–" + last : ""} / ${total}${this.complete ? "" : "+"}`;
     const root = $(".reader");
-    this.updateEdges();
+    if (geometry) this.updateEdges();
     root.dataset.pageIndex = String(this.index);
     root.dataset.pageCount = String(total);
     root.dataset.sourcePosition = JSON.stringify(this.position());
@@ -779,6 +1165,7 @@ export class ReadingPages {
     this.r.renderSelection();
     this.r.ctx.run("draw", this.r).catch(console.error);
     this.r.emit("draw");
+    this.markStable();
     this.painter.warm();
     this.warmRanges();
     if (!$(".reader").dataset.firstSourceMs)
@@ -790,13 +1177,14 @@ export class ReadingPages {
     return local.get("page-light", true);
   }
   canGrab(ownPreview = false) {
+    // Input adapters exclude the card/tool targets. A card over the source is
+    // page-local assistance, not a modal reason to require a second gesture.
     return (
       !this.r.scope.signal.aborted &&
       !this.r.focus.isOpen() &&
       !this.r.aiSetupOpen &&
       !this.r.grammarInspecting &&
       !this.r.panelId &&
-      !this.r.popElement &&
       !document.querySelector("dialog[open]") &&
       !$("#reading-stage").inert &&
       $("#translation-pane").hidden &&
@@ -833,31 +1221,42 @@ export class ReadingPages {
     }
   }
   commitPage(index) {
+    const navigation=this.navigation,generation=this.generation;
+    const stale=()=>this.r.scope.signal.aborted || navigation!==this.navigation || generation!==this.generation;
+    if(stale())return false;
+    this.r.emit("before-navigation");
+    if(stale())return false;
     this.r.emit("before-page");
+    if(stale())return false;
+    this.clearPresentation();
+    this.wordReflow.dispose();
+    this.annotationLayout = null;
     this.r.closePop();
     this.r.cancelHighlight?.();
+    if(stale())return false;
     this.r.selection = null;
     getSelection()?.removeAllRanges();
     this.index = index;
     this.anchor = this.firstAnchor();
     this.render();
-    this.r.emit("position");
+    if(!stale())this.r.emit("position");
+    return true;
   }
   beginTurn(direction, clientY, force = false) {
+    if(this.r.scope.signal.aborted)return null;
     const setup = this.painter.collectPerformance ? { enteredAt: performance.now(), inputEvents: [] } : null;
     if ((!force && !this.canGrab()) || this.animating || this.displayPending)
       return null;
-    // A page gesture owns navigation. Selection is page-local assistance and
-    // deliberately expires here; returning to this page does not restore it.
-    if (this.r.selection || !getSelection()?.isCollapsed)
-      this.r.clearSelection?.();
-    const target = this.index > 0
+    // A preview is reversible. Assistance expires only when a new view commits.
+    const presented=this.presentationOutside(direction);
+    const target = presented!==null ? this.index+direction*this.count : this.index > 0
       ? Math.max(0, this.index + direction * this.count)
       : this.index + direction * this.count;
-    const outside = target < 0 || target >= this.pages.length;
+    if (presented===null && !this.complete && target + this.count > this.pages.length) return null;
+    const outside=presented===null
+      ? target < 0 || target >= this.pages.length : presented;
     const boundary = outside && this.complete ? this.rangeNeighbor(direction, true) : null;
     if (outside && !boundary) return null;
-    this.r.emit("before-navigation");
     document
       .querySelectorAll("#article .actions-visible")
       .forEach((el) => el.classList.remove("actions-visible"));
@@ -866,9 +1265,9 @@ export class ReadingPages {
       elements = [...article.children],
       element = elements[direction > 0 && this.count === 2 ? 1 : 0],
       leaf = element.getBoundingClientRect(),
-      generation = this.generation,
       token = ++this.navigation,
       frontIndex = this.index + (direction > 0 ? this.count - 1 : 0);
+    let generation=this.generation;
     const preview = (this.preview = {
       requested: performance.now(),
       setup,
@@ -900,9 +1299,18 @@ export class ReadingPages {
       clearTimeout(preview.timeout);
       clearTimeout(preview.loadingTimer);
       if (boundary) this.recordBoundary(preview, complete, reason);
+      clearTimeout(preview.settleTimer);
       this.preview = null;
       this.finishAnimation("settled");
-      if (complete && boundary) this.r.ctx.commitReadingRange(this.r, preview.destination);
+      if (complete && boundary) {
+        const stale = () => token !== this.navigation || generation !== this.generation || this.r.scope.signal.aborted;
+        if (stale()) return;
+        this.r.emit("before-navigation");
+        if (stale()) return;
+        this.r.emit("before-page");
+        if (!stale()) this.r.ctx.commitReadingRange(this.r, preview.destination);
+      }
+      else if (complete && preview.presentation) this.commitPresentation(preview.presentation);
       else if (complete) this.commitPage(target);
       else this.painter.warm();
     };
@@ -947,6 +1355,7 @@ export class ReadingPages {
       };
       if (!preview.ready || preview.following) return;
       cancelAnimationFrame(preview.raf);
+      clearTimeout(preview.settleTimer);
       if (!this.painter.scene) {
         clearTimeout(preview.confirmTimer);
         preview.confirmTimer = setTimeout(
@@ -965,9 +1374,9 @@ export class ReadingPages {
         trackpad = reason.startsWith("trackpad-"),
         keyboardFast = reason === "keyboard-held" || reason === "keyboard-tap-queued",
         duration = nativeQueued
-          ? Math.max(20, Math.min(28, Math.abs(to - from) * 36))
+          ? Math.max(16, Math.min(20, Math.abs(to - from) * 28))
           : native
-          ? Math.max(24, Math.min(32, Math.abs(to - from) * 42))
+          ? Math.max(20, Math.min(24, Math.abs(to - from) * 32))
           : keyboardFast
           ? Math.max(44, Math.min(46, Math.abs(to - from) * 54))
           : trackpad
@@ -988,15 +1397,21 @@ export class ReadingPages {
         if (!valid()) return;
         // A frame timestamp may precede a release handled in that same frame.
         // Never extrapolate the settling pose backwards before its start.
-        const t = Math.max(0, Math.min(1, (now - start) / duration)),
+        // A busy compositor can deliver an rAF timestamp well before callback
+        // entry. Native release duration follows elapsed time, not that stale
+        // timestamp or an extra number of progress-limited frames.
+        const clock = native ? performance.now() : now,
+          t = Math.max(0, Math.min(1, (clock - start) / duration)),
           // Smooth in both directions; cancel no longer snaps with a short
           // ease-out. Confirmation is separate from this reversible preview.
           ease = trackpad ? t * t * (3 - 2 * t) : 1 - Math.pow(1 - t, 3);
-        const confirmed = now >= (options?.notBefore || 0);
+        const confirmed = clock >= (options?.notBefore || 0);
         let desired = from + (to - from) * ease;
         if (complete && !confirmed) desired = Math.min(0.98, desired);
         const delta = desired - preview.progress;
-        preview.progress = native || trackpad
+        preview.progress = native && t === 1 && confirmed
+          ? to
+          : native || trackpad
           ? preview.progress +
             Math.sign(delta) *
               Math.min(nativeQueued ? 0.55 : native ? 0.4 : 0.065, Math.abs(delta))
@@ -1011,6 +1426,24 @@ export class ReadingPages {
         else done(complete, reason);
       };
       preview.raf = requestAnimationFrame(frame);
+      if (native) {
+        // Commit the final rendered pose at the elapsed release deadline even
+        // when the compositor delivers rAF callbacks late. This is a bounded
+        // completion task, not a second animation loop; actual draw/landing
+        // times remain measured, and every cancel/resume clears the task.
+        const land = () => {
+          if (!valid() || preview.settle?.start !== start) return;
+          const remaining = Math.max(start + duration, options?.notBefore || 0) - performance.now();
+          if (remaining > 0) {
+            preview.settleTimer = setTimeout(land, Math.ceil(remaining));
+            return;
+          }
+          cancelAnimationFrame(preview.raf);
+          preview.raf = 0;
+          frame(performance.now());
+        };
+        preview.settleTimer = setTimeout(land, Math.ceil(Math.max(duration, (options?.notBefore || 0) - start)));
+      }
     };
     const session = {
       turnDistance:
@@ -1034,6 +1467,22 @@ export class ReadingPages {
           preview.raf = requestAnimationFrame(draw);
       },
       release: settle,
+      handoffRelease: () => {
+        const release = preview.release;
+        if (!valid() || !preview.ready || !release?.reason.startsWith("native-") ||
+            performance.now() < (release.options?.notBefore || 0)) return;
+        // A new gesture has already begun. Finish the released sheet's
+        // actual final pose now so that the new gesture can own the next sheet,
+        // rather than waiting for another compositor callback of the old one.
+        cancelAnimationFrame(preview.raf);
+        clearTimeout(preview.settleTimer);
+        preview.raf = 0;
+        preview.progress = release.complete ? 1 : 0;
+        preview.dy = 0;
+        this.painter.draw(preview.progress, preview.grab, 0, preview.inputAt, "settling");
+        preview.inputAt = 0;
+        done(release.complete, release.reason);
+      },
       prefetchNext: () => {
         if (!valid() || boundary || !this.complete) return;
         const after = target + direction * this.count;
@@ -1045,6 +1494,7 @@ export class ReadingPages {
         if (!valid()) return null;
         cancelAnimationFrame(preview.raf);
         clearTimeout(preview.confirmTimer);
+        clearTimeout(preview.settleTimer);
         preview.raf = 0;
         preview.release = null;
         preview.settle = null;
@@ -1059,7 +1509,7 @@ export class ReadingPages {
     preview.session = session;
     const motionOff = local.get("page-motion", "curl") === "off" ||
       matchMedia("(prefers-reduced-motion: reduce)").matches || this.painter.failed;
-    if (!boundary && motionOff) { preview.ready = true; return session; }
+    if (!boundary && motionOff && presented===null) { preview.ready = true; return session; }
     const leaves = elements.map(el => {
       const box = el.getBoundingClientRect();
       return { x: box.left - rect.left, y: 0, width: box.width, height: box.height };
@@ -1142,20 +1592,43 @@ export class ReadingPages {
         done(false, "range-error");
         this.r.status(`相邻页面未能加载，当前页面已保留；再次翻页可重试。${error.name === "AbortError" ? "" : " " + error.message}`, {notice: true});
       });
+    } else if(presented!==null) {
+      (async()=>{
+        if(this.wordReflow.pendingLayout || this.wordReflow.flushing) {
+          const flush=this.wordReflow.flush(),expectedGeneration=this.generation,complete=await flush;
+          if(complete!==true || expectedGeneration!==this.generation || this.preview!==preview || token!==this.navigation || this.r.scope.signal.aborted) {
+            if(this.preview===preview)this.finishAnimation('source-window-superseded');
+            return;
+          }
+          generation=expectedGeneration;
+        }
+        if(!valid())return;
+        const source=await this.preparePresentation(direction);
+        if(!valid())return;
+        if(!source){done(false,'source-window-unavailable');return;}
+        preview.presentation=source;return prepare(source,0);
+      })().catch(error=>{
+        if(!valid())return;
+        preview.failure=error.message;done(false,'source-window-error');
+        this.r.status(`相邻页面未能排版，当前阅读位置已保留。${error.message}`,{notice:true});
+      });
     } else prepare(this, target);
     return session;
   }
   async turn(index, animate = false, reason = "tap") {
+    const intent=this.navigation;
+    if (this.wordReflow.pendingLayout || this.wordReflow.flushing) await this.wordReflow.flush();
+    if(this.r.scope.signal.aborted || intent!==this.navigation)return;
     if (
       this.displayPending ||
       this.animating ||
-      index < 0 ||
+      (index < 0 && !this.annotationLayout && !this.presentedView) ||
       index === this.index
     )
       return;
     const navigation = ++this.navigation,
       generation = this.generation;
-    while (!this.complete && index >= this.pages.length) {
+    while (!this.complete && index + this.count > this.pages.length) {
       await new Promise((resolve) => this.waiters.push(resolve));
       if (
         navigation !== this.navigation ||
@@ -1164,7 +1637,7 @@ export class ReadingPages {
       )
         return;
     }
-    if (index >= this.pages.length || this.r.scope.signal.aborted) return;
+    if ((index >= this.pages.length && !this.annotationLayout && !this.presentedView) || this.r.scope.signal.aborted) return;
     if (
       animate &&
       Math.abs(index - this.index) === this.count &&
@@ -1179,11 +1652,14 @@ export class ReadingPages {
       if (reason.startsWith("keyboard-")) session?.prefetchNext();
       session?.release(true, reason);
     } else {
-      this.r.emit("before-navigation");
-      this.commitPage(index);
+      if(this.annotationLayout || this.presentedView) {
+        const source=await this.preparePresentation(Math.sign(index-this.index));
+        if(source && navigation===this.navigation && generation===this.generation && !this.r.scope.signal.aborted)this.commitPresentation(source);
+      }else this.commitPage(index);
     }
   }
-  async restore(anchor, mark = true, {reflow = false} = {}) {
+  async restore(anchor, mark = true, {reflow = false, alignStart = false, signal} = {}) {
+    if (signal?.aborted || this.r.scope.signal.aborted) return false;
     if (mark && anchor?.block_id) {
       const visible = [
         ...document.querySelectorAll("#article [data-block]"),
@@ -1195,9 +1671,13 @@ export class ReadingPages {
       );
       if (!visible) this.r.emit("before-navigation");
     }
+    if (signal?.aborted || this.r.scope.signal.aborted) return false;
     this.finishAnimation();
     const navigation = ++this.navigation,
-      generation = this.generation;
+      generation = this.generation,epoch=this.layoutEpoch,documentId=this.r.doc.id,version=this.r.doc.version;
+    const stale = () => signal?.aborted ||
+      navigation !== this.navigation || generation !== this.generation ||
+      this.r.scope.signal.aborted;
     const hasPage = () =>
       anchor?.block_id &&
       this.pages.some((p) =>
@@ -1212,25 +1692,41 @@ export class ReadingPages {
     while (
       !this.complete &&
       (!this.pages.length || (!hasPage() &&
-        (anchor?.block_id || anchor?.quote || anchor?.ratio > 0)))
+        (anchor?.block_id || anchor?.quote || anchor?.ratio > 0)) ||
+        this.pages.length < this.pageFor(anchor) + this.count)
     ) {
-      await new Promise((resolve) => this.waiters.push(resolve));
-      if (
-        navigation !== this.navigation ||
-        generation !== this.generation ||
-        this.r.scope.signal.aborted
-      )
-        return false;
+      await new Promise((resolve) => {
+        // Cancellation wakes only this restore, without waiting for more pages.
+        const wake = () => {
+          const index = this.waiters.indexOf(wake);
+          if (index >= 0) this.waiters.splice(index, 1);
+          signal?.removeEventListener("abort", wake);
+          resolve();
+        };
+        this.waiters.push(wake);
+        signal?.addEventListener("abort", wake, {once: true});
+        if (signal?.aborted) wake();
+      });
+      if (stale()) return false;
     }
-    if (
-      navigation !== this.navigation ||
-      generation !== this.generation ||
-      this.r.scope.signal.aborted
-    )
-      return false;
+    if (stale()) return false;
+    let view=null;
+    if(alignStart) {
+      const from=this.validAnchor(anchor);
+      if(!from) return false;
+      const packet=await this.preparePresentation(1,{from});
+      if(stale() || !packet) return false;
+      view=packet.view;
+    }
     const index = this.pageFor(anchor);
     this.displayPending = false;
     if (index !== this.index) this.r.emit("before-page", {reflow});
+    if (stale()) return false;
+    if(view) {
+      this.clearPresentation();
+      this.presentedView=view;this.annotationLayout=view.snapshots;
+      this.viewTrail=[view];this.viewTrailIndex=0;this.viewIdentity=view.identity;
+    } else if (!reflow) {this.wordReflow.dispose();this.annotationLayout = null;this.clearPresentation();}
     this.index = index;
     this.anchor = this.validAnchor(anchor) || this.firstAnchor();
     this.render();
@@ -1239,6 +1735,11 @@ export class ReadingPages {
     );
     if (mark) el?.classList.add("anchor-flash");
     this.r.emit("position");
+    if(stale() || epoch!==this.layoutEpoch || documentId!==this.r.doc.id || version!==this.r.doc.version) return false;
+    const leaf=document.querySelector('#article .page-leaf');
+    this.layoutLanding={epoch,generation,navigation,documentId,version,leaf,article:leaf?.parentElement};
+    if(this.complete && this.currentLayoutLanding()) this.layoutComplete=true;
+    this.markStable();
     return true;
   }
 }

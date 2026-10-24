@@ -1,4 +1,6 @@
+import { actionIcon, setReadingAction } from "./reading-action-icons.js";
 import { installSelectionHandles } from "./selection-handles.js";
+import { paragraphAnchor } from "./pdf-paragraph-groups.js";
 import { installSelectionDragRecovery } from "./selection-drag.js";
 import { anchorSegments, linkedRanges } from "./source-selection.js";
 import { $, $$, e, api, toast } from "./core.js";
@@ -46,6 +48,7 @@ export function setupReadingInteractions(r) {
     r.selectionActions.set(id, { label, fn });
     r.renderSelection();
   };
+  r.paragraphAnchor = (id) => paragraphAnchor(r, id);
   r.paintSelection = () => {
     const anchor = r.selection;
     const parts = anchorSegments(anchor);
@@ -73,7 +76,7 @@ export function setupReadingInteractions(r) {
       let offset = +block.dataset.start,
         node;
       while ((node = walker.nextNode())) {
-        if (node.parentElement.closest(".gloss,.bookmark-marker,.note-marker")) continue;
+        if (node.parentElement.closest(".gloss,.annotation-gloss-space,.bookmark-marker,.note-marker")) continue;
         const end = offset + node.textContent.length;
         if (offset < part.end && end > part.start) {
           const range = document.createRange();
@@ -96,7 +99,7 @@ export function setupReadingInteractions(r) {
     const menu = $("#reading-selection");
     r.positionSelectionHandles?.();
     if (!menu) return;
-    if (!r.selection || r.selecting || r.adjustingSelection || r.aiSetupOpen || r.grammarInspecting || r.focus.isOpen() || r.panelId) {
+    if (!r.selection || r.popElement || r.selecting || r.adjustingSelection || r.aiSetupOpen || r.grammarInspecting || r.focus.isOpen() || r.panelId) {
       menu.hidden = true;
       return;
     }
@@ -172,7 +175,7 @@ export function setupReadingInteractions(r) {
     const { rect, leaf } = target;
     menu.hidden = false;
     menu.style.maxWidth =
-      Math.max(120, Math.min(480, innerWidth - 24, leaf.width - 24)) + "px";
+      Math.max(120, Math.min(568, innerWidth - 24, leaf.width - 24)) + "px";
     const box = menu.getBoundingClientRect();
     const lower = Math.min(innerHeight - 12, leaf.bottom - 8);
     const gap = 20; // Leave the endpoint knob accessible beside the menu.
@@ -203,18 +206,20 @@ export function setupReadingInteractions(r) {
     if (r.selection) {
       const image = r.selection.kind === "image";
       const actions = [...r.selectionActions].filter(([id]) => !image || ["notes", "bookmarks", "pdf-source"].includes(id));
-      const primaryIds = ["collections-highlight", "notes", "translation", "grammar"];
+      const primaryIds = ["lookup", "collections-highlight", "notes", "translation", "speech", "grammar"];
       const primary = image ? actions : primaryIds.flatMap(id => actions.filter(([key]) => key === id));
       const secondary = image ? [] : actions.filter(([id]) => !primaryIds.includes(id));
-      const button = ([id, { label }], compact = false) => {
-        const name = compact ? ({ notes: "笔记", translation: "翻译", grammar: "语法" }[id] || label) : label;
-        return `<button type="button" data-selection-action="${e(id)}" title="${e(label)}">${e(r.pending.has(id) ? "取消" + name : name)}</button>`;
+      const button = ([id, { label }]) => {
+        const name = { lookup: "查词", notes: "笔记", translation: "翻译", speech: "朗读", grammar: "语法", "collections-highlight": "划线", bookmarks: "书签", "pdf-source": "原版" }[id] || label;
+        const glyph = { lookup: "lookup", "collections-highlight": "highlight", speech: "sound", bookmarks: "bookmark", "pdf-source": "source" }[id] || id;
+        const pending = r.pending.has(id);
+        return `<button type="button" data-selection-action="${e(id)}" aria-label="${e(pending ? "取消" + label : label)}" title="${e(label)}">${actionIcon(pending ? "stop" : glyph)}<span class="reading-action-label">${e(pending ? "取消" : name)}</span></button>`;
       };
       const extraPending = secondary.some(([id]) => r.pending.has(id));
       el.innerHTML = `<div class="selection-quote">${image ? "已选原图" : "已选原文"} · ${e(r.selection.quote.length > 110 ? r.selection.quote.slice(0, 110) + "…" : r.selection.quote)}</div>
         <div class="selection-actions" role="toolbar" aria-label="所选原文操作">${primary.map(action => button(action, !image)).join("")}
-          ${secondary.length ? `<button type="button" data-selection-more aria-controls="selection-more-actions" aria-expanded="${Boolean(r.selectionMoreOpen)}">更多${extraPending ? " · 可取消" : ""}</button>` : ""}
-          <button type="button" data-selection-clear aria-label="取消选择" title="取消选择">×</button></div>
+          ${secondary.length ? `<button type="button" data-selection-more aria-controls="selection-more-actions" aria-expanded="${Boolean(r.selectionMoreOpen)}" aria-label="更多选区操作">${actionIcon("more")}<span class="reading-action-label">更多${extraPending ? " ·" : ""}</span></button>` : ""}
+          <button type="button" data-selection-clear aria-label="取消选择" title="取消选择">${actionIcon("close")}<span class="reading-action-label">收起</span></button></div>
         ${secondary.length ? `<div id="selection-more-actions" class="selection-actions" role="toolbar" aria-label="更多原文操作" ${r.selectionMoreOpen ? "" : "hidden"}>${secondary.map(action => button(action)).join("")}</div>` : ""}
         ${!image && r.ctx.enabled("grammar") ? '<div class="selection-scope">语法分析按完整句子处理；翻译、朗读和笔记仍按当前选区。</div>' : ""}`;
     }
@@ -324,7 +329,7 @@ export function setupReadingInteractions(r) {
         const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
         let offset = +block.dataset.start, node;
         while ((node = walker.nextNode())) {
-          if (node.parentElement.closest(".gloss,.bookmark-marker")) continue;
+          if (node.parentElement.closest(".gloss,.annotation-gloss-space,.bookmark-marker")) continue;
           const end = offset + node.textContent.length;
           for (const part of parts) {
             if (offset >= part.end || end <= part.start) continue;
@@ -389,7 +394,7 @@ export function setupReadingInteractions(r) {
         (b) => b.id === select.dataset.selectBlock,
       );
       getSelection()?.removeAllRanges();
-      r.choose(r.anchorFor(block.id, 0, block.text.length), select);
+      r.choose(r.paragraphAnchor(block.id), select);
     }
   });
   r.scope.on($("#article"), "pointermove", (ev) => {
@@ -416,23 +421,31 @@ export function setupReadingInteractions(r) {
     if (ev.button !== 0 || !r.selection) return;
     // Keep the anchor while operating its menu/panels. A new source gesture or
     // an outside click owns a fresh selection, including after native collapse.
-    if (ev.target.closest(".selection-handles,#reading-selection,#tool-panel,#reader-chrome,#show-tools,.annotation-pop,#translation-pane,.inline-grammar,#toast")) return;
+    if (ev.target.closest(".selection-handles,#reading-selection,#tool-panel,#reader-chrome,#show-tools,.annotation-pop,#translation-pane,.inline-grammar,#toast,.reading-edge-grip")) return;
     r.selectionDismissedByPointer = true;
     r.clearSelection();
-    if (ev.target.closest(".reading-edge-grip")) {
-      ev.preventDefault();
-      ev.stopPropagation();
-    }
   }, { capture: true });
   r.scope.on($("#article"), "pointerdown", (ev) => {
     if (ev.button !== 0 || (ev.target.closest("button,a,input,textarea,select") && !ev.target.closest(".source-unit"))) return;
+    r.suppressWordClick = false;
+    r.wordLookupGeneration = (r.wordLookupGeneration || 0) + 1;
+    r.wordGesture = { x: ev.clientX, y: ev.clientY, moved: false };
     r.selecting = true;
     r.positionSelection();
   });
+  r.scope.on(document, "pointermove", ev => {
+    if (r.wordGesture && Math.hypot(ev.clientX - r.wordGesture.x, ev.clientY - r.wordGesture.y) > 4) {
+      r.wordGesture.moved = true;
+      r.suppressWordClick = true;
+      r.closePop();
+    }
+  });
   let selectionFrame;
   installSelectionDragRecovery(r);
-  const endSelectionGesture = () => {
+  const endSelectionGesture = (ev) => {
     if (!r.selecting) return;
+    r.suppressWordClick = Boolean(r.wordGesture?.moved || ev.type === "pointercancel" || getSelection()?.toString());
+    r.wordGesture = null;
     r.selecting = false;
     cancelAnimationFrame(selectionFrame);
     selectionFrame = requestAnimationFrame(() => {
@@ -474,6 +487,17 @@ export function setupReadingInteractions(r) {
     for (const controller of r.pending.values()) controller.cancel();
     r.pending.clear();
   });
+  r.selectionAction("lookup", "查词", anchor => {
+    const part = anchorSegments(anchor)[0];
+    const trigger = $$("#article .source-unit").find(el => el.dataset.sourceBlock === part.block_id && +el.dataset.sourceStart <= part.start && +el.dataset.sourceEnd > part.start);
+    if (!trigger) return;
+    if (anchor.quote.length > 96 || anchorSegments(anchor).length !== 1) {
+      toast("查词请选择同一段中的词或短语；长选区可使用翻译与语法分析。");
+      return;
+    }
+    r.suppressWordClick = false;
+    r.lookup(anchor.quote, trigger, anchor);
+  });
   installSelectionHandles(r);
   r.enhancePop = async (pop, item, anchor, scope) => {
     if (!anchor) return;
@@ -481,7 +505,7 @@ export function setupReadingInteractions(r) {
     const word = anchor.quote.normalize("NFKC");
     const singleWord = /^[A-Za-z]+(?:['’-][A-Za-z]+)*$/.test(word);
     let result = item;
-    if (!item.dictionary && word.trim() && word.length <= 96 && word.trim().split(/\s+/).length <= 6) {
+    if ((!item.dictionary || (singleWord && !item.phonetic)) && word.trim() && word.length <= 96 && word.trim().split(/\s+/).length <= 6) {
       try {
         result = await api("/lookup", {
           method: "POST",
@@ -502,10 +526,11 @@ export function setupReadingInteractions(r) {
     const pronunciation = document.createElement("div");
     pronunciation.className = "word-pronunciation";
     pronunciation.innerHTML = `${singleWord && result?.phonetic ? `<span data-word-ipa>/${e(result.phonetic.replace(/^\[|\]$|^\/|\/$/g, ""))}/</span>` : ""}${r.ctx.enabled("tts") ? '<button type="button" data-word-speak>听发音</button>' : ""}`;
-    $("h3", pop).after(pronunciation);
+    ($(".word-card-title", pop) || $("h3", pop)).after(pronunciation);
     scope.on(pronunciation, "click", (ev) => {
       if (ev.target.closest("[data-word-speak]")) r.speech?.toggle(anchor);
     });
+    setReadingAction($("[data-word-speak]", pronunciation), "sound", "发音", "听发音");
     r.emit("speech-controls");
     scope.cleanup(() => {
       if (

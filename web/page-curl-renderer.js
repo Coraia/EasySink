@@ -11,6 +11,9 @@ import {
 const SOFTWARE_PIXELS = 320000;
 // RGBA storage only; decoded SVGs and drawing buffers have separate lifetimes.
 const TEXTURE_BYTES = 96_000_000;
+// Six full-screen 2x leaves need ~118 MB. Keep both adjacent spreads resident
+// instead of evicting the current spread during idle warming.
+const DOUBLE_TEXTURE_BYTES = 128_000_000;
 const MAX_CAPTURE_JOBS = 8;
 
 // One GPU service for one reader lifetime. Turns reuse programs, buffers and
@@ -22,6 +25,7 @@ export class PageCurlRenderer {
     this.jobs = new Map();
     this.captureTail = Promise.resolve();
     this.captures = new Set();
+    this.uploadWaiters = new Set();
     this.epoch = 0;
     this.canvas = document.createElement("canvas");
     this.canvas.className = "curl-canvas";
@@ -175,24 +179,31 @@ export class PageCurlRenderer {
       this.baseAttribute = gl.getAttribLocation(this.baseProgram, "a_uv");
       this.baseUniforms = Object.fromEntries(["view", "rect", "image"].map(name =>
         [name, gl.getUniformLocation(this.baseProgram, "u_" + name)]));
-      const mesh = (vertices, indices) => {
+      const mesh = (vertices, indices, streaming = false) => {
         const buffer = gl.createBuffer(),
           index = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
         gl.bufferData(
           gl.ARRAY_BUFFER,
-          new Float32Array(vertices),
-          gl.STATIC_DRAW,
+          streaming ? 4096 : new Float32Array(vertices),
+          streaming ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW,
         );
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, index);
         gl.bufferData(
           gl.ELEMENT_ARRAY_BUFFER,
-          new Uint16Array(indices),
-          gl.STATIC_DRAW,
+          streaming ? 4096 : new Uint16Array(indices),
+          streaming ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW,
         );
-        return { buffer, index, count: indices.length };
+        return { buffer, index, count: indices.length,
+          vertexBytes: streaming ? 4096 : vertices.length * 4,
+          indexBytes: streaming ? 4096 : indices.length * 2 };
       };
-      this.mesh = mesh([0, 0, 1, 0, 0, 1, 1, 1], [0, 1, 2, 1, 3, 2]);
+      // Rotate bounded storage instead of orphaning two Metal buffers on every
+      // frame. 4 KiB covers both adaptive mesh forms; future meshes can grow.
+      this.meshPool = Array.from({ length: 3 }, () =>
+        mesh([0, 0, 1, 0, 0, 1, 1, 1], [0, 1, 2, 1, 3, 2], true));
+      this.meshSlot = 0;
+      this.mesh = this.meshPool[0];
       // An independent diagnostic uses the same vertex shader at material x=0;
       // it does not depend on adaptive paper vertices or cover any gap.
       this.spineMesh = mesh(
@@ -202,7 +213,9 @@ export class PageCurlRenderer {
       this.plane = mesh([0, 0, 1, 0, 0, 1, 1, 1], [0, 1, 2, 1, 3, 2]);
       gl.frontFace(gl.CW);
       gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      // Shadows darken opaque paper without lowering its coverage. Using the
+      // RGB factors for alpha exposes the previous DOM page through the shadow.
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       this.root.dataset.curlContexts = "1";
       this.root.dataset.curlVertices = "4";
       this.canvas.addEventListener("webglcontextlost", (event) => {
@@ -232,24 +245,39 @@ export class PageCurlRenderer {
     this.layer.setAttribute("aria-hidden", "true");
     this.layer.append(this.canvas);
   }
-  invalidate() {
+  invalidate({deferTextures = false, preserveSurface = false} = {}) {
+    const retired = [];
     this.epoch++;
     cancelAnimationFrame(this.surfaceWarmRaf);
     delete this.root.dataset.curlWarm;
-    this.primedSurface = null;
+    if (!preserveSurface) this.primedSurface = null;
     this.pendingTextures = [];
-    this.surfaceWarm = null;
+    if (!preserveSurface) this.surfaceWarm = null;
     clearTimeout(this.warmTimer);
     for (const capture of this.captures) capture.abort();
     this.captures.clear();
     this.jobs.clear();
     if (this.gl && !this.gl.isContextLost())
-      for (const value of this.cache.values())
-        this.gl.deleteTexture(value.texture);
+      for (const value of this.cache.values()) {
+        if (deferTextures) retired.push(value.texture);
+        else this.gl.deleteTexture(value.texture);
+      }
     this.cache.clear();
+    return retired;
+  }
+  pauseWarm() {
+    clearTimeout(this.warmTimer);
+    cancelAnimationFrame(this.surfaceWarmRaf);
+  }
+  textureBudget() {
+    return !this.software && this.pages.count === 2
+      ? DOUBLE_TEXTURE_BYTES
+      : TEXTURE_BYTES;
   }
   key(index, source = this.pages) {
-    return `${source.r.doc.id}:${source.r.doc.version}:${source.generation}:${this.epoch}:${devicePixelRatio || 1}:${index}`;
+    const generation = source.view?.textureGeneration ||
+      source.presentedView?.textureGeneration || source.generation;
+    return `${source.r.doc.id}:${source.r.doc.version}:${generation}:${this.epoch}:${devicePixelRatio || 1}:${index}`;
   }
   async inlineImages(page, ratio, signal) {
     const images = [...page.querySelectorAll("img")];
@@ -331,6 +359,22 @@ export class PageCurlRenderer {
       image.removeAttribute("loading");
     }
     return images.length;
+  }
+  async waitForIdleUpload(signal) {
+    signal.throwIfAborted();
+    while (this.scene && !this.failed) {
+      await new Promise((resolve, reject) => {
+        const cleanup = () => {
+          this.uploadWaiters.delete(resume);
+          signal.removeEventListener("abort", abort);
+        };
+        const resume = () => { cleanup(); resolve(); };
+        const abort = () => { cleanup(); reject(signal.reason); };
+        this.uploadWaiters.add(resume);
+        signal.addEventListener("abort", abort, {once: true});
+      });
+      signal.throwIfAborted();
+    }
   }
   async prepare(index, source = this.pages) {
     // Resuming at an anchor may start a two-page spread on either parity.
@@ -449,6 +493,12 @@ export class PageCurlRenderer {
         capture.signal.addEventListener("abort", abort, {once: true});
         img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
       });
+      // Decode lookahead while a hand is moving, but do not upload or query
+      // GPU errors until that paper has landed. A synchronous error query can
+      // otherwise wait for the active draw and stall its own release frames.
+      // Required faces are prepared before attach; preserve their error checks,
+      // native density, serialized capture and existing cache budgets.
+      await this.waitForIdleUpload(capture.signal);
       if (
         owner !== this.pages || epoch !== this.epoch ||
         generation !== this.pages.generation ||
@@ -469,9 +519,10 @@ export class PageCurlRenderer {
       const uploadStartedAt = performance.now();
       const gl = this.gl,
         bytes = w * h * 4,
+        budget = this.textureBudget(),
         bytesBefore = [...this.cache.values()].reduce((n, value) => n + value.bytes, 0),
         pinned = new Set([...(this.scene?.textures || []), ...(this.pendingTextures || [])]),
-        needsRoom = this.cache.size + 1 > 6 || bytesBefore + bytes > TEXTURE_BYTES,
+        needsRoom = this.cache.size + 1 > 6 || bytesBefore + bytes > budget,
         reusable = needsRoom && [...this.cache.entries()].find(([oldKey, value]) =>
           !pinned.has(oldKey) && value.pixelWidth === w && value.pixelHeight === h);
       // Reserve room before allocation. Under continuous paging, reuse an old
@@ -481,16 +532,16 @@ export class PageCurlRenderer {
       let plannedBytes = bytesBefore + bytes - (reusable ? reusable[1].bytes : 0),
         plannedCount = this.cache.size + 1 - (reusable ? 1 : 0);
       for (const entry of this.cache) {
-        if (plannedBytes <= TEXTURE_BYTES && plannedCount <= 6) break;
+        if (plannedBytes <= budget && plannedCount <= 6) break;
         if (pinned.has(entry[0]) || entry[0] === reusable?.[0]) continue;
         victims.push(entry);
         plannedBytes -= entry[1].bytes;
         plannedCount--;
       }
-      // A wide DPR 3 double spread can need four pinned faces larger than the
+      // A wide DPR 3 double spread can need four pinned faces larger than its
       // soft byte target. Preserve that existing required working set; optional
       // prefetch cannot add to it, and no referenced face may be overwritten.
-      if (plannedBytes > TEXTURE_BYTES && !pinned.has(key)) return null;
+      if (plannedBytes > budget && !pinned.has(key)) return null;
       if (plannedCount > 6)
         throw new Error("Page texture cache budget exhausted");
       for (const [oldKey, old] of victims) {
@@ -602,7 +653,7 @@ export class PageCurlRenderer {
           generation !== p.generation ||
           epoch !== this.epoch ||
           p.r.scope.signal.aborted ||
-          p.animating
+          p.animating || p.r.popElement
         )
           return;
         if (p.count === 1 && i === index + 2 && !this.cache.has(this.key(i))) {
@@ -610,7 +661,7 @@ export class PageCurlRenderer {
           const bytes = [...this.cache.values()].reduce((n, value) => n + value.bytes, 0);
           // Lookahead is optional: never evict the current/next leaves merely
           // to label a high-DPR reader warm. All leaves share this layout size.
-          if (!current || this.cache.size >= 6 || bytes + current.bytes > TEXTURE_BYTES)
+          if (!current || this.cache.size >= 6 || bytes + current.bytes > this.textureBudget())
             continue;
         }
         await this.prepare(i);
@@ -619,7 +670,7 @@ export class PageCurlRenderer {
       // Texture readiness does not allocate the final drawing buffer. Prepare
       // that same buffer while idle; attach still verifies its current size.
       if (p !== this.pages || p.index !== index || generation !== p.generation || epoch !== this.epoch ||
-          p.r.scope.signal.aborted || p.animating || this.failed || !this.gl) return;
+          p.r.scope.signal.aborted || p.animating || p.r.popElement || this.failed || !this.gl) return;
       const rect = $("#article").getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
         const { width, height } = this.surfaceDimensions(rect);
@@ -672,7 +723,9 @@ export class PageCurlRenderer {
     this.surfaceWarmRaf = requestAnimationFrame(frame);
   }
   surfaceDimensions(rect) {
-    const pixels = this.software ? SOFTWARE_PIXELS : 8000000;
+    // A full-screen Retina spread needs ~10M pixels. Keep a bounded hardware
+    // budget without downsampling ordinary 2x Mac windows.
+    const pixels = this.software ? SOFTWARE_PIXELS : 16000000;
     const ratio = Math.min(
         devicePixelRatio || 1,
         3,
@@ -817,10 +870,20 @@ export class PageCurlRenderer {
       fold = foldForPointer(leaf.width, leaf.height, progress, grab, dy),
       mesh = paperMesh(leaf.width, leaf.height, fold.model, fold.curve);
     this.solveSamples.push(performance.now() - solveStart);
+    this.mesh = this.meshPool[this.meshSlot];
+    this.meshSlot = (this.meshSlot + 1) % this.meshPool.length;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.mesh.buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, mesh.uv, gl.DYNAMIC_DRAW);
+    if (mesh.uv.byteLength > this.mesh.vertexBytes) {
+      this.mesh.vertexBytes = 2 ** Math.ceil(Math.log2(mesh.uv.byteLength));
+      gl.bufferData(gl.ARRAY_BUFFER, this.mesh.vertexBytes, gl.DYNAMIC_DRAW);
+    }
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, mesh.uv);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.mesh.index);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.DYNAMIC_DRAW);
+    if (mesh.indices.byteLength > this.mesh.indexBytes) {
+      this.mesh.indexBytes = 2 ** Math.ceil(Math.log2(mesh.indices.byteLength));
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, this.mesh.indexBytes, gl.DYNAMIC_DRAW);
+    }
+    gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, mesh.indices);
     this.mesh.count = mesh.indices.length;
     this.root.dataset.curlVertices = String(mesh.uv.length / 2);
     if (this.lastFrame) this.samples.push(now - this.lastFrame);
@@ -1018,6 +1081,7 @@ export class PageCurlRenderer {
     delete this.layer.dataset.pin;
     delete this.layer.dataset.binding;
     this.root.dataset.curlPhase = "idle";
+    for (const resume of this.uploadWaiters) resume();
   }
   clearSurface() {
     if (!this.gl || this.gl.isContextLost()) return;
@@ -1033,7 +1097,7 @@ export class PageCurlRenderer {
     // after synthetic context loss, retaining the full-size drawing buffers.
     this.canvas.width = this.canvas.height = 0;
     if (this.gl && !this.gl.isContextLost()) {
-      for (const mesh of [this.mesh, this.plane])
+      for (const mesh of [...(this.meshPool || [this.mesh]), this.plane])
         if (mesh) {
           this.gl.deleteBuffer(mesh.buffer);
           this.gl.deleteBuffer(mesh.index);

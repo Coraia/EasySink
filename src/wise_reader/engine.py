@@ -185,12 +185,31 @@ class Engine:
             r["target"]: r["verdict"]
             for r in self.store.query("SELECT * FROM wr_target")
         }
-        shown = l2.filter_candidates(
-            l0_cands, l1_cands, profile, len(doc.tokens), density, verdicts
-        )
+        from wise_reader.reading_learning import effective_profile
+        from wise_reader.usage_feedback import engine_preferences
+        from wise_reader.collections_source import utf16
+        baseline = l2.filter_candidates(l0_cands, l1_cands, profile, len(doc.tokens), density, verdicts)
+        adjusted, learning_model = effective_profile(self.store, self.lexicon, profile)
+        version, blocks = content.get_content(self.store, row)
+        hidden, forced = engine_preferences(self.store, doc_id, doc, blocks)
+        def allowed(annotation):
+            start, end = doc.slice(annotation.first_token, annotation.last_token)
+            return not any(lo < end and hi > start for lo,hi in hidden)
+        force_spans = {(a.first_token,a.last_token) for a in forced}
+        selected_words = [a for a in l0_cands if allowed(a) and (a.first_token,a.last_token) not in force_spans]
+        selected_phrases = [a for a in l1_cands if allowed(a) and (a.first_token,a.last_token) not in force_spans]
+        shown = l2.filter_candidates(selected_words + forced, selected_phrases, adjusted, len(doc.tokens), density, verdicts)
         frags = render.fragments(doc, shown) if not compact else []
         dens = profile.density if density is None else density
-        version, blocks = content.get_content(self.store, row)
+        baseline_annotations = []
+        for annotation in baseline:
+            if annotation.forced:
+                continue
+            start,end = doc.slice(annotation.first_token, annotation.last_token)
+            block = next((b for b in blocks if b['start'] <= start and b['end'] >= end), None)
+            if block:
+                baseline_annotations.append({'block_id': block['id'], 'start': utf16(block['text'][:start-block['start']]),
+                                             'end': utf16(block['text'][:end-block['start']])})
         rendered = []
         annotations = iter((a, *doc.slice(a.first_token, a.last_token)) for a in shown)
         current = next(annotations, None)
@@ -212,6 +231,7 @@ class Engine:
                         "detail": a.detail,
                         "lemma": a.lemma,
                         "kind": a.kind.value,
+                        "forced": a.forced,
                         "target": semantics.target(a),
                         "source": a.source
                         if a.kind.value == "word" or a.source != "dictionary"
@@ -237,6 +257,8 @@ class Engine:
         )
         result = {
             "id": doc_id,
+            "adaptive_profile": learning_model,
+            "baseline_annotations": baseline_annotations,
             "text": row["text"],
             "version": version,
             "blocks": rendered,

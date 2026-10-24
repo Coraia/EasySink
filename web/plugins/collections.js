@@ -1,3 +1,5 @@
+import { installReadingLearning } from "../reading-learning.js";
+import { setReadingAction } from "../reading-action-icons.js";
 import { $, toast } from "../core.js";
 import { sameSelection, containsSelection } from "../source-selection.js";
 import { childScope, createCollectionsStore } from "../collections-store.js";
@@ -90,13 +92,14 @@ export function install(ctx) {
       if (scope.signal.aborted) return;
       if (!Array.isArray(payload?.items) || !Array.isArray(payload?.feedback))
         throw new Error("收藏记录返回格式不完整，请重试");
-      state = { items: payload.items || [], feedback: payload.feedback || [] };
+      state = { items: payload.items || [], feedback: payload.feedback || [], usage_matches: payload.usage_matches || [] };
       reader.collectionsSeed = payload;
       controller.loaded = !error;
       controller.error = error;
       const adopted = adoptedExplanations(state);
       const nextAnnotations = JSON.stringify([
         adopted.map(value => [value.anchor, value.explanation.payload.meaning, value.explanation.payload.explanation]),
+        state.usage_matches,
         state.feedback
           .filter(
             (value) =>
@@ -115,7 +118,7 @@ export function install(ctx) {
       const nextMarks = JSON.stringify(
         state.items.map((item) => [item.id, item.kind, item.anchor]),
       );
-      overlay.set(state.feedback, adopted);
+      overlay.set([...state.usage_matches, ...state.feedback], adopted);
       const annotationsChanged = nextAnnotations !== annotationSignature;
       annotationSignature = nextAnnotations;
       if (nextMarks !== markSignature) {
@@ -234,19 +237,49 @@ export function install(ctx) {
       mount() {
         if (mounted || scope.signal.aborted) return false;
         mounted = true;
+        let refreshTimer;
+        const reconcileAnnotations = () => {
+          if (!reader.annotationRefreshPending || reader.popElement || scope.signal.aborted) return;
+          if (reader.pages?.animating || reader.pages?.displayPending || !reader.pages?.complete) {
+            refreshTimer=setTimeout(reconcileAnnotations,200);
+            return;
+          }
+          reader.annotationRefreshPending = false;
+          void reader.refresh(undefined, {preserveLayout:true}).catch(error => {
+            if (!scope.signal.aborted) reader.status(`辅助调整暂未更新：${error.message}`);
+          });
+        };
+        reader.on('reading-uncovered', () => {
+          clearTimeout(refreshTimer);
+          refreshTimer = setTimeout(reconcileAnnotations, 300);
+        });
+        scope.cleanup(() => clearTimeout(refreshTimer));
         scope.on(store.events, "change", (event) => {
           const path = event.detail.path;
           if (["/resurface", "/export"].includes(path)) return;
           if (path === "" || path === "/adopt" || path === "/feedback" ||
-              /^\/\d+/.test(path) || ["/undo", "/import", "/cleanup"].includes(path)) {
+              /^\/\d+/.test(path) || ["/usage-feedback", "/undo", "/import", "/cleanup"].includes(path)) {
             // A book list can remove a record in an already warmed neighbor.
             // Discard only bounded neighboring page packets, so handoff never
             // reuses their old seed. This is not a source redraw/reflow.
             reader.pages?.invalidatePaint?.();
             reader.pages?.clearRanges?.();
-            reader.pages?.warmRanges?.();
+            if (!reader.pages?.wordReflow?.eligible()) reader.pages?.warmRanges?.();
           }
-          void controller.reload();
+          if (["/usage-feedback", "/undo", "/import", "/cleanup"].includes(path)) {
+            void controller.reload().then(() => {
+              if (path === '/usage-feedback' && reader.pages?.wordReflow?.eligible()) {
+                // The occurrence projection already updates the open spread.
+                // Reconcile adaptive whole-document metadata after the card
+                // closes, rather than rebuilding it twice per +/- click.
+                reader.annotationRefreshPending = true;
+                return;
+              }
+              return reader.refresh(undefined, {preserveLayout: true});
+            }).catch(error => {
+              if (!scope.signal.aborted) reader.status(`辅助调整暂未更新：${error.message}`);
+            });
+          } else void controller.reload();
         });
         scope.cleanup(() => {
           painter.clear();
@@ -325,6 +358,7 @@ export function install(ctx) {
       return;
     }
     if (scope.signal.aborted) return;
+    installReadingLearning(reader, scope);
     if (controller.error)
       toast(
         `收藏划线与反馈暂不可用：${controller.error.message}。正文可继续阅读。`,
@@ -367,7 +401,7 @@ export function install(ctx) {
       if (action) action.label = label;
       const button = document.querySelector(`[data-selection-action="${id}"]`);
       if (button) {
-        button.textContent = writing ? "保存中…" : label;
+        setReadingAction(button, "highlight", writing ? "保存中…" : label);
         button.disabled = writing || !controller.loaded;
         button.setAttribute("aria-pressed", String(Boolean(saved)));
         button.title = controller.error

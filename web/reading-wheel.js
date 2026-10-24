@@ -185,6 +185,18 @@ export function installReadingTrackpad(ctx) {
       last = -Infinity;
       return;
     }
+    const target = ev.target instanceof Element ? ev.target : null;
+    const inPaper = Boolean(target?.closest("#reading-stage")) && !target.closest(
+      "button, a, input, textarea, select, [contenteditable], #reading-selection, #translation-pane, .inline-grammar, .annotation-pop, #tool-panel, #reader-chrome",
+    );
+    if (!inPaper) {
+      // Card scrolling owns its own stream and must not seed a later page turn.
+      cancel("outside-paper");
+      last = -Infinity;
+      x = y = 0;
+      axis = null;
+      return;
+    }
     const now = performance.now();
     if (now - last > quiet) {
       if (active) finalize(active);
@@ -209,12 +221,6 @@ export function installReadingTrackpad(ctx) {
     }
     const reader = ctx.reader,
       pages = reader?.pages;
-    const target = ev.target instanceof Element ? ev.target : null;
-    const inPaper =
-      Boolean(target?.closest("#reading-stage")) &&
-      !target.closest(
-        "button, a, input, textarea, select, [contenteditable], #reading-selection, #translation-pane, .inline-grammar",
-      );
     const ours = Boolean(
       pages?.preview &&
       (flight === pages || (active?.session && active.pages === pages)),

@@ -1,9 +1,10 @@
+import { actionIcon } from "./reading-action-icons.js";
 import { sameSelection } from "./source-selection.js";
 import { renderDictionaryCard } from "./dictionary-card.js";
-import { anchorFromDOMRange } from "./selection-range.js";
+import { anchorFromDOMRange, sourceRuns } from "./selection-range.js";
 import { $, $$, e, api, Scope, local, toast, errorBox } from "./core.js";
-import { sourceUrlRanges, overlapsSourceUrl } from "./source-urls.js";
 import { ReadingPages } from "./pagination.js?v=20261018-keyboard-paging-tuned";
+import { captureAnnotationLayout, updateAnnotationLayout, captureRetainedWordLayout, reconcileRetainedWordLayout } from "./annotation-layout.js";
 import { setupReadingInteractions } from "./reading-interactions.js?v=20261006-grab1";
 import { installReadingTraces } from "./reading-traces.js";
 import {
@@ -13,6 +14,29 @@ import {
   readerIcon,
 } from "./reader-chrome.js?v=20261018-keyboard-paging-tuned";
 export class Reader {
+  static inputVeilAlpha(value) {
+    const color=String(value ?? "").trim().toLowerCase();
+    if(color==="transparent")return 0;
+    const slash=color.match(/^rgba?\(([^/()]*)\/([^/()]*)\)$/);
+    let channels,alpha;
+    if(slash){channels=slash[1].trim().split(/\s+/);alpha=slash[2].trim();}
+    else {
+      const rgba=color.match(/^rgba\(([^()]*)\)$/);
+      if(!rgba)return 1; // Three-channel rgb(), including black, is opaque.
+      const parts=rgba[1].split(",").map(s=>s.trim());
+      if(parts.length!==4)return 1;
+      channels=parts.slice(0,3);alpha=parts[3];
+    }
+    const number=/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(%?)$/;
+    if(channels.length!==3 || !channels.every(channel=>{
+      const match=channel.match(number),n=Number(match?.[1]);
+      return match && Number.isFinite(n) && n>=0 && n<=(match[2]?100:255);
+    }))return 1;
+    const match=alpha.match(number);
+    if(!match)return 1;
+    const n=Number(match[1])/(match[2]?100:1);
+    return Number.isFinite(n) && n>=0 && n<=1?n:1;
+  }
   constructor(ctx, scope, doc, handoff = null) {
     this.ctx = ctx;
     this.scope = scope;
@@ -41,7 +65,8 @@ export class Reader {
     this.on("annotations-change", () => {
       // Reapply occurrence feedback to the unchanged source. No server request,
       // global mastery change or whole-book reload is needed.
-      this.draw().catch(error => {
+      this.annotationDrawPromise = this.draw({preserveLayout: true});
+      this.annotationDrawPromise.catch(error => {
         if (error.name !== "AbortError") this.status(error.message);
       });
     });
@@ -53,7 +78,7 @@ export class Reader {
       if (b) this.density(+b.dataset.density);
     });
     s.on($("#article"), "click", (ev) => {
-      if (window.getSelection()?.toString()) return;
+      if (this.suppressWordClick || this.selecting || ev.detail > 1 || window.getSelection()?.toString()) return;
       const el = ev.target.closest("[data-annotation]");
       if (el) this.pop(el);
       else {
@@ -74,6 +99,7 @@ export class Reader {
         ev.target.matches("[data-annotation],[data-word]")
       ) {
         ev.preventDefault();
+        this.suppressWordClick = false;
         if (ev.target.matches("[data-annotation]")) this.pop(ev.target);
         else
           this.lookup(
@@ -88,18 +114,6 @@ export class Reader {
       }
     });
     s.on(document, "selectionchange", () => this.captureSelection());
-    s.on($("#article"), "dblclick", (ev) => {
-      if (ev.target.closest("[data-source-url]")) return;
-      const word = window.getSelection()?.toString().trim();
-      if (word && /^[A-Za-z'-]+$/.test(word) && word.length < 60) {
-        this.captureSelection();
-        const anchor = this.selection;
-        const block = this.doc.blocks.find(b => b.id === anchor?.block_id);
-        const urls = this.pages?.urlRanges?.get(block?.id) ?? sourceUrlRanges(block?.text || "");
-        if (anchor?.quote === word && !overlapsSourceUrl(urls, anchor.start, anchor.end))
-          this.lookup(word, ev.target, anchor);
-      }
-    });
     s.on(
       window,
       "scroll",
@@ -173,7 +187,7 @@ export class Reader {
     const selector = this.handoff ? null : local.get(`jump:${d.id}`);
     if (selector) {
       local.remove(`jump:${d.id}`);
-      await this.restore(selector, { automatic: selector.resume_position === true, mark: !selector.resume_position });
+      await this.restore(selector, { automatic: selector.resume_position === true, mark: !selector.resume_position, alignStart: selector.resume_position === true });
     }
     const translationJump = this.handoff ? null : local.get(`translation-jump:${d.id}`);
     if (translationJump) {
@@ -185,6 +199,7 @@ export class Reader {
       requestAnimationFrame(() => {
         if (s.signal.aborted) return;
         this.restoring = false;
+        this.pages.markStable();
         // Explicit directory/note jumps are a new reading position, not merely
         // resuming the old one. Persist after the initial restore guard lifts.
         if (selector || this.handoff || this.resumePositionMapped) this.emit("position");
@@ -271,6 +286,7 @@ export class Reader {
     this.panelScope = null;
     this.panelId = null;
     this.panelClose = null;
+    this.emit?.("reading-uncovered");
     this.positionSelection?.();
     $("#tool-panel").hidden = true;
     $("#panel-dismiss").hidden = true;
@@ -321,20 +337,30 @@ export class Reader {
       .map((s, i) => (i % 2 ? `<mark class="search-hit">${e(s)}</mark>` : e(s)))
       .join("");
   }
-  draw() {
+  draw({preserveLayout = false} = {}) {
+    const liveReflow = preserveLayout && this.pages.wordReflow.eligible();
+    const retained = preserveLayout && !liveReflow ? captureRetainedWordLayout(this.pages) : null;
+    const layout = preserveLayout && !liveReflow && !retained
+      ? captureAnnotationLayout(this.pages) || this.pages.annotationLayout
+      : null;
     this.doc.blocks = this.collectionsController?.applyAnnotations(this.sourceBlocks) || this.sourceBlocks;
-    this.pages.indexSource();
+    this.pages.indexSource({preserveAnnotations: liveReflow || Boolean(retained)});
+    if (!liveReflow && !retained) this.pages.annotationLayout = layout
+      ? updateAnnotationLayout(layout, this.annotations)
+      : null;
     const prepared = this.handoff?.pages;
-    const ready = prepared && !this.handoff.adopted
+    const ready = retained ? reconcileRetainedWordLayout(this.pages, retained) : liveReflow ? this.pages.wordReflow.update().then(updated => {
+      if (!updated) return this.pages.reflow(this.pages.position(), {reason: "annotation"});
+    }) : prepared && !this.handoff.adopted
       ? (this.handoff.adopted = true, this.pages.adopt(prepared))
-      : this.pages.reflow(this.pages.position());
+      : this.pages.reflow(this.pages.position(), {reason: preserveLayout ? "annotation" : "source"});
     $("#annotation-meta").textContent =
       `${this.doc.annotation_count} 处辅助理解`;
     $("#density-hint").textContent = this.doc.forced_count
       ? `${this.doc.automatic_count} 处自动辅助 + ${this.doc.forced_count} 处你保留的注释；保留词不会占用自动辅助名额。`
       : this.doc.automatic_count < this.doc.automatic_budget
         ? "当前档位的可用注释已全部显示；‘多’会扩大词汇解释范围。"
-        : "点击中文备注可调整熟悉度；双击任意英文词可就地查阅。";
+        : "单击单词查阅或反馈；拖选文字使用浮动工具条。";
 
     $$("[data-density]").forEach((b) => {
       const active = +b.dataset.density === this.doc.density;
@@ -343,7 +369,7 @@ export class Reader {
     });
     return ready;
   }
-  async refresh(density, {pdfBackground = false, nextDocument = null} = {}) {
+  async refresh(density, {pdfBackground = false, nextDocument = null, preserveLayout = false} = {}) {
     if (this.scope.signal.aborted) return;
     if (pdfBackground && (this.restoring || !this.pdfCanRefresh?.())) return false;
     const generation = ++this.generation;
@@ -373,11 +399,14 @@ export class Reader {
         this.doc.chapters = doc.chapters;
         return true;
       }
+      preserveLayout &&= doc.version === this.doc.version;
       this.doc = doc;
       this.sourceBlocks = doc.blocks;
-      await this.draw();
+      const anchored = preserveLayout && this.pages.wordReflow.eligible();
+      await this.draw({preserveLayout});
+      if (anchored && !this.popElement) await this.pages.wordReflow.flush({reconcile:true});
       if (this.scope.signal.aborted || generation !== this.generation) return false;
-      await this.restore(anchor, {automatic: true});
+      if (!anchored) await this.restore(anchor, {automatic: true});
       if (this.scope.signal.aborted || generation !== this.generation) return false;
       restoredPosition = pdfBackground;
       return true;
@@ -386,6 +415,7 @@ export class Reader {
         requestAnimationFrame(() => {
           if (!this.scope.signal.aborted && generation === this.generation) {
             this.restoring = false;
+            this.pages.markStable();
             if (restoredPosition) this.emit("position");
           }
         });
@@ -411,6 +441,92 @@ export class Reader {
   position() {
     return this.pages?.position() || { ratio: 0 };
   }
+  sourceParts(anchor) {
+    if (!anchor || (anchor.version !== undefined && anchor.version !== this.doc.version)) return null;
+    const parts = anchor.segments?.length ? anchor.segments : [anchor];
+    const valid = parts.every(part => {
+      const block = this.doc.blocks.find(b => b.id === part.block_id);
+      const pdf = part.pdf_source || anchor.pdf_source;
+      if (pdf && (!this.doc.pdf ||
+          (pdf.source_sha256 && pdf.source_sha256 !== this.doc.pdf.source_sha256) ||
+          (pdf.book_id != null && String(pdf.book_id) !== String(this.doc.pdf.book_id)))) return false;
+      return block && Number.isInteger(part.start) && Number.isInteger(part.end) &&
+        part.start >= 0 && part.end >= part.start && part.end <= block.text.length &&
+        (part.version === undefined || part.version === this.doc.version) &&
+        (!part.quote || part.quote === block.text.slice(part.start, part.end));
+    });
+    return valid ? parts : null;
+  }
+  visibleSource(within = null) {
+    const article = $("#article"), parts = within ? this.sourceParts(within) : null;
+    if (!article || (within && !parts)) return null;
+    const range = document.createRange();
+    for (const run of sourceRuns(article)) {
+      const id = run.block.dataset.block, block = this.pages.blocks.get(id);
+      if (!block || run.node.textContent !== block.text.slice(run.start, run.end)) continue;
+      const matches = parts?.filter(p => p.block_id === id &&
+        (p.start === p.end ? p.start >= run.start && p.start < run.end : p.start < run.end && p.end > run.start));
+      if (parts && !matches.length) continue;
+      const parent = run.node.parentElement, leaf = parent.closest(".page-leaf");
+      // Moving ink is drawn on a compositor surface; its transparent DOM is
+      // source mapping, not proof of visible glyphs at those rectangles.
+      if (!leaf || parent.closest(".reflow-moving,[aria-hidden='true']")) continue;
+      let left = 0, top = 0, right = innerWidth, bottom = innerHeight, hidden = false;
+      for (let node = parent; node; node = node.parentElement) {
+        const css = getComputedStyle(node);
+        if (css.display === "none" || css.visibility !== "visible" || +css.opacity === 0) { hidden = true; break; }
+        const box = node.getBoundingClientRect();
+        if (node === leaf || node === article || /hidden|clip|scroll|auto/.test(css.overflowX)) {
+          left = Math.max(left, box.left); right = Math.min(right, box.right);
+        }
+        if (node === leaf || node === article || /hidden|clip|scroll|auto/.test(css.overflowY)) {
+          top = Math.max(top, box.top); bottom = Math.min(bottom, box.bottom);
+        }
+        if (node === article) break;
+      }
+      if (hidden || right <= left || bottom <= top) continue;
+      const color = getComputedStyle(parent).color;
+      if (color === "transparent" || /rgba\([^)]*,\s*0\s*\)$/.test(color)) continue;
+      for (const match of run.node.textContent.matchAll(/\S/gu)) {
+        const start = run.start + match.index, end = start + match[0].length;
+        if (matches && !matches.some(p => p.start === p.end
+          ? p.start >= start && p.start < end : p.start < end && p.end > start)) continue;
+        range.setStart(run.node, match.index); range.setEnd(run.node, match.index + match[0].length);
+        for (const box of range.getClientRects()) {
+          const x1 = Math.max(left, box.left), x2 = Math.min(right, box.right),
+            y1 = Math.max(top, box.top), y2 = Math.min(bottom, box.bottom);
+          if (x2 - x1 < .5 || y2 - y1 < .5) continue;
+          const hit = document.elementFromPoint((x1 + x2) / 2, (y1 + y2) / 2);
+          // The reader's tool veil disables input to the paper (inert) while
+          // its glyphs remain visible. Hit testing alone cannot prove occlusion.
+          const veil = hit?.matches("#chrome-dismiss,#panel-dismiss") ? getComputedStyle(hit) : null;
+          const alpha = veil ? Reader.inputVeilAlpha(veil.backgroundColor) : 1;
+          const softVeil = veil && alpha <= .1 && veil.backgroundImage === "none" &&
+            veil.filter === "none" && (!veil.backdropFilter || veil.backdropFilter === "none") &&
+            veil.boxShadow === "none" && !hit.children.length && !hit.textContent.trim();
+          if (hit && (hit === parent || parent.contains(hit) || softVeil))
+            return this.anchorFor(id, start, start);
+        }
+      }
+    }
+    return null;
+  }
+  captureView({within} = {}) {
+    const copy = value => value ? structuredClone(value) : null;
+    return {
+      documentId: this.doc.id, sourceVersion: this.doc.version,
+      layoutEpoch: this.pages?.layoutEpoch,
+      visibleAnchor: this.visibleSource(within),
+      readingAnchor: copy(this.position()), selectionAnchor: copy(this.selection),
+      // Mounted source ranges can extend beyond the clipped paper. Callers
+      // must use visibleAnchor/isAnchorVisible for physical visibility.
+      fragments: [...($("#article")?.querySelectorAll("[data-block]") || [])].map(node =>
+        ({block_id: node.dataset.block, start: +node.dataset.start, end: +node.dataset.end})),
+    };
+  }
+  isAnchorVisible(anchor) {
+    return Boolean(anchor && this.visibleSource(anchor));
+  }
   pdfAnchorBlock(anchor, doc = this.doc) {
     if (!doc.pdf || !anchor?.pdf_source) return doc.blocks.find(b => b.id === anchor?.block_id);
     if (anchor.segments?.length) anchor = { ...anchor, ...anchor.segments[0], segments: [] };
@@ -423,13 +539,14 @@ export class Reader {
         (b.text.includes(anchor.quote) && b.text.indexOf(anchor.quote) === b.text.lastIndexOf(anchor.quote))));
     return matches.find(b => b.id === anchor.block_id) || (matches.length === 1 ? matches[0] : null);
   }
-  async restore(anchor, {automatic = false, mark = true} = {}) {
+  async restore(anchor, {automatic = false, mark = true, signal, alignStart = false} = {}) {
+    if (signal?.aborted || this.scope.signal.aborted) return false;
     if (automatic && this.handoff) return false;
     let unprovenPosition = false;
     if (automatic && this.doc.pdf && anchor?.pdf_source &&
         anchor.version !== this.doc.version && anchor.kind !== "image") {
       const position = await this.pdfTools?.retainedPosition(anchor);
-      if (position === false || this.scope.signal.aborted) return false;
+      if (position === false || signal?.aborted || this.scope.signal.aborted) return false;
       if (position) {
         anchor = position;
         this.resumePositionMapped = true;
@@ -444,7 +561,7 @@ export class Reader {
         const sameSource = (!source.source_sha256 || source.source_sha256 === this.doc.pdf.source_sha256) &&
           (source.book_id == null || String(source.book_id) === String(this.doc.pdf.book_id));
         const block = sameSource && this.doc.blocks.find(b => b.source?.page_number === source.page_number);
-        return this.pages.restore(block ? { block_id: block.id, start: 0 } : { ratio: anchor.ratio || 0 }, false);
+        return this.pages.restore(block ? { block_id: block.id, start: 0 } : { ratio: anchor.ratio || 0 }, false, {signal});
       }
       if (!automatic && this.pdfTools) {
         this.pdfTools.openOriginal(anchor.pdf_source);
@@ -460,7 +577,7 @@ export class Reader {
         end: typeof start === "number" && anchor.quote && anchor.kind !== "image"
           ? start + anchor.quote.length : anchor.end};
     }
-    return this.pages.restore(anchor || { ratio: 0 }, mark);
+    return this.pages.restore(anchor || { ratio: 0 }, mark, {signal, alignStart: alignStart && Boolean(this.pages.validAnchor(anchor))});
   }
   captureSelection() {
     if (this.selecting || this.adjustingSelection || this.aiSetupOpen) return;
@@ -482,22 +599,30 @@ export class Reader {
     this.choose(anchor);
   }
   closePop() {
+    const wasOpen = Boolean(this.popElement);
     this.popScope?.dispose();
     this.popScope = null;
     this.popElement?.remove();
     this.popElement = null;
+    this.wordLookupGeneration = (this.wordLookupGeneration || 0) + 1;
+    this.positionSelection?.();
+    if (wasOpen) this.emit?.("reading-uncovered");
   }
   renderDictionary(pop, item) {
     renderDictionaryCard(pop, {...item, anchor: item.anchor || this.popAnchor});
   }
   pop(el, custom) {
     this.closePop();
+    this.wordLookupGeneration = (this.wordLookupGeneration || 0) + 1;
+    const selectionMenu = $("#reading-selection");
+    if (selectionMenu) selectionMenu.hidden = true;
     const item = custom || this.annotations[+el.dataset.annotation];
     if (!item) return;
     const scope = (this.popScope = new Scope());
     const pop = document.createElement("section");
     this.popElement = pop;
     pop.className = "annotation-pop";
+    pop.dataset.annotationSource = item.source || "dictionary";
     pop.setAttribute("role", "dialog");
     pop.setAttribute("aria-label", "注释详情");
     const labels = {
@@ -508,7 +633,7 @@ export class Reader {
       "dictionary-phrase": "表达释义 · 请结合上下文",
       "context-retained": "在这里保留的注释",
     };
-    pop.innerHTML = `<button class="close" aria-label="关闭注释">×</button><div class="meta">${e(labels[item.source] || "词典释义")}</div><h3>${e(item.text)}</h3><div class="meaning">${e(item.note || "词典中暂无释义")}</div><p class="muted">${e(item.detail || "通用释义仅供参考，可主动解释此处用法。")}</p>${item.target && !this.ctx.enabled("collections") ? '<footer><button data-verdict="known">已掌握 ✓</button><button data-verdict="unknown">保留注释</button></footer>' : ""}`;
+    pop.innerHTML = `<header class="word-card-title"><h3>${e(item.text)}</h3><button class="close" aria-label="关闭注释">${actionIcon("close")}</button></header><div class="meta">${e(labels[item.source] || "词典释义")}</div><div class="meaning">${e(item.note || "词典中暂无释义")}</div><details class="word-gloss-detail"><summary>注释补充</summary><p class="muted">${e(item.detail || "通用释义仅供参考，可主动解释此处用法。")}</p></details>${item.target && !this.ctx.enabled("collections") ? '<footer><button data-verdict="known">已掌握 ✓</button><button data-verdict="unknown">保留注释</button></footer>' : ""}`;
     const anchor =
       item.anchor ||
       (item.block
@@ -550,6 +675,7 @@ export class Reader {
     };
     const resize = new ResizeObserver(schedule);
     resize.observe(pop);
+    scope.on(this.events, "draw", schedule);
     scope.on(window, "resize", schedule, { passive: true });
     scope.on(window, "scroll", schedule, { passive: true });
     scope.on(document, "scroll", schedule, { passive: true, capture: true });
@@ -607,7 +733,7 @@ export class Reader {
           body: { target: item.target, verdict: btn.dataset.verdict },
         });
         this.closePop();
-        await this.refresh();
+        await this.refresh(undefined, {preserveLayout: true});
         toast(
           btn.dataset.verdict === "known"
             ? "已记住：减少这项注释"
@@ -622,7 +748,7 @@ export class Reader {
                   verdict: feedback.previous || "reset",
                 },
               });
-              if (!this.scope.signal.aborted) await this.refresh();
+              if (!this.scope.signal.aborted) await this.refresh(undefined, {preserveLayout: true});
             },
           },
         );
@@ -638,13 +764,14 @@ export class Reader {
     $(".close", pop).focus({ preventScroll: true });
   }
   async lookup(word, el, anchor) {
+    const generation = this.wordLookupGeneration = (this.wordLookupGeneration || 0) + 1;
     try {
       const result = await api("/lookup", {
         method: "POST",
         body: { word, mark_unknown: false },
         signal: this.scope.signal,
       });
-      if (this.scope.signal.aborted) return;
+      if (this.scope.signal.aborted || generation !== this.wordLookupGeneration || this.selecting || this.suppressWordClick) return;
       this.lookups++;
       this.pop(el, {
         text: word,

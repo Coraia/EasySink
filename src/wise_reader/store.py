@@ -64,6 +64,9 @@ class Store:
                 l1_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            -- Keep shelf summaries off the wide text/annotation records.
+            CREATE INDEX IF NOT EXISTS wr_document_summary
+                ON document(id, title, word_count, created_at);
 
             CREATE TABLE IF NOT EXISTS annotation_cache (
                 text_hash TEXT NOT NULL,

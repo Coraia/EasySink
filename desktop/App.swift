@@ -1,11 +1,25 @@
 import AppKit
+import Darwin
 import WebKit
 
 @main
 struct WiseReaderMain {
     static func main() {
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        let configuration: LaunchConfiguration
+        switch LaunchPolicy.resolve(arguments: CommandLine.arguments, homeDirectory: home) {
+        case .run(let value):
+            configuration = value
+        case .help(let message):
+            FileHandle.standardOutput.write(Data(message.utf8))
+            return
+        case .failure(let message):
+            FileHandle.standardError.write(Data((message + "\n").utf8))
+            Darwin.exit(64)
+        }
         let application = NSApplication.shared
-        let delegate = ReaderApplication()
+        let delegate = ReaderApplication(dataDirectory: configuration.dataDirectory,
+                                         launchPurpose: configuration.purpose)
         application.delegate = delegate
         application.setActivationPolicy(.regular)
         application.run()
@@ -30,7 +44,8 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var preparingQuit = false
     private var launchTime = ProcessInfo.processInfo.systemUptime
     private var nativeInput: NativeTrackpad?
-    private var dataDirectory: URL!
+    private let dataDirectory: URL
+    private let launchPurpose: LaunchPurpose
     private var readyFile: URL!
     private var lastRoute = "#/"
     private var readingStorage: ReadingStorage!
@@ -38,16 +53,14 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var wakeCheckPending = false
     private var runtimeRegistration: Process?
 
+    init(dataDirectory: URL, launchPurpose: LaunchPurpose) {
+        self.dataDirectory = dataDirectory
+        self.launchPurpose = launchPurpose
+        super.init()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
-            let args = CommandLine.arguments
-            if let index = args.firstIndex(of: "--data-dir"), index + 1 < args.count {
-                dataDirectory = URL(fileURLWithPath: args[index + 1], isDirectory: true)
-            } else {
-                dataDirectory = try FileManager.default.url(for: .applicationSupportDirectory,
-                    in: .userDomainMask, appropriateFor: nil, create: true)
-                    .appendingPathComponent("EasySink Candidate", isDirectory: true)
-            }
             try FileManager.default.createDirectory(at: dataDirectory,
                 withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             readingStorage = ReadingStorage(directory: dataDirectory)
@@ -77,10 +90,10 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         let menu = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "关于 Wise Reader", action: #selector(about), keyEquivalent: "")
+        appMenu.addItem(withTitle: "关于 EasySink", action: #selector(about), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "隐藏 Wise Reader", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "退出 Wise Reader", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "隐藏 EasySink", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "退出 EasySink", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         menu.addItem(appItem)
         let edit = NSMenu(title: "编辑")
@@ -104,7 +117,8 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     private func makeWindow() {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 860),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Wise Reader · 客户端候选"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "候选"
+        window.title = "EasySink · \(version) 产品恢复候选"
         window.isReleasedWhenClosed = false
         window.delegate = self
         if !window.setFrameUsingName("ReaderWindow", force: true) {
@@ -150,7 +164,7 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
 
     @objc private func about() {
         let alert = NSAlert()
-        alert.messageText = "Wise Reader · macOS 候选客户端"
+        alert.messageText = "EasySink · macOS 产品恢复候选"
         alert.informativeText = "复用现有阅读器；资料保存在本机独立目录。关闭窗口保留当前任务，退出应用会停止服务并保留恢复记录。\n\n这是本机体验候选，尚未完成正式发行验收。"
         alert.addButton(withTitle: "好")
         alert.addButton(withTitle: "打开资料目录")
@@ -221,7 +235,8 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         let process = Process()
         process.executableURL = resources.appendingPathComponent("python/bin/python3")
         process.arguments = ["-I", resources.appendingPathComponent("app/scripts/desktop/backend.py").path,
-            "--data-dir", dataDirectory.path, "--ready-file", readyFile.path, "--token", token]
+            "--data-dir", dataDirectory.path, "--launch-purpose", launchPurpose.rawValue,
+            "--ready-file", readyFile.path, "--token", token]
         process.currentDirectoryURL = dataDirectory
         process.environment = ["HOME": NSHomeDirectory(), "TMPDIR": NSTemporaryDirectory(),
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8"]
@@ -537,7 +552,7 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
             report["os"] = ProcessInfo.processInfo.operatingSystemVersionString
             report["evidenceBoundary"] = "Native events may be generated. Human trackpad acceptance must be recorded separately. No book text or credentials included."
             guard let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) else { return }
-            let panel = NSSavePanel(); panel.nameFieldStringValue = "wise-reader-experience.json"
+            let panel = NSSavePanel(); panel.nameFieldStringValue = "easysink-experience.json"
             panel.beginSheetModal(for: window) { response in
                 if response == .OK, let url = panel.url { try? data.write(to: url, options: .atomic) }
             }
@@ -591,7 +606,6 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
 
     private func record(_ event: String, _ fields: [String: Any] = [:]) {
-        guard let dataDirectory else { return }
         var row = fields
         row["event"] = event
         row["elapsed_ms"] = (ProcessInfo.processInfo.systemUptime - launchTime) * 1000

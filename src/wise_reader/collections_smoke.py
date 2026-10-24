@@ -43,7 +43,7 @@ def run():
         assist_migrate(store)
         app = FastAPI()
         app.state.store = store
-        plugin.register(app, SimpleNamespace(store=store))
+        plugin.register(app, SimpleNamespace(store=store, engine=SimpleNamespace(lexicon=None)))
         return store, TestClient(app)
 
     def request(client, method, path, body=None, expected=200):
@@ -156,7 +156,7 @@ def run():
         migrate(store)
         app = FastAPI()
         app.state.store = store
-        plugin.register(app, SimpleNamespace(store=store))
+        plugin.register(app, SimpleNamespace(store=store, engine=SimpleNamespace(lexicon=None)))
         client = TestClient(app)
         request(client, "POST", "/undo", {"token": removed["undo_token"]})
         source = request(client, "GET", f"/{word['id']}/source")
@@ -287,7 +287,7 @@ def run():
         migrate(store)
         app = FastAPI()
         app.state.store = store
-        plugin.register(app, SimpleNamespace(store=store))
+        plugin.register(app, SimpleNamespace(store=store, engine=SimpleNamespace(lexicon=None)))
         client = TestClient(app)
         assert not request(client, "GET", "/resurface")["enabled"]
         shown = request(client, "POST", "/resurface", {"action": "show"})

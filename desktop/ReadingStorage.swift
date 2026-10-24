@@ -24,10 +24,12 @@ final class ReadingStorage {
     // merely because it no longer has the feature which created it.
     private static let keys = Set(["theme", "typography", "page-layout", "page-motion", "page-light",
         "speech-rate", "speech-voice", "last-document", "import-draft", "note-drafts-v3",
-        "edition", "picturebook-demo", "picturebook-chinese", "ai-reading-return"])
+        "edition", "picturebook-demo", "picturebook-chinese", "picturebook-assistance",
+        "picturebook-rate", "ai-reading-return"])
     private static let prefixes = ["book-chapter:", "position-pending:", "note-draft:", "grammar-open:",
         "jump:", "translation-jump:", "note-return:", "collection-meaning:",
-        "picturebook-position:", "living-book-position:", "fox-story-position:"]
+        "picturebook-position:", "living-book-position:", "fox-story-position:",
+        "children-book-chapter:"]
 
     init(directory: URL) {
         file = directory.appendingPathComponent("reading-storage.json")
