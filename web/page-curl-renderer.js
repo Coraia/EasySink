@@ -243,14 +243,14 @@ export class PageCurlRenderer {
     }
   }
   mountSurface() {
-    // Retain WebKit's compositing surface between turns. Removing a Retina
-    // canvas and mounting it again can stall the first moving frame even with
-    // warm textures and an unchanged drawing-buffer size.
-    this.layer.hidden = false;
+    // Keep the WebGL context and drawing buffer warm, but attach its DOM node
+    // only for an active turn. WKWebView can keep presenting the last IOSurface
+    // after opacity/display changes; detaching the canvas is the compositor
+    // ownership boundary that prevents a landed face covering the live DOM.
     Object.assign(this.layer.style, { contain: "layout paint", willChange: "transform" });
     this.layer.inert = true;
     this.layer.setAttribute("aria-hidden", "true");
-    this.layer.append(this.canvas);
+    if (this.canvas.parentNode !== this.layer) this.layer.append(this.canvas);
   }
   invalidate({deferTextures = false, preserveSurface = false} = {}) {
     const retired = [];
@@ -857,6 +857,7 @@ export class PageCurlRenderer {
     });
     this.layer.inert = true;
     for (const child of [...this.layer.children]) if (child !== this.canvas) child.remove();
+    this.mountSurface();
     if (setup) setup.layersMountedAt = performance.now();
     // Software rasterizers pay per shaded pixel. Keep the animated sheet
     // bounded; the live source DOM and its static text retain full resolution.
@@ -1161,6 +1162,10 @@ export class PageCurlRenderer {
     cancelAnimationFrame(this.raf);
     this.scene = null;
     this.pendingTextures = [];
+    // Detach before clearing. CSS hidden/opacity alone does not reliably retire
+    // a WKWebView WebGL IOSurface, and can leave its stationary page visible
+    // over the already-correct canonical DOM after a cancelled turn.
+    this.canvas.remove();
     this.clearSurface();
     for (const child of [...this.layer.children]) if (child !== this.canvas) child.remove();
     delete this.layer.dataset.pin;
