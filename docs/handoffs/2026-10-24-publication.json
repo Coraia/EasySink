@@ -195,10 +195,129 @@
     "all_original_source_refs": "preserved unchanged",
     "per_commit_diff": "only preservation document and synthetic test fixture differ",
     "heavy_tests": "NOT RUN",
-    "modified_fixture_browser_tests": "NOT RUN; historical pass results are not rerun claims",
+    "modified_fixture_browser_tests": "Initial publication: NOT RUN. Follow-up on 2026-10-24: PASS, 7/7 at commit 8b6302cff636f75b8477fb1c4b625a8a39b5ed14; see follow_up_regression_20261024.",
     "build": "NOT RUN; existing App provenance remains its original local source commit",
     "app_or_reading_library_operation": "NOT PERFORMED"
   },
   "local_prepared_source_commit": "33365f621a3c373d82c7a8e78ea0777f9151335a",
-  "publication_transport": "Authorized GitHub connection. Commit metadata/SHA differs from locally prepared copies; source tree SHA verified for every source commit. Original local history remains unchanged."
+  "publication_transport": "Authorized GitHub connection. Commit metadata/SHA differs from locally prepared copies; source tree SHA verified for every source commit. Original local history remains unchanged.",
+  "follow_up_regression_20261024": {
+    "tested_commit": "8b6302cff636f75b8477fb1c4b625a8a39b5ed14",
+    "started_at": "2026-10-24T10:45:18.751+08:00",
+    "timezone": "Asia/Singapore",
+    "result": "PASS",
+    "passed": 7,
+    "failed": 0,
+    "flaky": 0,
+    "selected_tests_skipped": 0,
+    "retries": 0,
+    "workers": 1,
+    "duration_ms": 50047.479,
+    "test_file": "tests/browser/reader-native.spec.js",
+    "test_file_sha256": "8739d65bac0ee7f44c345f5ec2efe5399e35cdea88d5239ad05403c82507b189",
+    "results_json_sha256": "c8835f609bd6a4ffa740b4928441f6e90bae81758bdd821d9ad5c095164db569",
+    "fixture": "Newly authored synthetic harbor paragraph containing unaided; active cancelled/landed source-window cases both passed.",
+    "tests": [
+      {
+        "title": "tools, zoom, Escape and disconnect do not commit a held page; a source selection yields to paging",
+        "status": "passed",
+        "durationMs": 3162,
+        "retry": 0
+      },
+      {
+        "title": "word card blocks every paging entry (native phases)",
+        "status": "passed",
+        "durationMs": 14402,
+        "retry": 0
+      },
+      {
+        "title": "word card blocks every paging entry (wheel compatibility)",
+        "status": "passed",
+        "durationMs": 13110,
+        "retry": 0
+      },
+      {
+        "title": "real annotation reflow preserves the cancelled source window",
+        "status": "passed",
+        "durationMs": 4982,
+        "retry": 0
+      },
+      {
+        "title": "real annotation reflow preserves the landed source window",
+        "status": "passed",
+        "durationMs": 5325,
+        "retry": 0
+      },
+      {
+        "title": "geometry coalescing and retired documents reject old annotation tickets",
+        "status": "passed",
+        "durationMs": 4942,
+        "retry": 0
+      },
+      {
+        "title": "native end crosses a chapter; old momentum and route cleanup never move the new chapter",
+        "status": "passed",
+        "durationMs": 2277,
+        "retry": 0
+      }
+    ],
+    "word_card_guard_checks": [
+      {
+        "wheelCompatibility": false,
+        "checks": 20,
+        "sourceUnchanged": true,
+        "noPagingScenesWhileCardOpen": true,
+        "scrollTopBefore": 0,
+        "scrollTopAfter": 180
+      },
+      {
+        "wheelCompatibility": true,
+        "checks": 16,
+        "sourceUnchanged": true,
+        "noPagingScenesWhileCardOpen": true,
+        "scrollTopBefore": 0,
+        "scrollTopAfter": 180
+      }
+    ],
+    "source_anchor_checks": [
+      {
+        "complete": false,
+        "reason": "spring-back",
+        "expectedAnchorPreserved": true,
+        "canonicalBuilds": 1,
+        "pendingAfter": false,
+        "dirtyAfter": false,
+        "canonicalRevision": 5,
+        "displayRevision": 5
+      },
+      {
+        "complete": true,
+        "reason": "flick",
+        "expectedAnchorPreserved": true,
+        "canonicalBuilds": 1,
+        "pendingAfter": false,
+        "dirtyAfter": false,
+        "canonicalRevision": 5,
+        "displayRevision": 5
+      }
+    ],
+    "resource_preflight": "Passed unchanged budgets on retry; earlier memory-gate failures were retained, not counted as test failures.",
+    "isolation": {
+      "synthetic_disposable_data": true,
+      "test_server_exited": true,
+      "test_ports_released": true,
+      "formal_and_preview_operations": "NOT PERFORMED",
+      "private_data_or_raw_evidence_uploaded": false
+    },
+    "boundaries": {
+      "physical_trackpad": "NOT RUN — 未做真实触控板验收。Native phases are browser fixtures, not physical NSEvent evidence.",
+      "native_app_gui": "NOT RUN",
+      "full_performance": "NOT RUN",
+      "full_e2e": "NOT RUN",
+      "app_build_or_launch": "NOT PERFORMED",
+      "feature_state": "Open-card paging remains withdrawn. Historical open-card paging reproduction remains test.skip and was not selected.",
+      "release_acceptance": "NOT ACCEPTED; targeted passes do not establish full release acceptance."
+    },
+    "documentation_update": "Documentation only; product code, test fixture and existing App provenance remain unchanged."
+  }
 }
