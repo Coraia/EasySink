@@ -367,7 +367,10 @@ def main():
             shutil.copytree(runtime / "share", python_root / "share", symlinks=True)
         lock = dependencies(uv, python_root / "bin/python3", output, args.dependency_lock)
     resources(app)
-    (app / "desktop-build-flavor.json").write_text(json.dumps(profile, indent=2) + "\n")
+    profile_target = app / "desktop-build-flavor.json"
+    if profile_target.exists():
+        profile_target.chmod(0o644)
+    profile_target.write_text(json.dumps(profile, indent=2) + "\n")
     for relative, digest in frozen_sources.items():
         packaged = app / relative
         if relative.startswith(("src/", "web/", "scripts/")) and relative not in {
