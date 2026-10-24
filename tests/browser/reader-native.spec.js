@@ -433,6 +433,7 @@ test('double spread keeps the physical turn face and source continuity with card
     await expect.poll(async () => page.evaluate(() => Boolean(
       document.querySelector('.reader').__curlRendererTest.scene))).toBe(true);
     await expect.poll(async () => page.locator('#page-curl-layer').getAttribute('data-pin')).not.toBeNull();
+    await expect(page.locator('#page-curl-layer')).toHaveJSProperty('hidden', false);
     await expect(page.locator('#page-curl-layer')).toHaveCSS('opacity', '1');
     await expect(page.locator('.annotation-pop')).toBeHidden();
     const initial = await heldScene(), initialTarget = await anchorLocation(cardTarget);
@@ -459,6 +460,7 @@ test('double spread keeps the physical turn face and source continuity with card
     if (cardTarget) expect(cardTarget.actualSide).toBe(item.card);
     await phase(page, 8);
     await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+    await expect(page.locator('#page-curl-layer')).toHaveJSProperty('hidden', true);
     await expect(page.locator('#page-curl-layer')).toHaveCSS('opacity', '0');
     const landedIndex = Number(await page.locator('.reader').getAttribute('data-page-index'));
     expect(item.direction > 0 ? landedIndex > baseIndex : landedIndex < baseIndex).toBe(true);
@@ -498,6 +500,7 @@ test('double spread keeps the physical turn face and source continuity with card
     document.querySelector('.reader').__curlRendererTest.scene))).toBe(true);
   await phase(page, 8);
   await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+  await expect(page.locator('#page-curl-layer')).toHaveJSProperty('hidden', true);
   await expect(page.locator('#page-curl-layer')).toHaveCSS('opacity', '0');
   await expect(page.locator('.reader')).toHaveAttribute('data-page-index', String(baseIndex));
   await expect.poll(() => page.evaluate(() => {
@@ -523,6 +526,7 @@ test('double spread keeps the physical turn face and source continuity with card
   await overCardBody(page, page.locator('.annotation-pop'));
   await phase(page, 1, 13);
   await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+  await expect(page.locator('#page-curl-layer')).toHaveJSProperty('hidden', true);
   await expect(page.locator('#page-curl-layer')).toHaveCSS('opacity', '0');
   await expect.poll(() => page.evaluate(() => {
     const pages = document.querySelector('.reader').__curlRendererTest.pages;
@@ -569,11 +573,11 @@ test('double spread keeps the physical turn face and source continuity with card
     return {aborted: pages.r.scope.signal.aborted, scene: Boolean(state.renderer.scene),
       attaches: window.__faceRepro.attaches.length,
       reflows: window.__faceRepro.reflows,
-      opacity: state.renderer.layer.style.opacity,
+      opacity: state.renderer.layer.style.opacity, hidden: state.renderer.layer.hidden,
       pending: Boolean(pages.wordReflow.pendingLayout), flushing: Boolean(pages.wordReflow.flushing)};
   });
   expect(aborted).toEqual({aborted: true, scene: false, attaches: abortBefore.attaches,
-    reflows: abortBefore.reflows, opacity: '0', pending: false, flushing: false});
+    reflows: abortBefore.reflows, opacity: '0', hidden: true, pending: false, flushing: false});
   evidence.push({name: 'right-card-next-abort', cardTarget: abortTarget, ...aborted});
   await info.attach('double-spread-face-source-continuity.json', {
     body: JSON.stringify(evidence, null, 2), contentType: 'application/json',

@@ -255,7 +255,10 @@ export class ReadingPages {
     // A mounted WebGL canvas can retain its last submitted stationary face in
     // WKWebView after gl.clear(). Remove it from composition synchronously;
     // the next valid turn reveals the same retained surface after its first draw.
-    if(this.painter.layer)this.painter.layer.style.opacity="0";
+    if(this.painter.layer) {
+      this.painter.layer.style.opacity="0";
+      this.painter.layer.hidden=true;
+    }
     this.painter.finish();
     this.animating = false;
     this.wordReflow?.resumeAfterTurn();
@@ -1344,7 +1347,10 @@ export class ReadingPages {
     });
     const turnRun=this.animationToken,turnPainter=this.painter,turnScene=turnPainter.scene;
     this.animating = true;
-    if(turnPainter.layer)turnPainter.layer.style.opacity="0";
+    if(turnPainter.layer) {
+      turnPainter.layer.style.opacity="0";
+      turnPainter.layer.hidden=true;
+    }
     // A page turn owns the transient assistance surface. Closing the card here
     // leaves the selection/retained annotation data intact and prevents the
     // overlay from swallowing later phases of the same horizontal gesture.
@@ -1370,7 +1376,10 @@ export class ReadingPages {
     const canAttach = () => valid() && this.painter===turnPainter && turnPainter.scene===turnScene;
     const drawTurn = (...args) => {
       this.painter.draw(...args);
-      if(valid() && this.painter.scene && this.painter.layer)this.painter.layer.style.opacity="1";
+      if(valid() && this.painter.scene && this.painter.layer) {
+        this.painter.layer.hidden=false;
+        this.painter.layer.style.opacity="1";
+      }
     };
     const done = (complete, reason) => {
       if (!valid()) return;
