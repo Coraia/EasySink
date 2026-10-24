@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "flavor": "production",
+  "bundle_id": "com.coraia.wisereader.candidate",
+  "product_name": "EasySink",
+  "data_directory_name": "EasySink Candidate",
+  "root_id": "easysink-formal-candidate"
+}

@@ -20,6 +20,7 @@ import sys
 import time
 import tomllib
 from pathlib import Path
+from launch_policy import PROFILES
 from resource_policy import native_clone, preflight
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -88,7 +89,8 @@ def source_files():
 
 def source_hashes():
     sources = [*source_files(), *(ROOT / "desktop").glob("*.swift"),
-               Path(__file__), ICON, ROOT / "scripts/desktop/dependencies.lock", ROOT / "uv.lock"]
+               Path(__file__), ICON, ROOT / "desktop-build-flavor.json",
+               ROOT / "scripts/desktop/dependencies.lock", ROOT / "uv.lock"]
     return {str(p.relative_to(ROOT)): sha(p) for p in sorted(sources)}
 
 
@@ -229,6 +231,7 @@ def main():
     parser.add_argument("--runtime", type=Path, help="Existing standalone CPython 3.12 root")
     parser.add_argument("--output", type=Path, default=ROOT / "dist")
     parser.add_argument("--dependency-lock", type=Path)
+    parser.add_argument("--flavor", choices=tuple(PROFILES), default="production")
     parser.add_argument("--refresh-app", action="store_true")
     parser.add_argument("--archive", action="store_true", help="Also produce a compressed distributable ZIP")
     parser.add_argument("--disk-growth-bytes", type=int, required=True)
@@ -257,7 +260,8 @@ def main():
         parser.error("Main must supply desktop/App.swift first")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    bundle = output / "EasySink.app"
+    profile = {"schema": 1, "flavor": args.flavor, **PROFILES[args.flavor]}
+    bundle = output / (profile["product_name"] + ".app")
     marker = output / "desktop-build-inputs.json"
     if args.refresh_app and not (bundle.is_dir() and marker.is_file()
             and (bundle / "Contents/Resources/python/bin/python3").is_file()
@@ -265,6 +269,10 @@ def main():
         parser.error("--refresh-app requires this builder's existing EasySink.app, runtime and build-inputs marker")
     if bundle.exists() and not args.refresh_app:
         parser.error("Output exists; --refresh-app reuses this builder's runtime/dictionary, or choose --output DIR")
+    if args.refresh_app:
+        original = json.loads(marker.read_text())
+        if original.get("build_flavor") != args.flavor:
+            parser.error("--refresh-app cannot change or infer the existing bundle's build flavor")
     frozen_sources = source_hashes()
     requested_lock_hash = sha(args.dependency_lock)
     contents = bundle / "Contents"
@@ -282,16 +290,21 @@ def main():
         if sha(destination) != frozen_sources[str(source.relative_to(ROOT))]:
             raise RuntimeError(f"Swift source changed during snapshot: {source.name}; freeze and rebuild.")
         swift_inputs.append(destination)
+    defines = {"preview": ["-D", "EASYSINK_PREVIEW"],
+               "diagnostic": ["-D", "EASYSINK_DIAGNOSTIC"]}.get(args.flavor, [])
     run(["xcrun", "swiftc", "-parse-as-library", "-O", "-target", "arm64-apple-macos13.0",
-         "-module-name", "WiseReader", *swift_inputs, "-o", macos / "WiseReader",
+         *defines, "-module-name", "WiseReader", *swift_inputs, "-o", macos / "WiseReader",
          "-framework", "AppKit", "-framework", "WebKit"])
     (contents / "Info.plist").write_bytes(plistlib.dumps({
-        "CFBundleExecutable": "WiseReader", "CFBundleIdentifier": "com.coraia.wisereader.candidate",
-        "CFBundleName": "EasySink", "CFBundleDisplayName": "EasySink",
+        "CFBundleExecutable": "WiseReader", "CFBundleIdentifier": profile["bundle_id"],
+        "CFBundleName": profile["product_name"], "CFBundleDisplayName": profile["product_name"],
         "CFBundleIconFile": "EasySink.icns",
         "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.3.0",
         "CFBundleVersion": "29", "LSMinimumSystemVersion": "13.0",
         "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication",
+        "EasySinkBuildFlavor": profile["flavor"],
+        "EasySinkDataDirectoryName": profile["data_directory_name"],
+        "EasySinkRootID": profile["root_id"],
         "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
     }, sort_keys=True))
     icon_target = resource_root / "EasySink.icns"
@@ -303,7 +316,6 @@ def main():
     app = resource_root / "app"
     python_root = resource_root / "python"
     if args.refresh_app:
-        original = json.loads(marker.read_text())
         info, runtime = original["runtime"], Path(original["runtime_source"])
         lock = output / "desktop-dependencies.lock"
         if not lock.exists() or sha(lock) != requested_lock_hash:
@@ -326,6 +338,7 @@ def main():
             shutil.copytree(runtime / "share", python_root / "share", symlinks=True)
         lock = dependencies(uv, python_root / "bin/python3", output, args.dependency_lock)
     resources(app)
+    (app / "desktop-build-flavor.json").write_text(json.dumps(profile, indent=2) + "\n")
     for relative, digest in frozen_sources.items():
         packaged = app / relative
         if relative.startswith(("src/", "web/", "scripts/")) and relative not in {
@@ -334,7 +347,9 @@ def main():
                 raise RuntimeError(f"Packaged source changed during build: {relative}; freeze and rebuild.")
     audit_native_runtime(python_root, output)
     readonly_resources(resource_root)
-    inputs = {"resource_budget": resource_budget, "runtime": info, "runtime_source": str(runtime), "runtime_build": (python_root / "BUILD").read_text().strip(),
+    inputs = {"build_flavor": args.flavor, "bundle_identifier": profile["bundle_id"],
+              "data_directory_name": profile["data_directory_name"], "root_id": profile["root_id"],
+              "resource_budget": resource_budget, "runtime": info, "runtime_source": str(runtime), "runtime_build": (python_root / "BUILD").read_text().strip(),
               "dependency_lock_sha256": sha(lock), "swift_sources": {"desktop/" + p.name: sha(p) for p in swift_inputs},
               "builder_sha256": sha(Path(__file__)), "uv_lock_sha256": sha(ROOT / "uv.lock"),
               "source_sha256": frozen_sources}
@@ -349,7 +364,7 @@ def main():
              "optional_ocr_bundled_bytes": 0, "optional_ocr_download_bytes": None,
              "ocr_accuracy_passed": False, "build_elapsed_seconds": time.monotonic() - started}
     if args.archive:
-        archive = output / "EasySink.zip"
+        archive = output / (profile["product_name"] + ".zip")
         if archive.exists():
             archive.unlink()
         run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", bundle, archive])

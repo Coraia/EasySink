@@ -6,8 +6,11 @@ import WebKit
 struct WiseReaderMain {
     static func main() {
         let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        let profile = DesktopBuildConfiguration.profile
         let configuration: LaunchConfiguration
-        switch LaunchPolicy.resolve(arguments: CommandLine.arguments, homeDirectory: home) {
+        switch LaunchPolicy.resolve(arguments: CommandLine.arguments, homeDirectory: home,
+            profile: profile, actualBundleIdentifier: Bundle.main.bundleIdentifier,
+            declaredFlavor: Bundle.main.object(forInfoDictionaryKey: "EasySinkBuildFlavor") as? String) {
         case .run(let value):
             configuration = value
         case .help(let message):
@@ -17,13 +20,26 @@ struct WiseReaderMain {
             FileHandle.standardError.write(Data((message + "\n").utf8))
             Darwin.exit(64)
         }
+        let instanceLock: NativeInstanceLock
+        do {
+            if profile.flavor != .diagnostic {
+                try FileManager.default.createDirectory(at: configuration.dataDirectory,
+                    withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            }
+            instanceLock = try NativeInstanceLock.acquire(directory: configuration.dataDirectory)
+        } catch NativeInstanceLockError.alreadyRunning {
+            FileHandle.standardError.write(Data("This EasySink data root is already open.\n".utf8))
+            Darwin.exit(73)
+        } catch {
+            FileHandle.standardError.write(Data(("Unable to acquire the native instance lock: \(error)\n").utf8))
+            Darwin.exit(74)
+        }
         let application = NSApplication.shared
-        let delegate = ReaderApplication(dataDirectory: configuration.dataDirectory,
-                                         launchPurpose: configuration.purpose)
+        let delegate = ReaderApplication(configuration: configuration)
         application.delegate = delegate
         application.setActivationPolicy(.regular)
         application.run()
-        withExtendedLifetime(delegate) {}
+        withExtendedLifetime((delegate, instanceLock)) {}
     }
 }
 
@@ -45,7 +61,7 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var launchTime = ProcessInfo.processInfo.systemUptime
     private var nativeInput: NativeTrackpad?
     private let dataDirectory: URL
-    private let launchPurpose: LaunchPurpose
+    private let profile: DesktopBuildProfile
     private var readyFile: URL!
     private var lastRoute = "#/"
     private var readingStorage: ReadingStorage!
@@ -53,9 +69,9 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var wakeCheckPending = false
     private var runtimeRegistration: Process?
 
-    init(dataDirectory: URL, launchPurpose: LaunchPurpose) {
-        self.dataDirectory = dataDirectory
-        self.launchPurpose = launchPurpose
+    init(configuration: LaunchConfiguration) {
+        self.dataDirectory = configuration.dataDirectory
+        self.profile = configuration.profile
         super.init()
     }
 
@@ -90,10 +106,10 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         let menu = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "关于 EasySink", action: #selector(about), keyEquivalent: "")
+        appMenu.addItem(withTitle: "关于 \(profile.productName)", action: #selector(about), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "隐藏 EasySink", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "退出 EasySink", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "隐藏 \(profile.productName)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "退出 \(profile.productName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         menu.addItem(appItem)
         let edit = NSMenu(title: "编辑")
@@ -118,7 +134,7 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 860),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "候选"
-        window.title = "EasySink · \(version) 产品恢复候选"
+        window.title = "\(profile.productName) · \(version) · \(profile.flavor.rawValue)"
         window.isReleasedWhenClosed = false
         window.delegate = self
         if !window.setFrameUsingName("ReaderWindow", force: true) {
@@ -164,7 +180,7 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
 
     @objc private func about() {
         let alert = NSAlert()
-        alert.messageText = "EasySink · macOS 产品恢复候选"
+        alert.messageText = "\(profile.productName) · macOS \(profile.flavor.rawValue)"
         alert.informativeText = "复用现有阅读器；资料保存在本机独立目录。关闭窗口保留当前任务，退出应用会停止服务并保留恢复记录。\n\n这是本机体验候选，尚未完成正式发行验收。"
         alert.addButton(withTitle: "好")
         alert.addButton(withTitle: "打开资料目录")
@@ -235,7 +251,8 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         let process = Process()
         process.executableURL = resources.appendingPathComponent("python/bin/python3")
         process.arguments = ["-I", resources.appendingPathComponent("app/scripts/desktop/backend.py").path,
-            "--data-dir", dataDirectory.path, "--launch-purpose", launchPurpose.rawValue,
+            "--data-dir", dataDirectory.path, "--launch-flavor", profile.flavor.rawValue,
+            "--bundle-id", profile.bundleIdentifier, "--root-id", profile.rootID,
             "--ready-file", readyFile.path, "--token", token]
         process.currentDirectoryURL = dataDirectory
         process.environment = ["HOME": NSHomeDirectory(), "TMPDIR": NSTemporaryDirectory(),

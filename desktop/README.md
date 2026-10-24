@@ -9,14 +9,14 @@ notarized release or full V1 acceptance.
 On an Apple Silicon Mac with Xcode command-line tools and `uv`:
 
 ```sh
-python3 scripts/desktop/build.py --dependency-lock scripts/desktop/dependencies.lock --archive
+python3 scripts/desktop/build.py --flavor production --dependency-lock scripts/desktop/dependencies.lock --archive
 # Reuse the prepared runtime and dictionary for subsequent frozen source changes:
-python3 scripts/desktop/build.py --refresh-app --dependency-lock scripts/desktop/dependencies.lock --archive
+python3 scripts/desktop/build.py --flavor production --refresh-app --dependency-lock scripts/desktop/dependencies.lock --archive
 ```
 
 The builder requires an existing uv-managed standalone CPython 3.12 and the
-project's fetched dictionary resources. Build output is `dist/Wise Reader.app`
-and, with `--archive`, `dist/Wise Reader.zip`. Preserve the generated dependency
+project's fetched dictionary resources. Production build output is `dist/EasySink.app`
+and, with `--archive`, `dist/EasySink.zip`. Preserve the generated dependency
 lock, manifest, source hashes and ZIP digest with a delivery. Pass
 `--dependency-lock dist/desktop-dependencies.lock` to repeat the resolved wheels.
 Installed users need neither the repository nor Python, Swift, uv, or a running
@@ -31,6 +31,37 @@ records per-source hashes. A refresh compares the canonical dependency lock and
 installs newly required wheels (including the light `psutil` supervisor); it
 does not silently reuse an outdated dependency set. An aborted build is not a
 delivery even if an intermediate app/ZIP remains in its output directory.
+
+### Build-flavor and data-root isolation
+
+The builder has three identities that cannot be changed by runtime arguments:
+
+| Flavor | Bundle ID | Product | Fixed data directory |
+| --- | --- | --- | --- |
+| `production` | `com.coraia.wisereader.candidate` | EasySink | `EasySink Candidate` |
+| `preview` | `com.coraia.wisereader.preview` | EasySink Preview | `EasySink Paragraph Preview Data 002` |
+| `diagnostic` | `com.coraia.wisereader.diagnostic` | EasySink Diagnostic | `EasySink Diagnostic Data 001` |
+
+Production and Preview accept only no-argument GUI launch and their own fixed
+root. Diagnostic launch also accepts no root override: its fixed root must
+already exist with mode `0700` and contain a mode-`0600` regular file named
+`.easysink-diagnostic-data.json` with this exact identity:
+
+```json
+{"schema":2,"role":"diagnostic","root_id":"easysink-diagnostic-001","bundle_id":"com.coraia.wisereader.diagnostic"}
+```
+
+Missing, mismatched, insecure or symlinked diagnostic roots fail before
+`NSApplication`, logs, database initialization or backend startup. Native and
+backend code independently compare the compiled flavor, Info.plist, packaged
+build manifest, fixed canonical root and marker. Refresh builds cannot change
+or infer the flavor of an existing output.
+
+UI automation must start the executable directly, retain its PID, and run
+`uv run python scripts/desktop/ui_target.py` with that PID, exact executable SHA-256 and
+bundle ID before binding. That helper only verifies an existing process; it
+never calls LaunchServices or starts an App. Do not use `open`, bundle lookup,
+or a path-based API that launches the App when the expected PID is absent.
 
 ## Run and data
 

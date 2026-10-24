@@ -20,7 +20,7 @@ from pathlib import Path
 
 DESKTOP = Path(__file__).resolve().parent
 sys.path.insert(0, str(DESKTOP))  # Bundled Python runs this script with -I/-P.
-from launch_policy import LaunchPolicyError, validate_data_dir
+from launch_policy import LaunchPolicyError, validate_packaged_data_dir
 
 APP = Path(__file__).resolve().parents[2]
 COOKIE = "wr_desktop"
@@ -217,14 +217,17 @@ async def serve(args, sock):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", required=True, type=Path)
-    parser.add_argument("--launch-purpose", required=True, choices=("normal", "diagnostic"))
+    parser.add_argument("--launch-flavor", required=True, choices=("production", "preview", "diagnostic"))
+    parser.add_argument("--bundle-id", required=True)
+    parser.add_argument("--root-id", required=True)
     parser.add_argument("--ready-file", required=True, type=Path)
     parser.add_argument("--token", required=True)
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9_-]{32,256}", args.token):
         parser.error("token must be a 32-256 character URL-safe nonce")
     try:
-        args.data_dir = validate_data_dir(args.data_dir, args.launch_purpose)
+        args.data_dir = validate_packaged_data_dir(
+            args.data_dir, args.launch_flavor, args.bundle_id, args.root_id, app_root=APP)
     except LaunchPolicyError as error:
         parser.error(str(error))
     os.umask(0o077)
