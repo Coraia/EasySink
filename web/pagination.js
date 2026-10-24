@@ -254,6 +254,7 @@ export class ReadingPages {
     this.animationToken = (this.animationToken || 0) + 1;
     this.painter.finish();
     this.animating = false;
+    this.wordReflow?.resumeAfterTurn();
     this.markStable();
   }
   interruptForSourceIntent() {
@@ -1293,8 +1294,12 @@ export class ReadingPages {
   }
   beginTurn(direction, clientY, force = false) {
     if(this.r.scope.signal.aborted)return null;
+    // A canonical reflow that already owns the document must finish first.
+    // Pending (not-yet-started) work is safe: this turn freezes the current
+    // presentation and either disposes it on commit or resumes it on cancel.
+    if(this.wordReflow.flushing)return null;
     const setup = this.painter.collectPerformance ? { enteredAt: performance.now(), inputEvents: [] } : null;
-    if ((!force && !this.canGrab()) || this.animating || this.displayPending)
+    if ((!force && !this.canGrab()) || this.animating || this.displayPending || this.painter.scene)
       return null;
     // A preview is reversible. Assistance expires only when a new view commits.
     const presented=this.presentationOutside(direction);
@@ -1333,11 +1338,18 @@ export class ReadingPages {
       direction,
       boundaryWarm: Boolean(boundary && this.ranges.get(boundary.doc_id)?.packet),
     });
+    const turnRun=this.animationToken,turnPainter=this.painter,turnScene=turnPainter.scene;
     this.animating = true;
     // A page turn owns the transient assistance surface. Closing the card here
     // leaves the selection/retained annotation data intact and prevents the
     // overlay from swallowing later phases of the same horizontal gesture.
+    const hadOpenCard=Boolean(this.r.popElement);
     this.r.closePop();
+    // Warm textures can otherwise attach in the same task as removal. Give
+    // WKWebView one presentation boundary to retire the card's compositor
+    // layer before the first curl surface is attached.
+    const cardDismissed=hadOpenCard
+      ? new Promise(resolve=>requestAnimationFrame(()=>resolve())) : null;
     if (setup) {
       setup.previewCreatedAt = performance.now();
       this.painter.attachSetup = null;
@@ -1348,7 +1360,9 @@ export class ReadingPages {
       !preview.cancelled &&
       token === this.navigation &&
       generation === this.generation &&
+      turnRun === this.animationToken &&
       !this.r.scope.signal.aborted;
+    const canAttach = () => valid() && this.painter===turnPainter && turnPainter.scene===turnScene;
     const done = (complete, reason) => {
       if (!valid()) return;
       this.painter.record(complete, reason, preview.requested, preview.settle, preview.setup);
@@ -1572,7 +1586,7 @@ export class ReadingPages {
     });
     if (setup) setup.layoutCapturedAt = performance.now();
     const ready = (front, back, stationary = []) => {
-      if (!valid() || preview.ready) return;
+      if (!canAttach() || preview.ready) return;
       if (setup) setup.readyEnteredAt = performance.now();
       clearTimeout(preview.timeout);
       clearTimeout(preview.loadingTimer);
@@ -1597,7 +1611,8 @@ export class ReadingPages {
       else if (!preview.raf) preview.raf = requestAnimationFrame(draw);
     };
     const prepare = async (source, index) => {
-      if (!valid()) return;
+      if(cardDismissed)await cardDismissed;
+      if (!canAttach()) return;
       if (setup) setup.incomingStartedAt = performance.now();
       const frontIndex = currentSource.index + (direction > 0 ? this.count - 1 : 0),
         backIndex = index + (direction < 0 ? this.count - 1 : 0);
@@ -1624,7 +1639,7 @@ export class ReadingPages {
         ...faces.map(face => this.painter.prepare(face.index, face.source)),
       ]);
       if (setup) setup.texturesReadyAt = performance.now();
-      if (!valid()) return;
+      if (!canAttach()) return;
       if (boundary && (!front || !back || staticTextures.some(texture => !texture)) && !this.painter.failed)
         throw new Error("相邻页面图像尚未准备");
       ready(front, back, faces.map((face, i) => ({ x: face.x, texture: staticTextures[i] })));
@@ -1651,14 +1666,6 @@ export class ReadingPages {
       });
     } else if(presented!==null) {
       (async()=>{
-        if(this.wordReflow.pendingLayout || this.wordReflow.flushing) {
-          const flush=this.wordReflow.flush(),expectedGeneration=this.generation,complete=await flush;
-          if(complete!==true || expectedGeneration!==this.generation || this.preview!==preview || token!==this.navigation || this.r.scope.signal.aborted) {
-            if(this.preview===preview)this.finishAnimation('source-window-superseded');
-            return;
-          }
-          generation=expectedGeneration;
-        }
         if(!valid())return;
         const source=await this.preparePresentation(direction);
         if(!valid())return;

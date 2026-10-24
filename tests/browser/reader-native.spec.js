@@ -55,7 +55,7 @@ async function overCardBody(page, card) {
   });
   await page.mouse.move(point.clientX, point.clientY);
 }
-async function prepared(page, request, layout = 'single', {desktop = false} = {}) {
+async function prepared(page, request, layout = 'single', {desktop = false, text = null} = {}) {
   await page.addInitScript(layout => {
     localStorage.setItem('wr2:page-layout', JSON.stringify(layout));
     localStorage.setItem('wr2:page-motion', JSON.stringify('curl'));
@@ -77,7 +77,7 @@ async function prepared(page, request, layout = 'single', {desktop = false} = {}
     });
   }
   const doc = await (await request.post('/api/documents', { data: {
-    title: 'Native trackpad production acceptance', text: Array(60).fill(body).join('\n\n') } })).json();
+    title: 'Native trackpad production acceptance', text: text || Array(60).fill(body).join('\n\n') } })).json();
   await page.goto(`/?readingPerf=1#/read/${doc.id}`);
   await expect(page.locator('.reader')).toHaveAttribute('data-document-id', String(doc.id));
   await expect(page.locator('.reader')).toHaveAttribute('data-ready', 'true');
@@ -87,17 +87,22 @@ async function prepared(page, request, layout = 'single', {desktop = false} = {}
   await over(page);
   return doc;
 }
-async function preparedPresentation(page, request) {
+async function preparedPresentation(page, request, {
+  desktop = false, text = null, retainedWord = 'conviction', retainedSide = null,
+} = {}) {
   await request.patch('/api/profile', { data: { density: 15 } });
-  const doc = await prepared(page, request, 'double');
-  const retained = page.locator('#article [data-word="conviction"]').first();
+  const doc = await prepared(page, request, 'double', {desktop, text});
+  const retainedRoot = retainedSide
+    ? page.locator('.page-leaf').nth(retainedSide === 'left' ? 0 : 1)
+    : page.locator('#article');
+  const retained = retainedRoot.locator(`[data-word="${retainedWord}"]`).first();
   await retained.click();
   await expect(page.locator('.annotation-pop .dictionary-candidates')).toBeVisible();
   await page.locator('[data-retained]').click();
   await expect(page.locator('[data-retained]')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('[data-retained]')).toBeEnabled();
   await page.getByRole('button', { name: '关闭注释', exact: true }).click();
-  await expect(page.locator('#article [data-target="conviction"]')).toHaveCount(1);
+  await expect.poll(() => page.locator(`#article [data-target="${retainedWord}"]`).count()).toBeGreaterThan(0);
   await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
   await over(page);
   for (let i = 0; i < 2; i++) {
@@ -240,6 +245,307 @@ test('an open word card keeps vertical card scrolling but its source word yields
   await expect(page.locator('.reader')).toHaveAttribute('data-page-index', '0');
   await word.click();
   await expect(page.locator('.annotation-pop')).toBeVisible();
+});
+test('double spread keeps the physical turn face and source continuity with cards on either leaf', async ({ page, request }, info) => {
+  test.setTimeout(60000);
+  const theology = Array.from({length: 72}, (_, index) =>
+    `SOURCE SECTION ${String(index).padStart(2, '0')}. The small research team prepared a plan for the harbor, ` +
+    'although each member proposed a different way to arrange the tables and check the lamps before sunset, ' +
+    'using unaided observation, calm discussion, and careful notes. Each person checked the final diagram.').join('\n\n');
+  await preparedPresentation(page, request, {desktop: true, text: theology,
+    retainedWord: 'unaided', retainedSide: 'right'});
+  const retainedRecord = await page.evaluate(() => {
+    const item = document.querySelector('.reader').__curlRendererTest.pages.r.annotations
+      .find(annotation => annotation.target === 'unaided');
+    return item && {blockId: item.block.id, start: item.start, end: item.end,
+      note: item.note, target: item.target};
+  });
+  expect(retainedRecord).toBeTruthy();
+  await page.evaluate(() => {
+    const renderer = document.querySelector('.reader').__curlRendererTest;
+    const prepare = renderer.prepare.bind(renderer);
+    renderer.prepare = async (index, source = renderer.pages, guard = null) => {
+      const texture = await prepare(index, source, guard);
+      if (texture) texture.__sourcePlan = {
+        localIndex: index,
+        sourceIndex: source.index,
+        canonicalIndex: source.view?.canonicalIndex ?? index,
+        historyIndex: source.intent?.historyIndex ?? null,
+        direction: source.intent?.direction ?? null,
+        presentation: Boolean(source.view),
+        textureGeneration: source.view?.textureGeneration ?? source.generation,
+      };
+      return texture;
+    };
+    const reader = renderer.pages.r, closePop = reader.closePop.bind(reader), attach = renderer.attach.bind(renderer),
+      reflow = renderer.pages.wordReflow, flush = reflow.flush.bind(reflow);
+    window.__faceRepro = {closes: [], attaches: [], flushes: 0};
+    reflow.flush = (...args) => {
+      window.__faceRepro.flushes++;
+      return flush(...args);
+    };
+    reader.closePop = () => {
+      const before = {at: performance.now(), connected: Boolean(reader.popElement?.isConnected),
+        anchor: reader.popAnchor ? {...reader.popAnchor} : null};
+      closePop();
+      window.__faceRepro.closes.push({...before, afterConnected: Boolean(reader.popElement?.isConnected)});
+    };
+    renderer.attach = (...args) => {
+      window.__faceRepro.attaches.push({at: performance.now(), cardConnected: Boolean(reader.popElement?.isConnected),
+        reflowPhase: document.querySelector('#article').dataset.reflowPhase || null});
+      return attach(...args);
+    };
+  });
+
+  const sourcePosition = async () => JSON.parse(
+    await page.locator('.reader').getAttribute('data-source-position'));
+  const leafContent = () => page.locator('.page-leaf').evaluateAll(leaves => leaves.map(leaf => ({
+    text: (leaf.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180),
+    blocks: [...leaf.querySelectorAll('[data-block-id]')].slice(0, 4).map(node => ({
+      blockId: node.dataset.blockId,
+      start: node.dataset.start || null,
+      end: node.dataset.end || null,
+    })),
+  })));
+  const moveToEdge = async direction => {
+    const point = await page.locator('#article').evaluate((article, direction) => {
+      const box = article.getBoundingClientRect();
+      return {clientX: direction > 0 ? box.right - 12 : box.left + 12,
+        clientY: box.top + box.height * .55};
+    }, direction);
+    await page.mouse.move(point.clientX, point.clientY);
+    return point;
+  };
+  const anchorLocation = anchor => anchor && page.evaluate(anchor => {
+    const article = document.querySelector('#article').getBoundingClientRect();
+    const node = [...document.querySelectorAll('#article [data-word]')].find(candidate =>
+      candidate.dataset.sourceBlock === anchor.blockId &&
+      Number(candidate.dataset.sourceStart) === anchor.start && Number(candidate.dataset.sourceEnd) === anchor.end);
+    if (!node) return null;
+    const box = node.getBoundingClientRect();
+    return {side: box.left + box.width / 2 < article.left + article.width / 2 ? 'left' : 'right',
+      rect: {left: box.left, top: box.top, width: box.width, height: box.height}};
+  }, anchor);
+  const retainedPresent = () => page.evaluate(record => {
+    const annotations = document.querySelector('.reader').__curlRendererTest.pages.r.annotations;
+    return annotations.filter(item => item.block.id === record.blockId && item.start === record.start &&
+      item.end === record.end && item.note === record.note && item.target === record.target).length;
+  }, retainedRecord);
+  const openCard = async side => {
+    if (!side) return null;
+    const leafIndex = side === 'left' ? 0 : 1;
+    const leaf = page.locator('.page-leaf').nth(leafIndex), unaided = leaf.locator('[data-word="unaided"]');
+    const word = await unaided.count() ? unaided.first() : leaf.locator('[data-word]').first();
+    await word.click();
+    await expect(page.locator('.annotation-pop')).toBeVisible();
+    return word.evaluate((node, side) => {
+      const box = node.getBoundingClientRect(), article = document.querySelector('#article').getBoundingClientRect();
+      return {requestedSide: side, actualSide: box.left + box.width / 2 < article.left + article.width / 2 ? 'left' : 'right',
+        word: node.dataset.word, blockId: node.dataset.sourceBlock, start: Number(node.dataset.sourceStart),
+        end: Number(node.dataset.sourceEnd), rect: {left: box.left, top: box.top, width: box.width, height: box.height}};
+    }, side);
+  };
+  const heldScene = () => page.evaluate(() => {
+    const root = document.querySelector('.reader'), renderer = root.__curlRendererTest,
+      scene = renderer.scene, article = document.querySelector('#article').getBoundingClientRect(),
+      leaves = [...document.querySelectorAll('.page-leaf')].map(leaf => {
+        const box = leaf.getBoundingClientRect();
+        return {left: box.left - article.left, width: box.width};
+      }), plan = texture => texture?.__sourcePlan || {key: texture?.key || null};
+    const activeFace = scene.leaf.x + scene.leaf.width / 2 < article.width / 2 ? 'left' : 'right';
+    const view = renderer.pages.viewTrail?.[renderer.pages.viewTrailIndex] || renderer.pages.presentedView || null;
+    return {
+      direction: scene.direction,
+      activeFace,
+      activeLeaf: {x: scene.leaf.x, width: scene.leaf.width},
+      leaves,
+      article: {left: article.left, right: article.right, width: article.width},
+      front: plan(scene.front),
+      back: plan(scene.back),
+      stationary: scene.stationary.map(item => ({x: item.x, source: plan(item.texture)})),
+      pointerStart: window.__e2eNativePointer,
+      progress: Number(root.dataset.trackpadProgress),
+      binding: JSON.parse(document.querySelector('#page-curl-layer').dataset.binding || 'null'),
+      pin: JSON.parse(document.querySelector('#page-curl-layer').dataset.pin || 'null'),
+      pageIndex: Number(root.dataset.pageIndex),
+      sourcePosition: JSON.parse(root.dataset.sourcePosition),
+      warmPlan: JSON.parse(root.dataset.curlWarmPlan || 'null'),
+      cardConnected: Boolean(renderer.pages.r.popElement?.isConnected),
+      popAnchor: renderer.pages.r.popAnchor ? {...renderer.pages.r.popAnchor} : null,
+      reflowPhase: document.querySelector('#article').dataset.reflowPhase || null,
+      lifecycle: structuredClone(window.__faceRepro),
+      presentation: {
+        annotationLayout: Boolean(renderer.pages.annotationLayout),
+        presentedView: Boolean(renderer.pages.presentedView),
+        windowCanonicalIndex: view?.canonicalIndex ?? null,
+        historyIndex: renderer.pages.viewTrailIndex ?? null,
+      },
+    };
+  });
+
+  const cases = [
+    {name: 'no-card-next', card: null, direction: 1, face: 'right'},
+    {name: 'no-card-previous', card: null, direction: -1, face: 'left'},
+    {name: 'right-card-next', card: 'right', direction: 1, face: 'right', pendingReflow: true},
+    {name: 'right-card-previous', card: 'right', direction: -1, face: 'left'},
+    {name: 'left-card-next', card: 'left', direction: 1, face: 'right'},
+    {name: 'left-card-previous', card: 'left', direction: -1, face: 'left', pendingReflow: true},
+  ], evidence = [], baseIndex = Number(await page.locator('.reader').getAttribute('data-page-index')),
+    basePosition = await sourcePosition();
+  for (const item of cases) {
+    await expect(page.locator('.reader')).toHaveAttribute('data-page-index', String(baseIndex));
+    await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
+    const before = {index: baseIndex, sourcePosition: await sourcePosition(), leaves: await leafContent(),
+      warmPlan: JSON.parse(await page.locator('.reader').getAttribute('data-curl-warm-plan'))};
+    const cardTarget = await openCard(item.card);
+    if (item.pendingReflow) await page.evaluate(() => {
+      document.querySelector('.reader').__curlRendererTest.pages.wordReflow.pendingLayout ||= {reconcile: true};
+    });
+    let pointerStart;
+    if (cardTarget) {
+      await overCardBody(page, page.locator('.annotation-pop'));
+      pointerStart = await page.evaluate(() => window.__e2eNativePointer);
+    } else pointerStart = await moveToEdge(item.direction);
+    await page.evaluate(() => { window.__faceRepro.closes = []; window.__faceRepro.attaches = []; });
+    await phase(page, 1, item.direction * 13);
+    await expect(page.locator('#page-curl-layer')).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => Boolean(
+      document.querySelector('.reader').__curlRendererTest.scene))).toBe(true);
+    await expect.poll(async () => page.locator('#page-curl-layer').getAttribute('data-pin')).not.toBeNull();
+    await expect(page.locator('.annotation-pop')).toBeHidden();
+    const initial = await heldScene(), initialTarget = await anchorLocation(cardTarget);
+    await info.attach(`${item.name}-initial.png`, {body: await page.screenshot(), contentType: 'image/png'});
+    expect(initial.cardConnected).toBe(false);
+    expect(initial.lifecycle.attaches.at(-1)?.cardConnected).toBe(false);
+    const outerEdge = item.direction > 0 ? initial.article.right : initial.article.left;
+    expect(Math.abs(initial.pin.x - outerEdge)).toBeLessThan(30);
+    await phase(page, 4, item.direction * 520);
+    const held = await heldScene();
+    const heldTarget = await anchorLocation(cardTarget);
+    await info.attach(`${item.name}-held.png`, {body: await page.screenshot(), contentType: 'image/png'});
+    expect(held.direction).toBe(item.direction);
+    expect(held.activeFace).toBe(item.face);
+    expect(held.pointerStart).toEqual(pointerStart);
+    expect(held.front.presentation).toBe(true);
+    expect(held.back.presentation).toBe(true);
+    expect(held.front.localIndex).toBe(item.direction > 0 ? 1 : 0);
+    expect(held.back.localIndex).toBe(item.direction > 0 ? 0 : 1);
+    expect(held.front.canonicalIndex).toBe(baseIndex);
+    expect(item.direction > 0
+      ? held.back.canonicalIndex > baseIndex
+      : held.back.canonicalIndex < baseIndex).toBe(true);
+    if (cardTarget) expect(cardTarget.actualSide).toBe(item.card);
+    await phase(page, 8);
+    await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+    const landedIndex = Number(await page.locator('.reader').getAttribute('data-page-index'));
+    expect(item.direction > 0 ? landedIndex > baseIndex : landedIndex < baseIndex).toBe(true);
+    const after = {index: landedIndex, sourcePosition: await sourcePosition(), leaves: await leafContent()};
+    expect(item.direction > 0
+      ? after.sourcePosition.ratio > before.sourcePosition.ratio
+      : after.sourcePosition.ratio < before.sourcePosition.ratio).toBe(true);
+    await moveToEdge(-item.direction);
+    await phase(page, 1, -item.direction * 700);
+    await phase(page, 8);
+    await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+    await expect(page.locator('.reader')).toHaveAttribute('data-page-index', String(baseIndex));
+    await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
+    const returned = await sourcePosition();
+    expect(returned.block_id).toBe(basePosition.block_id);
+    expect(returned.start).toBe(basePosition.start);
+    await expect.poll(retainedPresent).toBe(1);
+    await expect.poll(() => page.evaluate(() => {
+      const pages = document.querySelector('.reader').__curlRendererTest.pages;
+      return {pending: Boolean(pages.wordReflow.pendingLayout), flushing: Boolean(pages.wordReflow.flushing)};
+    })).toEqual({pending: false, flushing: false});
+    evidence.push({...item, cardTarget, pointerStart, initial, initialTarget, held, heldTarget,
+      before, after, returned});
+  }
+  // A short gesture exercises the other half of the ownership contract:
+  // cancellation must hand the frozen presentation back to canonical reflow.
+  const cancelTarget = await openCard('right'), cancelFlushes = await page.evaluate(() => {
+    const before = window.__faceRepro.flushes;
+    document.querySelector('.reader').__curlRendererTest.pages.wordReflow.pendingLayout ||= {reconcile: true};
+    return before;
+  });
+  await overCardBody(page, page.locator('.annotation-pop'));
+  await phase(page, 1, 13);
+  await expect.poll(async () => page.evaluate(() => Boolean(
+    document.querySelector('.reader').__curlRendererTest.scene))).toBe(true);
+  await phase(page, 8);
+  await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+  await expect(page.locator('.reader')).toHaveAttribute('data-page-index', String(baseIndex));
+  await expect.poll(() => page.evaluate(() => {
+    const pages = document.querySelector('.reader').__curlRendererTest.pages;
+    return {animating: pages.animating, pending: Boolean(pages.wordReflow.pendingLayout),
+      flushing: Boolean(pages.wordReflow.flushing), flushes: window.__faceRepro.flushes};
+  })).toEqual({animating: false, pending: false, flushing: false, flushes: cancelFlushes + 1});
+  const cancelled = await sourcePosition();
+  expect(cancelled.block_id).toBe(basePosition.block_id);
+  expect(cancelled.start).toBe(basePosition.start);
+  evidence.push({name: 'right-card-next-cancel', cardTarget: cancelTarget, sourcePosition: cancelled});
+
+  // A failed adjacent presentation also returns ownership to canonical reflow,
+  // once, without committing a page or losing the retained annotation.
+  const errorTarget = await openCard('right'), errorFlushes = await page.evaluate(() => {
+    const pages = document.querySelector('.reader').__curlRendererTest.pages;
+    window.__faceRepro.preparePresentation = pages.preparePresentation;
+    pages.preparePresentation = async () => { throw new Error('fixture presentation failure'); };
+    pages.wordReflow.pendingLayout ||= {reconcile: true};
+    return window.__faceRepro.flushes;
+  });
+  await overCardBody(page, page.locator('.annotation-pop'));
+  await phase(page, 1, 13);
+  await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+  await expect.poll(() => page.evaluate(() => {
+    const pages = document.querySelector('.reader').__curlRendererTest.pages;
+    return {index: pages.index, pending: Boolean(pages.wordReflow.pendingLayout),
+      flushing: Boolean(pages.wordReflow.flushing), flushes: window.__faceRepro.flushes};
+  })).toEqual({index: baseIndex, pending: false, flushing: false, flushes: errorFlushes + 1});
+  await page.evaluate(() => {
+    const pages = document.querySelector('.reader').__curlRendererTest.pages;
+    pages.preparePresentation = window.__faceRepro.preparePresentation;
+  });
+  await expect.poll(retainedPresent).toBe(1);
+  evidence.push({name: 'right-card-next-error', cardTarget: errorTarget,
+    sourcePosition: await sourcePosition()});
+
+  // Hold the exact card-dismissal frame, abort the reader, then deliver it
+  // late. No retired turn may attach a canvas after its run/scope changed.
+  const abortTarget = await openCard('right');
+  await overCardBody(page, page.locator('.annotation-pop'));
+  const abortBefore = await page.evaluate(() => {
+    const renderer = document.querySelector('.reader').__curlRendererTest,
+      nativeFrame = window.requestAnimationFrame.bind(window);
+    renderer.pages.wordReflow.pendingLayout ||= {reconcile: true};
+    window.__staleCardFrame = {renderer, nativeFrame, callback: null,
+      attaches: window.__faceRepro.attaches.length};
+    window.requestAnimationFrame = callback => {
+      if (!window.__staleCardFrame.callback) {
+        window.__staleCardFrame.callback = callback;
+        return 2147480000;
+      }
+      return nativeFrame(callback);
+    };
+    return {attaches: window.__staleCardFrame.attaches};
+  });
+  await phase(page, 1, 13);
+  await expect.poll(() => page.evaluate(() => Boolean(window.__staleCardFrame.callback))).toBe(true);
+  const aborted = await page.evaluate(async () => {
+    const state = window.__staleCardFrame, pages = state.renderer.pages;
+    pages.r.scope.dispose();
+    window.requestAnimationFrame = state.nativeFrame;
+    state.callback(performance.now());
+    await new Promise(resolve => state.nativeFrame(() => state.nativeFrame(resolve)));
+    return {aborted: pages.r.scope.signal.aborted, scene: Boolean(state.renderer.scene),
+      attaches: window.__faceRepro.attaches.length,
+      pending: Boolean(pages.wordReflow.pendingLayout), flushing: Boolean(pages.wordReflow.flushing)};
+  });
+  expect(aborted).toEqual({aborted: true, scene: false, attaches: abortBefore.attaches,
+    pending: false, flushing: false});
+  evidence.push({name: 'right-card-next-abort', cardTarget: abortTarget, ...aborted});
+  await info.attach('double-spread-face-source-continuity.json', {
+    body: JSON.stringify(evidence, null, 2), contentType: 'application/json',
+  });
 });
 test('a queued native gesture waits less than 50ms for the preceding page to land', async ({ page, request }, info) => {
   await page.addInitScript(() => {

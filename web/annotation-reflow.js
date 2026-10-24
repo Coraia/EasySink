@@ -23,9 +23,8 @@ export class AnnotationReflow {
       }
     });
     pages.r.on('reading-uncovered',()=>{
-      clearTimeout(this.flushTimer);
       if(this.pendingLayout) pages.invalidateLayout();
-      this.flushTimer=setTimeout(()=>{if(!pages.r.popElement) {if(this.pendingLayout || this.signature) void this.flush();else {this.dispose();pages.painter.warm();}}},0);
+      this.resumeAfterTurn();
     });
   }
   focus(anchor) {
@@ -137,6 +136,19 @@ export class AnnotationReflow {
     return this.anchor && this.index===this.pages.index && this.version===this.pages.r.doc.version &&
       this.geometryEpoch===(this.pages.geometryEpoch || 0) &&
       !this.pages.r.scope.signal.aborted && this.leaves.slice(0,this.count).every(n=>n.isConnected);
+  }
+  resumeAfterTurn() {
+    clearTimeout(this.flushTimer);
+    if(this.pages.r.scope.signal.aborted || this.pages.r.popElement) return;
+    const run=()=>{
+      if(this.pages.r.scope.signal.aborted || this.pages.r.popElement) return;
+      // A page turn owns the visible presentation. Canonical reflow calls
+      // finishAnimation(), so running it here would cancel that active turn.
+      if(this.pages.animating) {this.flushTimer=setTimeout(run,16);return;}
+      if(this.pendingLayout || this.signature) void this.flush();
+      else {this.dispose();this.pages.painter.warm();}
+    };
+    this.flushTimer=setTimeout(run,0);
   }
   annotationIndex(item) {
     return this.pages.r.annotations.findIndex(a=>a.block.id===item.block.id && a.start===item.start && a.end===item.end && a.note===item.note);
