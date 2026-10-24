@@ -1,0 +1,204 @@
+{
+  "schema": 1,
+  "date": "2026-10-24",
+  "role": "current-word-card-feature-withdrawal-candidate",
+  "publication_branch": "codex/publish-build38-word-card-block-20261024",
+  "issue": "https://github.com/Coraia/EasySink/issues/56",
+  "baseline": "74226309ebd1211bdbeeace4323049c2c175f742",
+  "original_local_source_commit": "d56619081d53143d8fa64582b5d092ad7e6fd955",
+  "sanitized_source_commit": "5ac123d2a3a57d94d5e52f363e5b166d656b91f1",
+  "source_commit_mapping": [
+    {
+      "original": "0ad22117330609646bcd00847bf7aef77b40b35d",
+      "published_source": "67ff700d1b91d2122a86c02bc46769418a8d31cc",
+      "changed_paths": [],
+      "local_prepared_commit": "0ad22117330609646bcd00847bf7aef77b40b35d"
+    },
+    {
+      "original": "88adc2e9c3deb57aa87616ff6e2a901555fea0b0",
+      "published_source": "66bb932012b4e8ae5d3d1b8410abdf0fc259c4cd",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md"
+      ],
+      "local_prepared_commit": "6ff3a6bd0028d3eaf10e162085acadd278caa83b"
+    },
+    {
+      "original": "d598569d0b3eab56e81249ff9e7b347226fed517",
+      "published_source": "a4ab6611fd76cfafed2fa3cccf0ba2717ea9efd4",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md"
+      ],
+      "local_prepared_commit": "7cec5a772e697460f9b21e5919828b72b7be7878"
+    },
+    {
+      "original": "cada1d804a1785217ad547cffb668de86198fbc1",
+      "published_source": "f1ab95be20e2721d0d6c27d77b46ffe41161f669",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md"
+      ],
+      "local_prepared_commit": "6184d6f04d0c13f68ba5d9e56645a77787008073"
+    },
+    {
+      "original": "f5e6c067b950e175ede16070b2d5af35658e6408",
+      "published_source": "01af2da136379ad3b82519dc3ee00c897a57588c",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md"
+      ],
+      "local_prepared_commit": "9c202fe2803b6280d09034e567a3330f5d70d268"
+    },
+    {
+      "original": "bcffaf8cb9af24cf835ff5d74b6ecd01219975cc",
+      "published_source": "0004576b931553b41073a001ef46a9edb9a78090",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md"
+      ],
+      "local_prepared_commit": "c7cd837e210aeee6023afb3a39d77f77aadb6585"
+    },
+    {
+      "original": "fb5312a40f22378d973a0d669e21a36de09bd9f0",
+      "published_source": "278be8088943c391eeb907e36ad7d7a027bb9f6f",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md"
+      ],
+      "local_prepared_commit": "a52402e9d90d436fa5fdc599c44d1ac87a1ef9fd"
+    },
+    {
+      "original": "d61b3cb40747989dfef1b181065ffb9a519ccb89",
+      "published_source": "c95b4be5401d8bf36ba6482c52dba7d0fb994c3a",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md"
+      ],
+      "local_prepared_commit": "d20f77f783a86d1dd7c2b0755f5a1dcd80180788"
+    },
+    {
+      "original": "8ce9afb006e3ab2dd2af67b192acd74e0f85411f",
+      "published_source": "2fc1aa5fcbec437151f5c572fe23df070eb1fa04",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md",
+        "tests/browser/reader-native.spec.js"
+      ],
+      "local_prepared_commit": "92001ce587fefe203405f370c09d361ca23fa72f"
+    },
+    {
+      "original": "3b2c562deb96cfbb8c443b567427e69cff7e5144",
+      "published_source": "017b874e83a93cbe5105c199ac23f103ad07fc3c",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md",
+        "tests/browser/reader-native.spec.js"
+      ],
+      "local_prepared_commit": "8c2ff6c5e518e96b78902bd76959c76b34d01888"
+    },
+    {
+      "original": "92851c47fe6c15426395941373984238bbf3c70d",
+      "published_source": "f0cddd9ac96b12b8446ec0011bbed1c8eaed806c",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md",
+        "tests/browser/reader-native.spec.js"
+      ],
+      "local_prepared_commit": "5cd1177230d1bd29eb2498461f40e47a5d66f71a"
+    },
+    {
+      "original": "83d17cdc81e055dd7ec6b287303d191a5a3b81c2",
+      "published_source": "f22e7061e18b05e2921a3ba899151e0ba84c4700",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md",
+        "tests/browser/reader-native.spec.js"
+      ],
+      "local_prepared_commit": "c1e833751fcf3e3324b69518db4328ac74996323"
+    },
+    {
+      "original": "cb4aca4accc8041c90ac2a7a4f90be104279b1d2",
+      "published_source": "e7b2bf5ffb1cd64c003296387bef8f0b970c7919",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md",
+        "tests/browser/reader-native.spec.js"
+      ],
+      "local_prepared_commit": "9aca7751e735ec166e529de9683d68544fdde14a"
+    },
+    {
+      "original": "64007eba2304e8b93d2c0b7d62589e138b3a6b84",
+      "published_source": "258d0fe3ee92656203981bdae3f7e58272b26c85",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md",
+        "tests/browser/reader-native.spec.js"
+      ],
+      "local_prepared_commit": "6b96fc1deacbd8644bd7e3334cf321e7351b6366"
+    },
+    {
+      "original": "6d30ea924f4bc960608fef44fa099040493d167e",
+      "published_source": "152ec9d344ef535fca3ce3c3e43e8442e3e31c56",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md",
+        "tests/browser/reader-native.spec.js"
+      ],
+      "local_prepared_commit": "667fca7de4812b860134a2446ac12690501ee464"
+    },
+    {
+      "original": "4be6cc59cd7e123e02dfe3dc0e33e3ac20e6f0f8",
+      "published_source": "a4598548e188230e7d37342c6b133603f9bcb076",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md",
+        "tests/browser/reader-native.spec.js"
+      ],
+      "local_prepared_commit": "19c91f0be6e2afbcf4c4099424cf42181d6a0911"
+    },
+    {
+      "original": "dcbea2f2b8ebee30a5f7a20239effa8c09d8922c",
+      "published_source": "1a9eefbf6446272bad679d2329e50dbe46c505ed",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md",
+        "tests/browser/reader-native.spec.js"
+      ],
+      "local_prepared_commit": "5c7127692a1d93f1eb5b405e8fd6dd197f56d64e"
+    },
+    {
+      "original": "499b4b0b2dc094d244872128f344c00ff2abd584",
+      "published_source": "59a5d99a66037c91eadc1adc9f0f31e4f27461e7",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md",
+        "tests/browser/reader-native.spec.js"
+      ],
+      "local_prepared_commit": "419bfe6baa075eb43519e0e74b9a732582fe3cad"
+    },
+    {
+      "original": "6bfddb7c9a2f20c89e696c6edec1235862d14e68",
+      "published_source": "24de4dcc79d2e5c0c1c8167d25ddd640cb5af58e",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md",
+        "tests/browser/reader-native.spec.js"
+      ],
+      "local_prepared_commit": "4b69fc7cb559bc47368c054fb60d9f6be202490d"
+    },
+    {
+      "original": "d56619081d53143d8fa64582b5d092ad7e6fd955",
+      "published_source": "5ac123d2a3a57d94d5e52f363e5b166d656b91f1",
+      "changed_paths": [
+        "docs/handoffs/2026-10-23-local-preservation.md",
+        "tests/browser/reader-native.spec.js"
+      ],
+      "local_prepared_commit": "33365f621a3c373d82c7a8e78ea0777f9151335a"
+    }
+  ],
+  "publication_changes": [
+    "Removed workstation receipt path from all new-history versions of the preservation document.",
+    "Replaced book-derived test paragraphs with newly authored synthetic harbor text; retained the unaided test token.",
+    "Added this publication record; all other files match each corresponding original source tree."
+  ],
+  "candidate_status": {
+    "build38": "word-card-open paging withdrawn; close the card before paging",
+    "build37": "semantic-anchor transaction fix; not full physical-trackpad acceptance",
+    "build33_to_36": "independent unverified experiments; build36 metadata is not a built artifact",
+    "physical_trackpad_residual_issue": "unresolved; see issue 56",
+    "release_acceptance": "NOT ACCEPTED"
+  },
+  "verification_this_publication": {
+    "all_original_source_refs": "preserved unchanged",
+    "per_commit_diff": "only preservation document and synthetic test fixture differ",
+    "heavy_tests": "NOT RUN",
+    "modified_fixture_browser_tests": "NOT RUN; historical pass results are not rerun claims",
+    "build": "NOT RUN; existing App provenance remains its original local source commit",
+    "app_or_reading_library_operation": "NOT PERFORMED"
+  },
+  "local_prepared_source_commit": "33365f621a3c373d82c7a8e78ea0777f9151335a",
+  "publication_transport": "Authorized GitHub connection. Commit metadata/SHA differs from locally prepared copies; source tree SHA verified for every source commit. Original local history remains unchanged."
+}
