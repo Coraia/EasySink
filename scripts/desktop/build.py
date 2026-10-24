@@ -26,8 +26,8 @@ from resource_policy import native_clone, preflight
 ROOT = Path(__file__).resolve().parents[2]
 ICON = ROOT / "desktop/Assets/EasySink.icns"
 VERSION = "1.3.0"
-BUILD = "34"
-RELEASE_STATUS = "Annotation dirty-gate and retired curl-layer fix; native performance not formally released."
+BUILD = "35"
+RELEASE_STATUS = "Annotation dirty-gate and detached curl-canvas fix; native performance not formally released."
 PDFJS_ROOT = ROOT / "web/prototypes/pdf-lab/vendor/pdfjs-6.4.299"
 PDFJS_MANIFEST = PDFJS_ROOT / "SOURCE.json"
 PDF_PINS = {
