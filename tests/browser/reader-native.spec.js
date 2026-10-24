@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
-import { enableAll, read, pageIndex, focus, selectParagraph } from './reader-helpers.js';
+import { enableAll, read, pageIndex, focus, selectParagraph, tools } from './reader-helpers.js';
 
 test.use({ channel: 'chrome', trace: 'off', deviceScaleFactor: 2,
   launchOptions: { args: ['--use-angle=metal', '--enable-gpu'] } });
@@ -246,6 +246,208 @@ test('an open word card keeps vertical card scrolling but its source word yields
   await word.click();
   await expect(page.locator('.annotation-pop')).toBeVisible();
 });
+for (const complete of [false, true]) test(`real annotation reflow preserves the ${complete ? 'landed' : 'cancelled'} source window`, async ({page, request}, info) => {
+  test.setTimeout(60000);
+  await page.setViewportSize({width: 1200, height: 739});
+  const text = Array.from({length: 72}, (_, index) =>
+    `SOURCE SECTION ${String(index).padStart(2, '0')}. The small research team prepared a plan for the harbor, ` +
+    'although each member proposed a different way to arrange the tables and check the lamps before sunset, ' +
+    'using unaided observation, calm discussion, and careful notes. Each person checked the final diagram.').join('\n\n');
+  await request.patch('/api/profile', {data: {density: 15, vocab_size: 8000}});
+  const doc = await prepared(page, request, 'double', {desktop: true, text});
+  const need = page.getByRole('button', {name: '需注释：后续相同适用表达继续显示', exact: true});
+  await page.locator('#article .page-leaf').nth(1).locator('[data-word="unaided"]').first().click();
+  await expect(page.locator('[data-retained]')).toBeEnabled();
+  await page.locator('[data-retained]').click();
+  await expect(page.locator('[data-retained]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-retained]')).toBeEnabled();
+  if (await need.getAttribute('aria-pressed') !== 'true') await need.click();
+  await expect(need).toHaveAttribute('aria-pressed', 'true');
+  await expect(need).toBeEnabled();
+  // Keep the same chain as the WK failure: a real dirty update completes a
+  // turn, then another real update cancels/commits on that landed spread.
+  await page.locator('#reading-edge-next').click();
+  await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+  await expect.poll(() => page.evaluate(() => JSON.parse(document.querySelector('.reader').dataset.curlMetrics).at(-1).completed)).toBe(true);
+  // Observe real application state; never manufacture pendingLayout or change
+  // the pagination/annotation implementation to make the fixture dirty.
+  await page.evaluate(() => {
+    const pages = document.querySelector('.reader').__curlRendererTest.pages;
+    const reflow = pages.reflow.bind(pages), render = pages.render.bind(pages);
+    window.__anchorRepro = {reflows: [], renders: [], landed: null, canonicalBuilds: 0};
+    const build = pages.buildPages.bind(pages);
+    pages.buildPages = (...args) => { window.__anchorRepro.canonicalBuilds++; return build(...args); };
+    window.__sourceWitness = anchor => {
+      const view = pages.r.captureView(), raw = anchor || view.visibleAnchor;
+      const source = raw && {...raw, ratio: ((pages.offsets.get(raw.block_id) || 0) + raw.start) / pages.length};
+      const node = source && [...document.querySelectorAll('#article [data-word]')].find(n =>
+        n.dataset.sourceBlock === source.block_id && +n.dataset.sourceStart <= source.start && +n.dataset.sourceEnd > source.start);
+      const leaf = node?.closest('.page-leaf'), box = node?.getBoundingClientRect(), paper = leaf?.getBoundingClientRect();
+      const order = pages.r.doc.blocks.findIndex(b => b.id === source?.block_id);
+      return {source, affinity: 'forward', order, reading: pages.position(),
+        first: view.visibleAnchor, index: pages.index,
+        location: box && {leaf: [...document.querySelectorAll('#article .page-leaf')].indexOf(leaf),
+          x: (box.x - paper.x) / paper.width, y: (box.y - paper.y) / paper.height},
+        pending: Boolean(pages.wordReflow.pendingLayout), dirty: pages.canonicalDirty,
+        flushing: Boolean(pages.wordReflow.flushing), eligible: Boolean(pages.wordReflow.eligible()),
+        signature: JSON.stringify(pages.activeAnnotations.map(a => [a.block.id,a.start,a.end,a.note])),
+        canonicalRevision: pages.canonicalRevision, displayRevision: pages.displayRevision,
+        geometryRestore: pages.geometryRestore || null};
+    };
+    pages.reflow = (anchor, options) => {
+      window.__anchorRepro.reflows.push({anchor, options, at: performance.now(), witness: window.__sourceWitness()});
+      return reflow(anchor, options);
+    };
+    pages.render = () => {
+      const result = render();
+      window.__anchorRepro.renders.push({at: performance.now(), witness: window.__sourceWitness()});
+      return result;
+    };
+    const commit = pages.commitPresentation.bind(pages);
+    pages.commitPresentation = packet => {
+      const result = commit(packet);
+      if (pages.presentedView === packet.view) window.__anchorRepro.landed = window.__sourceWitness();
+      return result;
+    };
+  });
+  const clean = await page.evaluate(() => window.__sourceWitness());
+  await page.locator('#article .page-leaf').nth(1).locator('[data-word="unaided"]').first().click();
+  const known = page.getByRole('button', {name: '认识：后续相同适用表达不再自动标注', exact: true});
+  await known.click();
+  await expect(known).toHaveAttribute('aria-pressed', 'true');
+  await expect(known).toBeEnabled();
+  // A legitimate earlier-occurrence update makes canonical page rebasing
+  // deterministic across Chromium/WebKit font metrics, without changing the
+  // visible source or fabricating pending state. The normal controller applies
+  // the persisted record and emits the real annotation-signature change.
+  const earlier = await page.evaluate(() => {
+    const reader = document.querySelector('.reader').__curlRendererTest.pages.r;
+    const block = reader.doc.blocks[0], start = block.text.indexOf('unaided');
+    return reader.anchorFor(block.id, start, start + 'unaided'.length);
+  });
+  const saved = await request.post('/api/collections/feedback', {data: {
+    doc_id: doc.id, anchor: earlier, retained: true, target: 'unaided',
+    note: '在此语境中指没有外界协助而独立进行推理和理解。'.repeat(18),
+  }});
+  expect(saved.ok()).toBe(true);
+  await page.evaluate(async () => {
+    const reader = document.querySelector('.reader').__curlRendererTest.pages.r;
+    await reader.collectionsController.reload();
+    await reader.annotationDrawPromise;
+  });
+  await expect.poll(() => page.evaluate(() => Boolean(
+    document.querySelector('.reader').__curlRendererTest.pages.wordReflow.pendingLayout))).toBe(true);
+  await expect(page.locator('#article')).not.toHaveAttribute('data-reflow-phase', 'preparing');
+  await expect(page.locator('#article')).not.toHaveAttribute('data-reflow-phase', 'playing');
+  const before = await page.evaluate(() => window.__sourceWitness());
+  expect(before.signature).not.toBe(clean.signature);
+  expect(before.pending).toBe(true);
+  expect(before.location).toBeTruthy();
+  const edge = await page.locator('#reading-edge-next').boundingBox();
+  const x = edge.x + edge.width / 2, y = edge.y + edge.height / 2;
+  await page.mouse.move(x, y); await page.mouse.down();
+  await page.mouse.move(x - (complete ? 470 : 20), y);
+  // Duplicate notifications may ask for reconciliation but must not duplicate
+  // work or publish a pre-turn anchor over the eventual committed source.
+  await page.evaluate(() => {
+    const reader = document.querySelector('.reader').__curlRendererTest.pages.r;
+    reader.emit('reading-uncovered'); reader.emit('reading-uncovered');
+  });
+  await page.mouse.up();
+  await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+  await expect.poll(() => page.evaluate(() => {
+    const p = document.querySelector('.reader').__curlRendererTest.pages;
+    return Boolean(p.wordReflow.pendingLayout || p.wordReflow.flushing || p.r.annotationRefreshPending || p.r.restoring);
+  })).toBe(false);
+  await page.waitForTimeout(350);
+  const result = await page.evaluate(before => {
+    const root = document.querySelector('.reader'), p = root.__curlRendererTest.pages;
+    return {after: window.__sourceWitness(), originalLocation: window.__sourceWitness(before.source),
+      trace: window.__anchorRepro, metric: JSON.parse(root.dataset.curlMetrics).at(-1),
+      annotations: p.activeAnnotations.filter(a => a.target === 'unaided').length};
+  }, before);
+  await info.attach('semantic-anchor.json', {body: JSON.stringify({complete, clean, before, ...result}, null, 2), contentType: 'application/json'});
+  await info.attach('semantic-anchor-stable.png', {body: await page.screenshot(), contentType: 'image/png'});
+  expect(result.metric.completed).toBe(complete);
+  expect(result.metric.reason).toBe(complete ? 'flick' : 'spring-back');
+  const turn=result.metric.raw.setup.turn;
+  expect(turn.outcome.status).toBe(complete ? 'landed' : 'cancelled');
+  expect(turn.stable).toBe(true);
+  expect(turn.sourceStable.anchor.block_id).toBe(result.after.first.block_id);
+  expect(turn.sourceStable.anchor.start).toBe(result.after.first.start);
+  expect(result.after.signature).toBe(before.signature);
+  expect(result.after.pending).toBe(false);
+  expect(result.after.dirty).toBe(false);
+  expect(result.after.canonicalRevision).toBe(result.after.displayRevision);
+  if (!complete) {
+    expect(result.after.first.block_id).toBe(before.first.block_id);
+    expect(result.after.first.start).toBe(before.first.start);
+    expect(result.originalLocation.location?.leaf).toBe(before.location.leaf);
+    expect(Math.abs(result.originalLocation.location.y - before.location.y)).toBeLessThan(.05);
+    expect(result.trace.canonicalBuilds).toBe(1);
+  } else {
+    expect(result.trace.landed).toBeTruthy();
+    expect(result.after.first.block_id).toBe(result.trace.landed.first.block_id);
+    expect(result.after.first.start).toBe(result.trace.landed.first.start);
+    expect(result.after.order).toBeGreaterThanOrEqual(before.order);
+    expect(result.after.reading.ratio).toBeGreaterThan(before.reading.ratio);
+    expect(result.trace.canonicalBuilds).toBe(1);
+  }
+});
+
+test('geometry coalescing and retired documents reject old annotation tickets', async ({page, request}, info) => {
+  test.setTimeout(60000);
+  await preparedPresentation(page, request, {desktop: true});
+  await page.locator('#article .page-leaf').nth(1).locator('[data-word]').first().click();
+  await expect(page.locator('[data-retained]')).toBeEnabled();
+  await page.locator('[data-retained]').click();
+  await expect(page.locator('[data-retained]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-retained]')).toBeEnabled();
+  await page.evaluate(() => {
+    const pages=document.querySelector('.reader').__curlRendererTest.pages;
+    window.__oldAnchorWork={pages,mutation:pages.wordReflow.pendingLayout,
+      ticket:pages.captureLayoutTicket(),view:pages.r.captureView()};
+  });
+  expect(await page.evaluate(() => Boolean(window.__oldAnchorWork.mutation?.originView.visibleAnchor))).toBe(true);
+  await page.getByRole('button', {name:'关闭注释',exact:true}).click();
+  await tools(page,'typography');
+  await page.locator('#type-size').evaluate(element => {
+    for(const size of [24,26]) {element.value=size;element.dispatchEvent(new Event('input',{bubbles:true}));}
+  });
+  await tools(page,'appearance');
+  await page.locator('#reader-layout').selectOption('single');
+  await page.locator('#reader-layout').selectOption('double');
+  await focus(page);
+  await expect.poll(() => page.evaluate(() => Boolean(document.querySelector('.reader').__curlRendererTest.pages.markStable()))).toBe(true);
+  const geometry=await page.evaluate(async () => {
+    const old=window.__oldAnchorWork,p=old.pages,before=p.r.captureView();
+    const rejected=await p.wordReflow.flush({anchor:old.view.visibleAnchor,ticket:old.ticket,reconcile:true});
+    return {before,after:p.r.captureView(),oldTicketCurrent:p.isCurrent(old.ticket),rejected,
+      size:getComputedStyle(document.documentElement).getPropertyValue('--reading-size'),count:p.count,
+      sourceVisible:p.r.isAnchorVisible(old.view.visibleAnchor)};
+  });
+  expect(geometry.oldTicketCurrent).toBe(false);
+  expect(geometry.rejected).toBe(false);
+  expect(geometry.sourceVisible).toBe(true);
+  expect(geometry.size).toBe('26px'); expect(geometry.count).toBe(2);
+  expect(geometry.after.visibleAnchor).toEqual(geometry.before.visibleAnchor);
+  const next=await (await request.post('/api/documents',{data:{title:'New source owns the layout',text:body.repeat(4)}})).json();
+  await page.goto(`/?readingPerf=1#/read/${next.id}`);
+  await expect(page.locator('.reader')).toHaveAttribute('data-document-id',String(next.id));
+  await expect(page.locator('.reader')).toHaveAttribute('data-ready','true');
+  const retired=await page.evaluate(async () => {
+    const old=window.__oldAnchorWork,p=document.querySelector('.reader').__curlRendererTest.pages;
+    const before=p.r.captureView();
+    const rejected=await old.pages.wordReflow.flush({anchor:old.view.visibleAnchor,ticket:old.ticket,reconcile:true});
+    return {before,after:p.r.captureView(),rejected,oldAborted:old.pages.r.scope.signal.aborted,
+      oldPending:Boolean(old.pages.wordReflow.pendingLayout),newPending:Boolean(p.wordReflow.pendingLayout)};
+  });
+  expect(retired.rejected).toBe(false); expect(retired.oldAborted).toBe(true);
+  expect(retired.oldPending).toBe(false); expect(retired.newPending).toBe(false);
+  expect(retired.after).toEqual(retired.before);
+  await info.attach('geometry-and-retired-ticket.json',{body:JSON.stringify({geometry,retired},null,2),contentType:'application/json'});
+});
+
 test('double spread keeps the physical turn face and source continuity with cards on either leaf', async ({ page, request }, info) => {
   test.setTimeout(60000);
   const theology = Array.from({length: 72}, (_, index) =>

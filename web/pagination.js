@@ -90,6 +90,28 @@ export class ReadingPages {
       Math.abs(article.height - (this.articleHeight || 0)) > 1
     );
   }
+  captureLayoutTicket() {
+    return Object.freeze({docId:this.r.doc.id,sourceVersion:this.r.doc.version,
+      layoutEpoch:this.layoutEpoch,generation:this.generation,navigation:this.navigation,
+      annotationRevision:this.annotationRevision});
+  }
+  isCurrent(ticket) {
+    const current=this.captureLayoutTicket();
+    return Boolean(ticket && !this.r.scope.signal.aborted &&
+      Object.keys(current).every(key=>current[key]===ticket[key]));
+  }
+  sourceAnchorEvidence(anchor = this.r.captureView().visibleAnchor) {
+    const point=anchor && {block_id:anchor.block_id,start:anchor.start,end:anchor.end,
+      version:anchor.version,affinity:"forward",
+      ratio:((this.offsets.get(anchor.block_id) || 0)+anchor.start)/Math.max(1,this.length)};
+    const leaves=[...document.querySelectorAll('#article .page-leaf')];
+    const node=point && [...document.querySelectorAll('#article [data-word]')].find(node=>
+      node.dataset.sourceBlock===point.block_id && +node.dataset.sourceStart<=point.start && +node.dataset.sourceEnd>point.start);
+    const leaf=node?.closest('.page-leaf'),box=node?.getBoundingClientRect(),paper=leaf?.getBoundingClientRect();
+    return {anchor:point,pageIndex:this.index,canonicalRevision:this.canonicalRevision,displayRevision:this.displayRevision,
+      pendingRevision:this.wordReflow.pendingLayout?.revision ?? null,
+      location:box?{leaf:leaves.indexOf(leaf),x:(box.x-paper.x)/paper.width,y:(box.y-paper.y)/paper.height}:null};
+  }
   invalidateLayout({geometry = false} = {}) {
     this.layoutEpoch = (this.layoutEpoch || 0) + 1;
     this.stableEpoch = null;
@@ -129,7 +151,7 @@ export class ReadingPages {
   markStable() {
     const word = this.wordReflow;
     if (!this.layoutComplete || !this.complete || this.displayPending || this.r.restoring ||
-        this.animating || this.retainedLayoutPending || word?.pendingLayout || word?.flushing || word?.pendingCanonical ||
+        this.animating || this.retainedLayoutPending || this.r.annotationRefreshPending || word?.pendingLayout || word?.flushing || word?.pendingCanonical ||
         (word?.owner?.isConnected && ["preparing", "playing"].includes(word.owner.dataset.reflowPhase)) ||
         this.r.scope.signal.aborted) return;
     this.stableEpoch = this.layoutEpoch;
@@ -234,9 +256,10 @@ export class ReadingPages {
     if (retired.length) this.wordReflow.retireTextures(retired);
     if (!this.wordReflow.eligible()) this.painter.warm();
   }
-  finishAnimation(reason = "cancelled") {
+  finishAnimation(reason = "cancelled", {deferTrackpad = false} = {}) {
+    if(this.preview?.finalize) return this.preview.finalize(false,reason);
     this.edge?.cancel(reason);
-    this.trackpad?.cancel(reason);
+    if(!deferTrackpad)this.trackpad?.cancel(reason);
     if (this.preview) {
       const preview = this.preview;
       this.preview = null;
@@ -254,7 +277,6 @@ export class ReadingPages {
     this.animationToken = (this.animationToken || 0) + 1;
     this.painter.finish();
     this.animating = false;
-    this.wordReflow?.resumeAfterTurn();
     this.markStable();
   }
   interruptForSourceIntent() {
@@ -463,6 +485,8 @@ export class ReadingPages {
     this.render();
     // draw may start a newer navigation after this view has already committed.
     if(!stale())this.r.emit('position');
+    if(!stale() && !this.turnFinalizing && this.canonicalDirty)
+      void this.wordReflow.flush({reconcile:true,anchor:this.r.captureView().visibleAnchor,ticket:this.captureLayoutTicket()});
     return true;
   }
   *reversePages(cursor) {
@@ -755,8 +779,10 @@ export class ReadingPages {
     const source = JSON.stringify([this.r.doc.id, this.r.doc.version]);
     const annotations = JSON.stringify(this.activeAnnotations.map(a =>
       [a.block.id, a.start, a.end, a.kind, a.text, a.note, a.target, a.source]));
-    if (source !== this.sourceIdentity || annotations !== this.annotationIdentity)
+    if (source !== this.sourceIdentity || annotations !== this.annotationIdentity) {
+      this.annotationRevision=(this.annotationRevision || 0)+1;
       this.invalidateLayout({geometry: this.sourceIdentity !== undefined && source !== this.sourceIdentity});
+    }
     this.sourceIdentity = source;
     this.annotationIdentity = annotations;
   }
@@ -897,6 +923,14 @@ export class ReadingPages {
   // Build exact pages cooperatively. The first completed page is usable immediately.
   async reflow(anchor = this.position(), {keepDOM = false, reason = keepDOM ? "annotation" : "layout", reuseEpoch = false} = {}) {
     if (this.r.scope.signal.aborted) return;
+    // A delayed metadata response can contain the exact annotation revision
+    // already reconciled after a turn. Refresh bindings, not pagination.
+    if(reason==="annotation" && !keepDOM && this.complete && !this.canonicalDirty &&
+        this.canonicalSourceIdentity===this.sourceIdentity && this.canonicalAnnotationIdentity===this.annotationIdentity &&
+        this.geometryIdentity===this.geometrySignature()) {
+      this.render();
+      return true;
+    }
     const geometryChange=["font","size","line","width","typography-reset","viewport","columns"].includes(reason);
     let geometryIntent=null;
     if(geometryChange && this.validAnchor(anchor)) {
@@ -963,6 +997,10 @@ export class ReadingPages {
             this.anchor = this.validAnchor(anchor) || this.firstAnchor();
           }
           this.canonicalDirty = false;
+          this.canonicalSourceIdentity=this.sourceIdentity;
+          this.canonicalAnnotationIdentity=this.annotationIdentity;
+          this.canonicalRevision=this.annotationRevision;
+          this.wordReflow.acknowledge(this.canonicalRevision);
           this.measure.replaceChildren();
           $(".reader").dataset.paginationReady = "true";
           $(".reader").dataset.paginationMs = (
@@ -1206,6 +1244,7 @@ export class ReadingPages {
     $(".read-progress div").style.width = this.position().ratio * 100 + "%";
   }
   render() {
+    this.displayRevision=this.annotationRevision;
     this.painted = this.generation;
     $("#article").innerHTML = Array.from({ length: this.count }, (_, i) =>
       this.leafMarkup(this.index + i),
@@ -1290,6 +1329,8 @@ export class ReadingPages {
     this.anchor = this.firstAnchor();
     this.render();
     if(!stale())this.r.emit("position");
+    if(!stale() && !this.turnFinalizing && this.canonicalDirty)
+      void this.wordReflow.flush({reconcile:true,anchor:this.r.captureView().visibleAnchor,ticket:this.captureLayoutTicket()});
     return true;
   }
   beginTurn(direction, clientY, force = false) {
@@ -1325,6 +1366,11 @@ export class ReadingPages {
       leaf = element.getBoundingClientRect(),
       token = ++this.navigation;
     let generation=this.generation;
+    const turnTxn={before:this.r.captureView(),ticket:this.captureLayoutTicket(),mutation:this.wordReflow.pendingLayout};
+    if(setup) {
+      setup.sourceBefore=this.sourceAnchorEvidence(turnTxn.before.visibleAnchor);
+      setup.mutationRevision=turnTxn.mutation?.revision ?? null;
+    }
     const preview = (this.preview = {
       requested: performance.now(),
       setup,
@@ -1363,27 +1409,58 @@ export class ReadingPages {
       turnRun === this.animationToken &&
       !this.r.scope.signal.aborted;
     const canAttach = () => valid() && this.painter===turnPainter && turnPainter.scene===turnScene;
-    const done = (complete, reason) => {
-      if (!valid()) return;
+    const finalize = (complete, reason) => {
+      if(this.preview!==preview || preview.finalized) return;
+      preview.finalized=true;
+      complete=complete && valid() && this.isCurrent(turnTxn.ticket);
       this.painter.record(complete, reason, preview.requested, preview.settle, preview.setup);
       clearTimeout(preview.timeout);
       clearTimeout(preview.loadingTimer);
       if (boundary) this.recordBoundary(preview, complete, reason);
       clearTimeout(preview.settleTimer);
       this.preview = null;
-      this.finishAnimation("settled");
+      this.finishAnimation(reason,{deferTrackpad:true});
+      if(!this.isCurrent(turnTxn.ticket)) {this.trackpad?.cancel(reason);return;}
+      let committed=!complete;
+      this.turnFinalizing=true;
+      try {
       if (complete && boundary) {
         const stale = () => token !== this.navigation || generation !== this.generation || this.r.scope.signal.aborted;
         if (stale()) return;
         this.r.emit("before-navigation");
         if (stale()) return;
         this.r.emit("before-page");
-        if (!stale()) this.r.ctx.commitReadingRange(this.r, preview.destination);
+        if (!stale()) {this.r.ctx.commitReadingRange(this.r, preview.destination);committed=true;}
       }
-      else if (complete && preview.presentation) this.commitPresentation(preview.presentation);
-      else if (complete) this.commitPage(target);
+      else if (complete && preview.presentation) committed=this.commitPresentation(preview.presentation);
+      else if (complete) committed=this.commitPage(target);
       else this.painter.warm();
+      } finally {this.turnFinalizing=false;}
+      this.trackpad?.cancel(complete && committed?"settled":reason);
+      // Only the terminal outcome chooses the source intent. The candidate's
+      // original anchor must never overwrite a successfully landed view.
+      if(this.r.scope.signal.aborted || this.r.doc.id!==turnTxn.ticket.docId || this.r.doc.version!==turnTxn.ticket.sourceVersion) return;
+      const anchor=complete && committed?this.r.captureView().visibleAnchor:turnTxn.before.visibleAnchor;
+      const reconciliation=this.wordReflow.flush({reconcile:true,anchor,ticket:this.captureLayoutTicket()});
+      if(setup) {
+        setup.outcome={completed:Boolean(complete && committed),reason,status:complete && committed?'landed':'cancelled'};
+        setup.sourceOutcome=this.sourceAnchorEvidence(anchor);
+        // Existing diagnostic export already includes this setup record. Keep
+        // source identities/coordinates only: no book text and no frame probe.
+        void Promise.resolve(reconciliation).then(async()=>{
+          const stable=await this.whenStable();
+          if(this.r.scope.signal.aborted)return;
+          setup.stable=Boolean(stable);
+          if(stable) {
+            setup.sourceStable=this.sourceAnchorEvidence();
+            setup.originalAnchorAfter=this.sourceAnchorEvidence(turnTxn.before.visibleAnchor);
+          }
+          $(".reader").dataset.curlMetrics=JSON.stringify(this.painter.metrics || []);
+        });
+      }
     };
+    preview.finalize=finalize;
+    const done = (complete, reason) => {if(valid())finalize(complete,reason);};
     const draw = () => {
       preview.raf = 0;
       if (valid() && preview.ready) {
@@ -1739,9 +1816,8 @@ export class ReadingPages {
     this.finishAnimation();
     const navigation = ++this.navigation,
       generation = this.generation,epoch=this.layoutEpoch,documentId=this.r.doc.id,version=this.r.doc.version;
-    const stale = () => signal?.aborted ||
-      navigation !== this.navigation || generation !== this.generation ||
-      this.r.scope.signal.aborted;
+    const publication=this.captureLayoutTicket();
+    const stale = () => signal?.aborted || !this.isCurrent(publication);
     const hasPage = () =>
       anchor?.block_id &&
       this.pages.some((p) =>
@@ -1783,6 +1859,8 @@ export class ReadingPages {
       view=packet.view;
     }
     const index = this.pageFor(anchor);
+    const visibleStart=this.annotationLayout && this.presentationPoints(this.annotationLayout).start;
+    const sameWindow=!alignStart && visibleStart?.block_id===anchor?.block_id && visibleStart?.start===anchor?.start;
     this.displayPending = false;
     if (index !== this.index) this.r.emit("before-page", {reflow});
     if (stale()) return false;
@@ -1790,7 +1868,7 @@ export class ReadingPages {
       this.clearPresentation();
       this.presentedView=view;this.annotationLayout=view.snapshots;
       this.viewTrail=[view];this.viewTrailIndex=0;this.viewIdentity=view.identity;
-    } else if (!reflow) {this.wordReflow.dispose();this.annotationLayout = null;this.clearPresentation();}
+    } else if (!reflow && !sameWindow) {this.wordReflow.dispose();this.annotationLayout = null;this.clearPresentation();}
     this.index = index;
     this.anchor = this.validAnchor(anchor) || this.firstAnchor();
     this.render();

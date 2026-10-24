@@ -1,5 +1,4 @@
 import { sourceRuns } from './selection-range.js';
-import { captureAnnotationLayout } from './annotation-layout.js';
 
 const inkKey = (block, start, end) => `${block}:${start}:${end}`;
 const rectOf = r => ({x:r.x,y:r.y,width:r.width,height:r.height});
@@ -23,7 +22,6 @@ export class AnnotationReflow {
       }
     });
     pages.r.on('reading-uncovered',()=>{
-      if(this.pendingLayout) pages.invalidateLayout();
       this.resumeAfterTurn();
     });
   }
@@ -137,16 +135,30 @@ export class AnnotationReflow {
       this.geometryEpoch===(this.pages.geometryEpoch || 0) &&
       !this.pages.r.scope.signal.aborted && this.leaves.slice(0,this.count).every(n=>n.isConnected);
   }
-  resumeAfterTurn() {
+  queueLayout(candidate, originView = this.pages.r.captureView()) {
+    const p=this.pages,anchor=originView.visibleAnchor || originView.readingAnchor;
+    this.pendingLayout=Object.freeze({revision:p.annotationRevision,docId:p.r.doc.id,
+      sourceVersion:p.r.doc.version,candidate,
+      originView:Object.freeze({...originView,visibleAnchor:anchor && Object.freeze({...anchor})})});
+    p.canonicalDirty=true;
+    return this.pendingLayout;
+  }
+  acknowledge(revision) {
+    const pending=this.pendingLayout,p=this.pages;
+    if(pending?.revision===revision && pending.docId===p.r.doc.id && pending.sourceVersion===p.r.doc.version)
+      this.pendingLayout=null;
+  }
+  resumeAfterTurn(anchor = this.pendingLayout?.originView?.visibleAnchor) {
     clearTimeout(this.flushTimer);
     if(this.pages.r.scope.signal.aborted || this.pages.r.popElement) return;
     const run=()=>{
       if(this.pages.r.scope.signal.aborted || this.pages.r.popElement) return;
       // A page turn owns the visible presentation. Canonical reflow calls
       // finishAnimation(), so running it here would cancel that active turn.
-      if(this.pages.animating) {this.flushTimer=setTimeout(run,16);return;}
-      if(this.pendingLayout || this.signature) void this.flush();
-      else {this.dispose();this.pages.painter.warm();}
+      // The turn finalizer wakes this work after choosing its outcome anchor.
+      if(this.pages.animating) return;
+      if(this.pendingLayout) void this.flush({anchor,ticket:this.pages.captureLayoutTicket()});
+      else if(!this.flushing && !this.signature) {this.dispose();this.pages.painter.warm();}
     };
     this.flushTimer=setTimeout(run,0);
   }
@@ -221,8 +233,8 @@ export class AnnotationReflow {
     this.preparedMotions?.clear();
     // Complete the canonical ledger without replacing the source being used
     // by the newer pointer/selection. No retired prefix job may publish it.
-    this.pendingLayout ||= {reconcile:true};this.pages.canonicalDirty=true;
-    if(!this.pages.r.popElement) void this.flush();
+    if(this.pages.canonicalDirty && !this.pendingLayout) this.queueLayout({reconcile:true});
+    if(!this.pages.r.popElement) this.resumeAfterTurn();
   }
   refreshAnnotationContext() {
     const context=this.annotationContextKey();
@@ -255,14 +267,6 @@ export class AnnotationReflow {
     const target=p.activeAnnotations.find(n=>n.block.id===this.anchor.block_id && n.start<=this.anchor.start && n.end>=this.anchor.end);
     const signature=JSON.stringify(target?[target.start,target.end,target.note]:null);
     if(!contextChanged && !this.adopted && signature===this.annotationSignature) {
-      this.staticLayout ||= captureAnnotationLayout(p);
-      if(this.staticLayout) {
-        p.annotationLayout=this.staticLayout;
-        p.canonicalDirty=true;
-        this.pendingLayout={static:true};
-        document.querySelector('.reader').dataset.annotationReflowReady='true';
-        if(!p.r.popElement) void this.flush();
-      }
       return true;
     }
     if(signature===this.signature) return true;
@@ -776,7 +780,8 @@ export class AnnotationReflow {
     this.pages.navigationUI({geometry:false});
     document.querySelector('.reader').dataset.paginationReady='false';
     document.querySelector('.reader').dataset.annotationReflowReady='true';
-    this.pendingLayout=state;
+    this.pages.displayRevision=this.pages.annotationRevision;
+    this.queueLayout(state);
   }
   snapshotLeaf(state,page) {
     state.snapshotLeaves ||= [];
@@ -797,17 +802,29 @@ export class AnnotationReflow {
     state.snapshotLeaves[page]=leaf;
     return leaf;
   }
-  async flush({reconcile = false} = {}) {
+  async flush({reconcile = false, anchor = this.pendingLayout?.originView?.visibleAnchor,
+    ticket = this.pages.captureLayoutTicket()} = {}) {
     if(this.flushing && this.flushSerial===this.serial) return this.flushing;
-    if(reconcile && this.eligible() && this.pages.annotationLayout) this.pendingLayout ||= {reconcile:true};
-    if(!this.pendingLayout || !this.eligible()) return;
-    this.pendingLayout=null;
+    // Notifications do not own a new layout revision. Apply actual dirty data
+    // once, after the turn has either retained or committed its source window.
+    if(!this.pages.isCurrent(ticket) || !this.pages.validAnchor(anchor)) return false;
+    if(reconcile && this.pages.canonicalDirty && this.pages.annotationLayout && !this.pendingLayout)
+      this.queueLayout({reconcile:true},{visibleAnchor:anchor});
+    const mutation=this.pendingLayout;
+    const ownsPresentation=this.eligible(),navigation=this.pages.navigation;
+    if(!mutation || mutation.docId!==ticket.docId || mutation.sourceVersion!==ticket.sourceVersion ||
+        mutation.revision!==ticket.annotationRevision || (!ownsPresentation && !reconcile) || this.pages.animating) return false;
     const serial=this.flushSerial=this.serial;
-    const started=this.pages.reflow(this.pages.position(),{keepDOM:true,reason:'annotation',reuseEpoch:true});
-    const flow=this.pages.flowReady;
+    const started=this.pages.reflow(anchor,{keepDOM:true,reason:'annotation'});
+    const flow=this.pages.flowReady,publication=this.pages.captureLayoutTicket();
     const pending=(async()=>{
       const landed=await started,complete=landed && await flow;
-      if(serial!==this.serial || this.pages.r.scope.signal.aborted) return false;
+      if(serial!==this.serial || !this.pages.isCurrent(publication)) return false;
+      // Canonical page numbers may change without changing a single visible
+      // source node. Keep the same DOM owner valid for the delayed metadata
+      // refresh; otherwise it falls back to the new canonical page's start.
+      if(complete && ownsPresentation && navigation===this.pages.navigation)
+        this.index=this.pages.index;
       this.releaseTextures();
       if(complete && !this.pages.r.popElement) {
         this.pages.painter.warm();this.pages.warmRanges();
@@ -856,7 +873,12 @@ export class AnnotationReflow {
     this.pages.markStable();
   }
   dispose() {
-    ++this.serial;clearTimeout(this.flushTimer);this.pendingLayout=null;
+    ++this.serial;clearTimeout(this.flushTimer);
+    const pending=this.pendingLayout,p=this.pages;
+    // A presentation departure is not acknowledgement of a pending mutation.
+    // Keep it until that revision is applied, superseded, or its source retires.
+    if(pending && (p.r.scope.signal.aborted || pending.docId!==p.r.doc.id || pending.sourceVersion!==p.r.doc.version ||
+        pending.revision<p.annotationRevision || (!p.canonicalDirty && pending.revision===p.canonicalRevision))) this.pendingLayout=null;
     this.finish();this.owner?.removeEventListener('pointerdown',this.reveal,{capture:true});
     this.owner?.removeEventListener('keydown',this.prefixKey,{capture:true});
     this.preparedMotions?.forEach(value=>{value.groups.forEach(a=>a.cancel());value.ghosts.remove();});this.preparedMotions?.clear();
