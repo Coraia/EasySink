@@ -39,14 +39,19 @@ export class PageCurlRenderer {
     this.assetBytes = 0;
     this.raf = 0;
     this.warmTimer = 0;
+    this.warmRun = 0;
+    this.warmPlan = null;
     // Native diagnostics cannot add a URL flag. Keep bounded numeric traces in
     // its existing export, without book text or a second sampling timer.
-    this.collectPerformance = window.wiseReaderDesktop?.nativeTrackpad === true ||
-      new URLSearchParams(location.search).get("readingPerf") === "1";
+    this.testControl = new URLSearchParams(location.search).get("readingPerf") === "1";
+    this.collectPerformance = window.wiseReaderDesktop?.nativeTrackpad === true || this.testControl;
+    if (this.testControl) this.root.__curlRendererTest = this;
     this.metricSequence = 0;
     pages.r.scope.cleanup(() => { if (!this.handingOff && this.pages === pages) this.dispose(); });
   }
   rebind(pages) {
+    this.warmRun++;
+    this.warmPlan = null;
     clearTimeout(this.warmTimer);
     cancelAnimationFrame(this.surfaceWarmRaf);
     this.surfaceWarm = null;
@@ -54,6 +59,7 @@ export class PageCurlRenderer {
     this.captures.clear();
     this.jobs.clear();
     const previousRoot = this.root;
+    if (previousRoot.__curlRendererTest === this) delete previousRoot.__curlRendererTest;
     this.pages = pages;
     this.root = $(".reader");
     this.layer = $("#page-curl-layer");
@@ -61,6 +67,7 @@ export class PageCurlRenderer {
     this.handingOff = false;
     this.root.dataset.curlContexts = this.gl ? "1" : "0";
     this.root.dataset.curlMetrics = JSON.stringify(this.metrics || []);
+    if (this.testControl) this.root.__curlRendererTest = this;
     for (const key of ["curlDevice", "curlDriver", "curlCachedLeaves", "curlCachedPixels"])
       if (previousRoot.dataset[key]) this.root.dataset[key] = previousRoot.dataset[key];
     pages.r.scope.cleanup(() => { if (!this.handingOff && this.pages === pages) this.dispose(); });
@@ -248,8 +255,12 @@ export class PageCurlRenderer {
   invalidate({deferTextures = false, preserveSurface = false} = {}) {
     const retired = [];
     this.epoch++;
+    this.warmRun++;
+    this.warmPlan = null;
     cancelAnimationFrame(this.surfaceWarmRaf);
     delete this.root.dataset.curlWarm;
+    delete this.root.dataset.curlWarmPlan;
+    delete this.root.dataset.curlWarmStatus;
     if (!preserveSurface) this.primedSurface = null;
     this.pendingTextures = [];
     if (!preserveSurface) this.surfaceWarm = null;
@@ -266,8 +277,13 @@ export class PageCurlRenderer {
     return retired;
   }
   pauseWarm() {
+    this.warmRun++;
+    this.warmPlan = null;
     clearTimeout(this.warmTimer);
     cancelAnimationFrame(this.surfaceWarmRaf);
+    delete this.root.dataset.curlWarm;
+    delete this.root.dataset.curlWarmPlan;
+    delete this.root.dataset.curlWarmStatus;
   }
   textureBudget() {
     return !this.software && this.pages.count === 2
@@ -376,13 +392,14 @@ export class PageCurlRenderer {
       signal.throwIfAborted();
     }
   }
-  async prepare(index, source = this.pages) {
+  async prepare(index, source = this.pages, guard = null) {
     // Resuming at an anchor may start a two-page spread on either parity.
     // Only pad the final spread reachable from that start, never an unfinished
     // layout whose provisional blank may become real text on the next yield.
     const trailingBlank = source.complete === true && source.count === 2 &&
       index === source.pages.length && source.index < source.pages.length &&
       (source.pages.length - source.index) % source.count === 1;
+    if (guard && !guard()) return null;
     if (index < 0 || (index >= source.pages.length && !trailingBlank)) return null;
     const key = this.key(index, source),
       hit = this.cache.get(key);
@@ -391,7 +408,14 @@ export class PageCurlRenderer {
       this.cache.set(key, hit);
       return hit;
     }
-    if (this.jobs.has(key)) return this.jobs.get(key);
+    if (this.jobs.has(key)) {
+      const pending = this.jobs.get(key), value = await pending;
+      if (value || (guard && !guard())) return value;
+      // An input turn may arrive while an obsolete warm capture owns this key.
+      // Retry only that stale producer; ordinary budget/failure nulls stay null.
+      if (pending.warmGuard && !pending.warmGuard()) return this.prepare(index, source, guard);
+      return null;
+    }
     if (this.pages.r.scope.signal.aborted || this.jobs.size >= MAX_CAPTURE_JOBS) return null;
     const captureStartedAt = performance.now();
     const owner = this.pages, epoch = this.epoch,
@@ -405,7 +429,7 @@ export class PageCurlRenderer {
       // Keep one capture active; abort also releases its decoder on route leave.
       await previousCapture;
       capture.signal.throwIfAborted();
-      if (owner !== this.pages || epoch !== this.epoch || generation !== this.pages.generation) return null;
+      if ((guard && !guard()) || owner !== this.pages || epoch !== this.epoch || generation !== this.pages.generation) return null;
       this.init();
       if (this.failed) return null;
       const leaf = $(".page-leaf"),
@@ -455,7 +479,7 @@ export class PageCurlRenderer {
         .querySelectorAll(".inline-grammar,.bookmark-marker,.paragraph-actions,.pdf-object-actions,[data-pdf-source],[data-pdf-note]")
         .forEach((el) => el.remove());
       const embeddedImages = await this.inlineImages(page, ratio, capture.signal);
-      if (owner !== this.pages || epoch !== this.epoch || generation !== this.pages.generation || this.pages.r.scope.signal.aborted) return null;
+      if ((guard && !guard()) || owner !== this.pages || epoch !== this.epoch || generation !== this.pages.generation || this.pages.r.scope.signal.aborted) return null;
       page.querySelectorAll("[id]").forEach((el) => el.removeAttribute("id"));
       Object.assign(page.style, {
         width: rect.width + "px",
@@ -500,6 +524,7 @@ export class PageCurlRenderer {
       // native density, serialized capture and existing cache budgets.
       await this.waitForIdleUpload(capture.signal);
       if (
+        (guard && !guard()) ||
         owner !== this.pages || epoch !== this.epoch ||
         generation !== this.pages.generation ||
         this.pages.r.scope.signal.aborted ||
@@ -521,7 +546,8 @@ export class PageCurlRenderer {
         bytes = w * h * 4,
         budget = this.textureBudget(),
         bytesBefore = [...this.cache.values()].reduce((n, value) => n + value.bytes, 0),
-        pinned = new Set([...(this.scene?.textures || []), ...(this.pendingTextures || [])]),
+        pinned = new Set([...(this.scene?.textures || []), ...(this.pendingTextures || []),
+          ...(this.warmPlan?.keys || [])]),
         needsRoom = this.cache.size + 1 > 6 || bytesBefore + bytes > budget,
         reusable = needsRoom && [...this.cache.entries()].find(([oldKey, value]) =>
           !pinned.has(oldKey) && value.pixelWidth === w && value.pixelHeight === h);
@@ -541,9 +567,10 @@ export class PageCurlRenderer {
       // A wide DPR 3 double spread can need four pinned faces larger than its
       // soft byte target. Preserve that existing required working set; optional
       // prefetch cannot add to it, and no referenced face may be overwritten.
-      if (plannedBytes > budget && !pinned.has(key)) return null;
+      if (plannedBytes > budget && (guard || !pinned.has(key))) return null;
       if (plannedCount > 6)
         throw new Error("Page texture cache budget exhausted");
+      if (guard && !guard()) return null;
       for (const [oldKey, old] of victims) {
         this.cache.delete(oldKey);
         if (old !== reusable?.[1]) gl.deleteTexture(old.texture);
@@ -597,6 +624,10 @@ export class PageCurlRenderer {
           uploadMethod: reusable ? "texSubImage2D" : "texImage2D", bytesBefore, bytesAfter: plannedBytes});
         this.captureTrace = this.captureTrace.slice(-24);
       }
+      if (guard && !guard()) {
+        if (!reusable) gl.deleteTexture(texture);
+        return null;
+      }
       this.cache.set(key, value);
       this.root.dataset.curlCachedLeaves = String(this.cache.size);
       this.root.dataset.curlCachedPixels = String(
@@ -625,52 +656,102 @@ export class PageCurlRenderer {
         if (this.jobs.get(key) === job) this.jobs.delete(key);
       });
     this.captureTail = job;
+    job.warmGuard = guard;
     this.jobs.set(key, job);
     return job;
   }
   warm() {
+    const run = ++this.warmRun;
+    this.warmPlan = null;
     clearTimeout(this.warmTimer);
+    cancelAnimationFrame(this.surfaceWarmRaf);
     delete this.root.dataset.curlWarm;
+    delete this.root.dataset.curlWarmPlan;
+    this.root.dataset.curlWarmStatus = "scheduled";
     const generation = this.pages.generation,
       epoch = this.epoch;
     this.warmTimer = setTimeout(async () => {
       const p = this.pages,
         index = p.index,
-        indices = [
+        baseValid = () =>
+          run === this.warmRun && p === this.pages && p.index === index &&
+          generation === p.generation && epoch === this.epoch &&
+          !p.r.scope.signal.aborted && !p.animating && !p.r.popElement;
+      const presentationPlan = await p.getPresentationSourcePlan?.();
+      if (!baseValid()) return;
+      if (presentationPlan?.sources?.length === 0) {
+        this.root.dataset.curlWarmStatus = "failed";
+        return;
+      }
+      const presentationSources = presentationPlan?.sources || null,
+        plan = presentationSources
+        ? presentationSources.flatMap(source =>
+          Array.from({length: source.count}, (_, i) => ({source, index: source.index + i})))
+        : [
           p.index,
           p.index + p.count - 1,
           p.index + p.count,
           p.index - 1,
           p.index + p.count * 2 - 1,
           p.index - p.count,
-        ];
-      // In single-page mode the spread endpoints above are duplicates. Warm
-      // the queued turn's leaf while idle instead of uploading it mid-release.
-      if (p.count === 1) indices.push(p.index + 2);
-      for (const i of new Set(indices)) {
-        if (
-          p !== this.pages || p.index !== index ||
-          generation !== p.generation ||
-          epoch !== this.epoch ||
-          p.r.scope.signal.aborted ||
-          p.animating || p.r.popElement
-        )
+        ].map(index => ({source: p,index}));
+      const warmable = ({source,index}) => index >= 0 && (index < source.pages.length ||
+          (source.complete === true && source.count === 2 && index === source.pages.length &&
+            source.index < source.pages.length && (source.pages.length - source.index) % source.count === 1)),
+        unique = new Map(plan.filter(warmable).map(item => [this.key(item.index,item.source),item])),
+        keys = [...unique.keys()],
+        identity = presentationPlan?.identity ||
+          `canonical:${p.r.doc.id}:${p.r.doc.version}:${generation}:${index}:${p.count}:${epoch}:${devicePixelRatio || 1}`,
+        valid = () => baseValid() &&
+          (presentationPlan
+            ? p.presentationSourcePlanIdentity?.() === presentationPlan.identity
+            : !p.presentationSourcePlanIdentity?.());
+      if (!valid()) return;
+      this.warmPlan = {run, identity, keys, presentation: Boolean(presentationPlan)};
+      this.root.dataset.curlWarmPlan = JSON.stringify({run, identity,
+        presentation: Boolean(presentationPlan), windows: presentationPlan?.windows || [], keys});
+      this.root.dataset.curlWarmStatus = "preparing";
+      for (const {source,index:i} of unique.values()) {
+        if (!valid()) return;
+        const value = await this.prepare(i,source,valid);
+        if (!valid()) return;
+        if (!value) {
+          this.root.dataset.curlWarmStatus = "failed";
+          this.warmPlan = null;
           return;
-        if (p.count === 1 && i === index + 2 && !this.cache.has(this.key(i))) {
-          const current = this.cache.get(this.key(index));
-          const bytes = [...this.cache.values()].reduce((n, value) => n + value.bytes, 0);
-          // Lookahead is optional: never evict the current/next leaves merely
-          // to label a high-DPR reader warm. All leaves share this layout size.
-          if (!current || this.cache.size >= 6 || bytes + current.bytes > this.textureBudget())
-            continue;
         }
-        await this.prepare(i);
         await new Promise((resolve) => setTimeout(resolve, 20));
+        if (!valid()) return;
+      }
+      if (!keys.every(key => this.cache.has(key))) {
+        if (valid()) {
+          this.root.dataset.curlWarmStatus = "failed";
+          this.warmPlan = null;
+        }
+        return;
+      }
+      // Single-page queued-turn lookahead is optional and is not part of the
+      // truthful warm plan. Try it only after every required key is resident,
+      // without evicting that plan or exceeding the existing byte/count budget.
+      if (!presentationSources && p.count === 1) {
+        const optionalIndex = index + 2,
+          optionalKey = this.key(optionalIndex),
+          current = this.cache.get(this.key(index)),
+          bytes = [...this.cache.values()].reduce((n, value) => n + value.bytes, 0);
+        if (optionalIndex < p.pages.length && !this.cache.has(optionalKey) && current &&
+            this.cache.size < 6 && bytes + current.bytes <= this.textureBudget()) {
+          await this.prepare(optionalIndex,p,valid);
+          if (!valid()) return;
+        }
       }
       // Texture readiness does not allocate the final drawing buffer. Prepare
       // that same buffer while idle; attach still verifies its current size.
-      if (p !== this.pages || p.index !== index || generation !== p.generation || epoch !== this.epoch ||
-          p.r.scope.signal.aborted || p.animating || p.r.popElement || this.failed || !this.gl) return;
+      if (!valid()) return;
+      if (this.failed || !this.gl) {
+        this.root.dataset.curlWarmStatus = "failed";
+        this.warmPlan = null;
+        return;
+      }
       const rect = $("#article").getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
         const { width, height } = this.surfaceDimensions(rect);
@@ -687,14 +768,18 @@ export class PageCurlRenderer {
         this.clearSurface();
         if (setup) this.surfaceWarm = setup;
         this.primePresentation(width, height, generation, epoch, () => {
-          if (p === this.pages && generation === p.generation &&
-              epoch === this.epoch && !p.r.scope.signal.aborted && !p.animating)
+          if (valid() && keys.every(key => this.cache.has(key))) {
             this.root.dataset.curlWarm = "true";
-        });
+            this.root.dataset.curlWarmStatus = "ready";
+          }
+        }, valid);
+      } else {
+        this.root.dataset.curlWarmStatus = "failed";
+        this.warmPlan = null;
       }
     }, 120);
   }
-  primePresentation(width, height, generation, epoch, ready) {
+  primePresentation(width, height, generation, epoch, ready, guard = null) {
     const identity = `${width}:${height}`;
     if (this.primedSurface === identity) {
       ready?.();
@@ -705,7 +790,7 @@ export class PageCurlRenderer {
     let remaining = 4;
     const frame = () => {
       this.surfaceWarmRaf = 0;
-      if (owner !== this.pages || generation !== owner.generation ||
+      if ((guard && !guard()) || owner !== this.pages || generation !== owner.generation ||
           epoch !== this.epoch || owner.r.scope.signal.aborted ||
           owner.animating || this.scene || this.failed ||
           this.canvas.width !== width || this.canvas.height !== height) return;
@@ -1089,6 +1174,7 @@ export class PageCurlRenderer {
     this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
   }
   dispose() {
+    if (this.root.__curlRendererTest === this) delete this.root.__curlRendererTest;
     this.finish();
     this.invalidate();
     this.assets.clear();

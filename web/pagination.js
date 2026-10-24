@@ -26,6 +26,7 @@ export class ReadingPages {
     if (reader.handoff?.painter) this.painter.rebind(this);
     this.generation = 0;
     this.navigation = 0;
+    this.presentationRevision = 0;
     this.waiters = [];
     this.complete = true;
     this.ranges = new Map();
@@ -271,7 +272,9 @@ export class ReadingPages {
     return view.textureGeneration ||= `${this.generation}:view:${this.viewSerial=(this.viewSerial||0)+1}`;
   }
   clearPresentation() {
+    this.presentationRevision++;
     this.presentedView=null;this.viewTrail=null;this.viewTrailIndex=0;this.viewIdentity=null;
+    this.presentationPrefetch=new Map();
   }
   presentationPoints(snapshots) {
     const parts=snapshots.flatMap(page=>page.fragments).filter(f=>f.end>f.start || this.visualBlock(this.blocks.get(f.id)));
@@ -318,6 +321,8 @@ export class ReadingPages {
       incomingCarry:validCarry(this.presentedView?.incomingCarry),
       outgoingCarry:ownsState?this.carryAfter(state,points.end):validCarry(this.presentedView?.outgoingCarry)};
     this.presentationTextureGeneration(current);
+    this.presentationRevision++;
+    this.presentationPrefetch=new Map();
     this.viewIdentity=identity;this.viewTrail=[current];this.viewTrailIndex=0;
     return current;
   }
@@ -337,42 +342,84 @@ export class ReadingPages {
     if(!current)return null;
     const historyIndex=this.viewTrailIndex+direction,prior=from?null:this.viewTrail?.[historyIndex];
     if(prior?.identity===current.identity)return this.presentationPacket(prior,{historyIndex});
+    const prefetchKey=from?null:`${this.presentationTextureGeneration(current)}:${direction}`;
+    const prefetched=prefetchKey&&this.presentationPrefetch?.get(prefetchKey);
+    if(prefetched?.packet)return prefetched.packet;
+    if(prefetched?.navigation===this.navigation)return prefetched.promise;
+    if(prefetchKey&&prefetched)this.presentationPrefetch.delete(prefetchKey);
     const identity=current.identity,navigation=this.navigation;
     const valid=()=>!this.r.scope.signal.aborted && this.presentationIdentity()===identity && this.navigation===navigation;
-    const packet=Object.create(ReadingPages.prototype),measure=this.measure.cloneNode(false);
-    this.measure.parentElement.append(measure);
-    Object.assign(packet,{r:this.r,blocks:this.blocks,fragments:this.fragments,urlRanges:this.urlRanges,
-      inlineStyles:this.inlineStyles,inlineObjects:this.inlineObjects,urlImages:this.urlImages,
-      measure,width:this.width,height:this.height,count:this.count,pages:[],index:0,complete:false,
-      viewStart:direction>0?current.end:null,incomingCarry:direction>0?current.outgoingCarry:[],
-      excludedCarry:direction<0?current.incomingCarry:[]});
-    const builder=direction>0?packet.buildPages():packet.reversePages(current.start);
-    try {
-      let done=false;
-      while(!done && packet.pages.length<this.count) {
+    const preparing=(async()=>{
+      const packet=Object.create(ReadingPages.prototype),measure=this.measure.cloneNode(false);
+      this.measure.parentElement.append(measure);
+      Object.assign(packet,{r:this.r,blocks:this.blocks,fragments:this.fragments,urlRanges:this.urlRanges,
+        inlineStyles:this.inlineStyles,inlineObjects:this.inlineObjects,urlImages:this.urlImages,
+        measure,width:this.width,height:this.height,count:this.count,pages:[],index:0,complete:false,
+        viewStart:direction>0?current.end:null,incomingCarry:direction>0?current.outgoingCarry:[],
+        excludedCarry:direction<0?current.incomingCarry:[]});
+      const builder=direction>0?packet.buildPages():packet.reversePages(current.start);
+      try {
+        let done=false;
+        while(!done && packet.pages.length<this.count) {
+          if(!valid())return null;
+          const deadline=performance.now()+4;
+          do {
+            const next=builder.next();done=next.done;
+            if(!done && next.value===null)break;
+            if(!done)packet.pages.push(next.value);
+          }while(!done && packet.pages.length<this.count && performance.now()<deadline);
+          if(!done && packet.pages.length<this.count)await new Promise(resolve=>setTimeout(resolve,0));
+        }
         if(!valid())return null;
-        const deadline=performance.now()+4;
-        do {
-          const next=builder.next();done=next.done;
-          if(!done && next.value===null)break;
-          if(!done)packet.pages.push(next.value);
-        }while(!done && packet.pages.length<this.count && performance.now()<deadline);
-        if(!done && packet.pages.length<this.count)await new Promise(resolve=>setTimeout(resolve,0));
-      }
-      if(!valid())return null;
-      if(direction<0)packet.pages.reverse();
-      if(!packet.pages.length)return null;
-      while(packet.pages.length<this.count)packet.pages.push([]);
-      const snapshots=packet.pages.map((fragments,i)=>{
-        const holder=document.createElement('div');holder.innerHTML=packet.leafMarkup(i);
-        return{fragments,leaf:holder.firstElementChild};
-      });
-      const points=this.presentationPoints(snapshots);
-      if(!points.start || !points.end)return null;
-      const view={snapshots,...points,identity,canonicalIndex:this.pageFor(points.start),
-        incomingCarry:packet.incomingCarry,outgoingCarry:[]};
-      return this.presentationPacket(view,{direction});
-    }finally{builder.return?.();measure.remove();}
+        if(direction<0)packet.pages.reverse();
+        if(!packet.pages.length)return null;
+        while(packet.pages.length<this.count)packet.pages.push([]);
+        const snapshots=packet.pages.map((fragments,i)=>{
+          const holder=document.createElement('div');holder.innerHTML=packet.leafMarkup(i);
+          return{fragments,leaf:holder.firstElementChild};
+        });
+        const points=this.presentationPoints(snapshots);
+        if(!points.start || !points.end)return null;
+        const view={snapshots,...points,identity,canonicalIndex:this.pageFor(points.start),
+          incomingCarry:packet.incomingCarry,outgoingCarry:[]};
+        return this.presentationPacket(view,{direction});
+      }finally{builder.return?.();measure.remove();}
+    })();
+    if(!prefetchKey)return preparing;
+    this.presentationPrefetch??=new Map();
+    const entry={navigation,promise:null,packet:null};
+    entry.promise=preparing.then(packet=>{
+      if(packet)entry.packet=packet;
+      else if(this.presentationPrefetch.get(prefetchKey)===entry)this.presentationPrefetch.delete(prefetchKey);
+      return packet;
+    });
+    this.presentationPrefetch.set(prefetchKey,entry);
+    try{return await entry.promise;}
+    catch(error){if(this.presentationPrefetch.get(prefetchKey)===entry)this.presentationPrefetch.delete(prefetchKey);throw error;}
+  }
+  presentationSourcePlanIdentity(current=this.viewTrail?.[this.viewTrailIndex]) {
+    if((!this.annotationLayout && !this.presentedView) || !current)return null;
+    return `${this.r.doc.id}:${this.r.doc.version}:${this.generation}:${this.presentationRevision}:`+
+      `${current.textureGeneration}:${this.viewTrailIndex}:${this.index}:${this.count}`;
+  }
+  async getPresentationSourcePlan() {
+    if(!this.annotationLayout && !this.presentedView)return null;
+    const current=this.currentPresentation();
+    if(!current)return null;
+    const navigation=this.navigation,generation=this.generation,index=this.index,
+      identity=this.presentationSourcePlanIdentity(current),
+      valid=()=>!this.r.scope.signal.aborted && !this.animating && this.navigation===navigation &&
+        this.generation===generation && this.index===index && this.viewTrail?.[this.viewTrailIndex]===current &&
+        this.presentationSourcePlanIdentity()===identity;
+    const sources=[this.presentationPacket(current,{historyIndex:this.viewTrailIndex})];
+    for(const direction of [-1,1]) {
+      if(!valid())return [];
+      if(this.presentationOutside(direction)!==false)continue;
+      const source=await this.preparePresentation(direction);
+      if(!valid() || !source)return [];
+      sources.push(source);
+    }
+    return {identity,sources,windows:sources.map(source=>source.view?.textureGeneration||source.generation)};
   }
   presentationPacket(view, intent) {
     const packet=Object.create(ReadingPages.prototype);
@@ -408,6 +455,8 @@ export class ReadingPages {
     const dropped=Math.max(0,this.viewTrailIndex-PRESENTATION_HISTORY_LIMIT+1);
     if(dropped){this.viewTrail.splice(0,dropped);this.viewTrailIndex-=dropped;}
     if(this.viewTrail.length>PRESENTATION_HISTORY_LIMIT)this.viewTrail.splice(PRESENTATION_HISTORY_LIMIT);
+    this.presentationRevision++;
+    this.presentationPrefetch=new Map();
     this.presentedView=view;this.annotationLayout=view.snapshots;
     this.index=view.canonicalIndex;this.anchor=this.r.anchorFor(view.start.block_id,view.start.start,view.start.start);
     this.render();
@@ -1249,6 +1298,10 @@ export class ReadingPages {
       return null;
     // A preview is reversible. Assistance expires only when a new view commits.
     const presented=this.presentationOutside(direction);
+    const currentView=presented===null?null:this.currentPresentation();
+    const currentSource=currentView
+      ? this.presentationPacket(currentView,{historyIndex:this.viewTrailIndex})
+      : this;
     const target = presented!==null ? this.index+direction*this.count : this.index > 0
       ? Math.max(0, this.index + direction * this.count)
       : this.index + direction * this.count;
@@ -1265,8 +1318,7 @@ export class ReadingPages {
       elements = [...article.children],
       element = elements[direction > 0 && this.count === 2 ? 1 : 0],
       leaf = element.getBoundingClientRect(),
-      token = ++this.navigation,
-      frontIndex = this.index + (direction > 0 ? this.count - 1 : 0);
+      token = ++this.navigation;
     let generation=this.generation;
     const preview = (this.preview = {
       requested: performance.now(),
@@ -1543,18 +1595,19 @@ export class ReadingPages {
     const prepare = async (source, index) => {
       if (!valid()) return;
       if (setup) setup.incomingStartedAt = performance.now();
-      const backIndex = index + (direction < 0 ? this.count - 1 : 0);
+      const frontIndex = currentSource.index + (direction > 0 ? this.count - 1 : 0),
+        backIndex = index + (direction < 0 ? this.count - 1 : 0);
       const faces = this.count === 1
         ? [{ source, index, x: leaves[0].x }]
         : direction > 0
-          ? [{ source: this, index: this.index, x: leaves[0].x },
+          ? [{ source: currentSource, index: currentSource.index, x: leaves[0].x },
              { source, index: index + 1, x: leaves[1].x }]
           : [{ source, index, x: leaves[0].x },
-             { source: this, index: this.index + 1, x: leaves[1].x }];
+             { source: currentSource, index: currentSource.index + 1, x: leaves[1].x }];
       if (setup) setup.incomingReadyAt = performance.now();
       if (motionOff) { ready(null, null); return; }
       this.painter.pendingTextures = [...new Set([
-        this.painter.key(frontIndex), this.painter.key(backIndex, source),
+        this.painter.key(frontIndex,currentSource), this.painter.key(backIndex, source),
         ...faces.map(face => this.painter.key(face.index, face.source)),
       ])];
       this.painter.wasWarm = this.painter.pendingTextures.every(key => this.painter.cache.has(key));
@@ -1563,7 +1616,7 @@ export class ReadingPages {
         ready(null, null);
       }, 1200);
       const [front, back, ...staticTextures] = await Promise.all([
-        this.painter.prepare(frontIndex), this.painter.prepare(backIndex, source),
+        this.painter.prepare(frontIndex,currentSource), this.painter.prepare(backIndex, source),
         ...faces.map(face => this.painter.prepare(face.index, face.source)),
       ]);
       if (setup) setup.texturesReadyAt = performance.now();

@@ -45,6 +45,44 @@ async function prepared(page, request, layout = 'single') {
   await over(page);
   return doc;
 }
+async function preparedPresentation(page, request) {
+  await request.patch('/api/profile', { data: { density: 15 } });
+  const doc = await prepared(page, request, 'double');
+  const retained = page.locator('#article [data-word="conviction"]').first();
+  await retained.click();
+  await expect(page.locator('.annotation-pop .dictionary-candidates')).toBeVisible();
+  await page.locator('[data-retained]').click();
+  await expect(page.locator('[data-retained]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-retained]')).toBeEnabled();
+  await page.getByRole('button', { name: '关闭注释', exact: true }).click();
+  await expect(page.locator('#article [data-target="conviction"]')).toHaveCount(1);
+  await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
+  await over(page);
+  for (let i = 0; i < 2; i++) {
+    await phase(page, 1, 700);
+    await phase(page, 8);
+    await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+    await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
+  }
+  const anchor = JSON.parse(await page.locator('.reader').getAttribute('data-source-position'));
+  expect(anchor.block_id).toBeTruthy();
+  expect(Number.isInteger(anchor.start)).toBe(true);
+  const saved = await request.put(`/api/documents/${doc.id}/progress`, {
+    data: { scroll_ratio: anchor.ratio, anchor },
+  });
+  expect(saved.ok()).toBe(true);
+  await page.reload();
+  await expect(page.locator('.reader')).toHaveAttribute('data-ready', 'true');
+  await expect(page.locator('.reader')).toHaveAttribute('data-pagination-ready', 'true');
+  await expect(page.locator('.reader')).toHaveAttribute('data-trackpad-mode', 'native');
+  await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
+  const plan = JSON.parse(await page.locator('.reader').getAttribute('data-curl-warm-plan'));
+  expect(plan.presentation).toBe(true);
+  expect(plan.windows.length).toBeGreaterThanOrEqual(2);
+  expect(plan.keys).toHaveLength(6);
+  await over(page);
+  return {doc, plan};
+}
 const snap = page => page.evaluate(() => ({
   index: +document.querySelector('.reader').dataset.pageIndex,
   source: document.querySelector('.reader').dataset.sourcePosition,
@@ -506,6 +544,139 @@ test('wide DPR 3 double spread keeps all required faces at native resolution', a
     await context.close();
   }
 });
+
+test('double-spread source resume keeps both adjacent presentation windows warm', async ({ page, request }, info) => {
+  await preparedPresentation(page, request);
+  const before = await page.evaluate(() =>
+    JSON.parse(document.querySelector('.reader').dataset.curlMetrics || '[]').length);
+  const plans = [];
+  for (const direction of [1, -1, -1, 1]) {
+    await phase(page, 1, direction * 700);
+    await phase(page, 8);
+    await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+    await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
+    plans.push(await page.evaluate(() => ({
+      index: +document.querySelector('.reader').dataset.pageIndex,
+      plan: JSON.parse(document.querySelector('.reader').dataset.curlWarmPlan),
+    })));
+  }
+  const metrics = await page.evaluate(() =>
+    JSON.parse(document.querySelector('.reader').dataset.curlMetrics || '[]'));
+  const turns = metrics.slice(before);
+  await info.attach('presentation-cache-turns.json', {
+    body: JSON.stringify(turns, null, 2), contentType: 'application/json',
+  });
+  expect(turns).toHaveLength(4);
+  expect(plans.every(({plan}) => plan.presentation && plan.keys.length === 6)).toBe(true);
+  expect(turns.every(metric => metric.warm)).toBe(true);
+  expect(turns.flatMap(metric => metric.raw.captureTrace)).toEqual([]);
+  expect(+(await page.locator('.reader').getAttribute('data-curl-cached-leaves'))).toBeLessThanOrEqual(6);
+  expect(+(await page.locator('.reader').getAttribute('data-curl-cached-bytes'))).toBeLessThanOrEqual(128e6);
+
+  const rewarmed = page.evaluate(() => new Promise(resolve => {
+    const root = document.querySelector('.reader');
+    let cleared = root.dataset.curlWarm !== 'true';
+    const observer = new MutationObserver(() => {
+      if (root.dataset.curlWarm !== 'true') cleared = true;
+      else if (cleared) { observer.disconnect(); resolve(); }
+    });
+    observer.observe(root, { attributes: true, attributeFilter: ['data-curl-warm'] });
+  }));
+  await page.setViewportSize({ width: 1320, height: 900 });
+  await rewarmed;
+  await expect(page.locator('.reader')).toHaveAttribute('data-pagination-ready', 'true');
+  await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
+  await over(page);
+  const afterReflow = await page.evaluate(() =>
+    JSON.parse(document.querySelector('.reader').dataset.curlMetrics || '[]').length);
+  await phase(page, 1, 700);
+  await phase(page, 8);
+  await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+  const reflowMetric = await page.evaluate(() =>
+    JSON.parse(document.querySelector('.reader').dataset.curlMetrics || '[]').at(-1));
+  expect(reflowMetric.sequence).toBeGreaterThan(afterReflow);
+  expect(reflowMetric.warm).toBe(true);
+  expect(reflowMetric.raw.captureTrace).toEqual([]);
+  expect(+(await page.locator('.reader').getAttribute('data-curl-cached-leaves'))).toBeLessThanOrEqual(6);
+});
+
+test('stale presentation warm cannot write, evict, or mark a newer plan warm', async ({ page, request }, info) => {
+  await preparedPresentation(page, request);
+  await page.evaluate(() => {
+    const renderer = document.querySelector('.reader').__curlRendererTest;
+    const original = renderer.prepare.bind(renderer);
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    window.__warmRace = { blocked: false, done: false };
+    window.__releaseWarmRace = release;
+    renderer.prepare = async function(index, source, guard) {
+      if (guard && !window.__warmRace.blocked) {
+        const state = window.__warmRace;
+        state.blocked = true;
+        state.oldKey = this.key(index, source);
+        state.oldRun = this.warmPlan?.run;
+        await gate;
+        state.beforeKeys = [...this.cache.keys()];
+        state.beforePlan = JSON.parse(this.root.dataset.curlWarmPlan || 'null');
+        state.beforeWarm = this.root.dataset.curlWarm || null;
+        const value = await original(index, source, guard);
+        state.result = Boolean(value);
+        state.afterKeys = [...this.cache.keys()];
+        state.afterPlan = JSON.parse(this.root.dataset.curlWarmPlan || 'null');
+        state.afterWarm = this.root.dataset.curlWarm || null;
+        state.done = true;
+        return value;
+      }
+      return original(index, source, guard);
+    };
+  });
+  await phase(page, 1, 700);
+  await phase(page, 8);
+  await expect.poll(() => page.evaluate(() => window.__warmRace.blocked)).toBe(true);
+  for (let i = 0; i < 4; i++) {
+    await phase(page, 1, 700);
+    await phase(page, 8);
+    await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+    await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm', 'true');
+  }
+  const beforeRelease = await page.evaluate(() => ({
+    race: { ...window.__warmRace },
+    plan: JSON.parse(document.querySelector('.reader').dataset.curlWarmPlan),
+  }));
+  expect(beforeRelease.plan.presentation).toBe(true);
+  expect(beforeRelease.plan.run).toBeGreaterThan(beforeRelease.race.oldRun);
+  expect(beforeRelease.plan.keys).not.toContain(beforeRelease.race.oldKey);
+  await page.evaluate(() => window.__releaseWarmRace());
+  await expect.poll(() => page.evaluate(() => window.__warmRace.done)).toBe(true);
+  const race = await page.evaluate(() => window.__warmRace);
+  await info.attach('stale-warm-race.json', {
+    body: JSON.stringify(race, null, 2), contentType: 'application/json',
+  });
+  expect(race.result).toBe(false);
+  expect(race.afterKeys).toEqual(race.beforeKeys);
+  expect(race.afterPlan).toEqual(race.beforePlan);
+  expect(race.beforePlan.run).toBeGreaterThan(race.oldRun);
+  expect(race.beforeWarm).toBe('true');
+  expect(race.afterWarm).toBe('true');
+  await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm-status', 'ready');
+});
+
+test('presentation warm stays false when its texture budget rejects a required face', async ({ page, request }) => {
+  await preparedPresentation(page, request);
+  await page.evaluate(() => {
+    document.querySelector('.reader').__curlRendererTest.textureBudget = () => 1;
+  });
+  await phase(page, 1, 700);
+  await phase(page, 8);
+  await expect(page.locator('.reader')).not.toHaveAttribute('data-page-turning', 'true');
+  await expect(page.locator('.reader')).toHaveAttribute('data-curl-warm-status', 'failed');
+  await expect(page.locator('.reader')).not.toHaveAttribute('data-curl-warm', 'true');
+  const plan = JSON.parse(await page.locator('.reader').getAttribute('data-curl-warm-plan'));
+  expect(plan.presentation).toBe(true);
+  expect(+(await page.locator('.reader').getAttribute('data-curl-cached-leaves'))).toBeLessThanOrEqual(6);
+  expect(+(await page.locator('.reader').getAttribute('data-curl-cached-bytes'))).toBeLessThanOrEqual(128e6);
+});
+
 test('native end crosses a chapter; old momentum and route cleanup never move the new chapter', async ({ page, request }) => {
   await prepared(page, request);
   const imported = await (await request.post('/api/import', { multipart: { file: {

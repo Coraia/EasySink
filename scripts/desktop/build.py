@@ -25,6 +25,9 @@ from resource_policy import native_clone, preflight
 
 ROOT = Path(__file__).resolve().parents[2]
 ICON = ROOT / "desktop/Assets/EasySink.icns"
+VERSION = "1.3.0"
+BUILD = "30"
+RELEASE_STATUS = "Presentation warm safety fix; native performance not formally released."
 PDFJS_ROOT = ROOT / "web/prototypes/pdf-lab/vendor/pdfjs-6.4.299"
 PDFJS_MANIFEST = PDFJS_ROOT / "SOURCE.json"
 PDF_PINS = {
@@ -46,6 +49,17 @@ def run(command, **kwargs):
 def sha(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def source_revision():
+    revision = run(["git", "rev-parse", "HEAD"], cwd=ROOT,
+                   capture_output=True, text=True).stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise RuntimeError("Source checkout does not have a full Git commit identity.")
+    if run(["git", "status", "--porcelain"], cwd=ROOT,
+           capture_output=True, text=True).stdout:
+        raise RuntimeError("Source checkout is dirty; commit the candidate before building.")
+    return revision
 
 
 def copy(source, destination):
@@ -271,9 +285,22 @@ def main():
         parser.error("Output exists; --refresh-app reuses this builder's runtime/dictionary, or choose --output DIR")
     if args.refresh_app:
         original = json.loads(marker.read_text())
-        if original.get("build_flavor") != args.flavor:
-            parser.error("--refresh-app cannot change or infer the existing bundle's build flavor")
+        original_flavor = original.get("build_flavor")
+        if original_flavor is None:
+            # Build 29 predates explicit flavor markers. Permit only the exact
+            # legacy Production identity; Preview/Diagnostic are never inferred.
+            with (bundle / "Contents/Info.plist").open("rb") as stream:
+                legacy_info = plistlib.load(stream)
+            expected = PROFILES["production"]
+            if (args.flavor != "production" or
+                    legacy_info.get("CFBundleIdentifier") != expected["bundle_id"] or
+                    legacy_info.get("CFBundleDisplayName") != expected["product_name"] or
+                    legacy_info.get("CFBundleVersion") != "29"):
+                parser.error("--refresh-app cannot infer this legacy bundle's build flavor")
+        elif original_flavor != args.flavor:
+            parser.error("--refresh-app cannot change the existing bundle's build flavor")
     frozen_sources = source_hashes()
+    revision = source_revision()
     requested_lock_hash = sha(args.dependency_lock)
     contents = bundle / "Contents"
     macos = contents / "MacOS"
@@ -299,12 +326,14 @@ def main():
         "CFBundleExecutable": "WiseReader", "CFBundleIdentifier": profile["bundle_id"],
         "CFBundleName": profile["product_name"], "CFBundleDisplayName": profile["product_name"],
         "CFBundleIconFile": "EasySink.icns",
-        "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.3.0",
-        "CFBundleVersion": "29", "LSMinimumSystemVersion": "13.0",
+        "CFBundlePackageType": "APPL", "CFBundleShortVersionString": VERSION,
+        "CFBundleVersion": BUILD, "LSMinimumSystemVersion": "13.0",
         "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication",
         "EasySinkBuildFlavor": profile["flavor"],
         "EasySinkDataDirectoryName": profile["data_directory_name"],
         "EasySinkRootID": profile["root_id"],
+        "EasySinkSourceRevision": revision,
+        "EasySinkReleaseStatus": RELEASE_STATUS,
         "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
     }, sort_keys=True))
     icon_target = resource_root / "EasySink.icns"
@@ -349,6 +378,8 @@ def main():
     readonly_resources(resource_root)
     inputs = {"build_flavor": args.flavor, "bundle_identifier": profile["bundle_id"],
               "data_directory_name": profile["data_directory_name"], "root_id": profile["root_id"],
+              "version": VERSION, "build": BUILD, "source_revision": revision,
+              "release_status": RELEASE_STATUS,
               "resource_budget": resource_budget, "runtime": info, "runtime_source": str(runtime), "runtime_build": (python_root / "BUILD").read_text().strip(),
               "dependency_lock_sha256": sha(lock), "swift_sources": {"desktop/" + p.name: sha(p) for p in swift_inputs},
               "builder_sha256": sha(Path(__file__)), "uv_lock_sha256": sha(ROOT / "uv.lock"),
