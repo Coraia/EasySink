@@ -18,9 +18,16 @@ final class ReadingStorage {
     private(set) var writeFailed = false
     private var available = false
     private static let maximumRevision = 9_007_199_254_740_991
+    // The writable policy follows every key produced by the current web client.
+    // Older owned snapshots can contain keys from retired readers; those values
+    // remain opaque and immutable so a portable build never erases reading state
+    // merely because it no longer has the feature which created it.
     private static let keys = Set(["theme", "typography", "page-layout", "page-motion", "page-light",
-        "speech-rate", "speech-voice", "last-document", "import-draft", "note-drafts-v3"])
-    private static let prefixes = ["book-chapter:", "position-pending:", "note-draft:", "grammar-open:"]
+        "speech-rate", "speech-voice", "last-document", "import-draft", "note-drafts-v3",
+        "edition", "picturebook-demo", "picturebook-chinese", "ai-reading-return"])
+    private static let prefixes = ["book-chapter:", "position-pending:", "note-draft:", "grammar-open:",
+        "jump:", "translation-jump:", "note-return:", "collection-meaning:",
+        "picturebook-position:", "living-book-position:", "fox-story-position:"]
 
     init(directory: URL) {
         file = directory.appendingPathComponent("reading-storage.json")
@@ -44,13 +51,14 @@ final class ReadingStorage {
             guard UUID(uuidString: identity) != nil else { throw invalidSnapshot() }
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: identityFile.path)
             if let saved {
-                guard Self.valid(saved), saved.identity == identity else { throw invalidSnapshot() }
+                guard Self.validStored(saved), saved.identity == identity else { throw invalidSnapshot() }
                 values = saved.values; revision = saved.revision; initialized = true
             } else if let data {
                 // Compatibility is limited to the earlier candidate's OWN file.
                 let legacy = try JSONDecoder().decode([String: String].self, from: data)
-                values = legacy.filter { Self.accepts($0.key) }
-                guard values.values.allSatisfy({ $0.utf8.count <= 4_194_304 }) else { throw invalidSnapshot() }
+                guard legacy.allSatisfy({ Self.safeKey($0.key) && $0.value.utf8.count <= 4_194_304 })
+                    else { throw invalidSnapshot() }
+                values = legacy
                 revision = 1
             }
             available = true
@@ -61,14 +69,24 @@ final class ReadingStorage {
     private func invalidSnapshot() -> NSError { NSError(domain: "ReaderStorage", code: 1) }
 
     static func accepts(_ key: String) -> Bool {
-        key.utf8.count < 160 && (keys.contains(key) || prefixes.contains(where: key.hasPrefix))
+        safeKey(key) && (keys.contains(key) || prefixes.contains(where: key.hasPrefix))
     }
 
-    private static func valid(_ snapshot: Snapshot) -> Bool {
+    private static func safeKey(_ key: String) -> Bool {
+        !key.isEmpty && key.utf8.count < 160
+    }
+
+    private static func validStored(_ snapshot: Snapshot) -> Bool {
         snapshot.schema == 1 && snapshot.revision >= 0 && snapshot.revision <= maximumRevision &&
             UUID(uuidString: snapshot.identity) != nil && snapshot.values.allSatisfy {
-                accepts($0.key) && $0.value.utf8.count <= 4_194_304
+                safeKey($0.key) && $0.value.utf8.count <= 4_194_304
             }
+    }
+
+    private func preservesOpaqueValues(_ incoming: Snapshot) -> Bool {
+        let opaque = values.filter { !Self.accepts($0.key) }
+        let incomingOpaque = incoming.values.filter { !Self.accepts($0.key) }
+        return incomingOpaque == opaque
     }
 
     private var snapshot: Snapshot { Snapshot(schema: 1, identity: identity, revision: revision, values: values) }
@@ -79,7 +97,8 @@ final class ReadingStorage {
         guard available, JSONSerialization.isValidJSONObject(wrapper),
               let data = try? JSONSerialization.data(withJSONObject: wrapper),
               let incoming = try? JSONDecoder().decode(Snapshot.self, from: data),
-              Self.valid(incoming), incoming.identity == identity, incoming.revision >= revision else { return false }
+              Self.validStored(incoming), incoming.identity == identity,
+              preservesOpaqueValues(incoming), incoming.revision >= revision else { return false }
         if incoming.revision == revision {
             guard incoming.values == values else { return false }
             if initialized && !writeFailed { return true }
@@ -108,15 +127,18 @@ final class ReadingStorage {
           const desktop = window.wiseReaderDesktop ||= {};
           const seed = \(seed), keys = new Set(\(keys)), prefixes = \(prefixes);
           const bytes = value => new TextEncoder().encode(value).length;
-          const accepts = key => typeof key === 'string' && bytes(key) < 160 &&
+          const safeKey = key => typeof key === 'string' && key.length > 0 && bytes(key) < 160;
+          const accepts = key => safeKey(key) &&
             (keys.has(key) || prefixes.some(prefix => key.startsWith(prefix)));
           const valid = value => value && value.schema === 1 && value.identity === seed?.identity &&
             Number.isSafeInteger(value.revision) && value.revision >= 0 &&
             value.values && typeof value.values === 'object' && !Array.isArray(value.values) &&
-            Object.entries(value.values).every(([key, text]) => accepts(key) &&
+            Object.entries(value.values).every(([key, text]) => safeKey(key) &&
               typeof text === 'string' && bytes(text) <= 4194304);
           const equalValues = (a, b) => Object.keys(a).length === Object.keys(b).length &&
             Object.keys(a).every(key => Object.hasOwn(b, key) && a[key] === b[key]);
+          const opaqueValues = values => Object.fromEntries(
+            Object.entries(values).filter(([key]) => !accepts(key)));
           const copy = value => JSON.parse(JSON.stringify(value));
           const report = message => {
             desktop.storageReady = false;
@@ -137,6 +159,8 @@ final class ReadingStorage {
             const raw = localStorage.getItem(envelopeKey);
             const browser = raw === null ? null : JSON.parse(raw);
             if (browser !== null && !valid(browser)) throw new Error('Library storage envelope is invalid');
+            if (browser && !equalValues(opaqueValues(browser.values), opaqueValues(seed.values)))
+              throw new Error('Library storage opaque values conflict');
             if (browser && browser.revision === seed.revision && !equalValues(browser.values, seed.values))
               throw new Error('Library storage revisions conflict');
             current = copy(browser && browser.revision > seed.revision ? browser : seed);

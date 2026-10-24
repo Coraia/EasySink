@@ -22,6 +22,8 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+PDFJS_ROOT = ROOT / "web/prototypes/pdf-lab/vendor/pdfjs-6.4.299"
+PDFJS_MANIFEST = PDFJS_ROOT / "SOURCE.json"
 PDF_PINS = {
     "pdfplumber": "0.11.10", "pdfminer-six": "20260107", "pypdfium2": "5.14.0",
     "pillow": "12.3.0", "charset-normalizer": "3.5.2", "cryptography": "50.0.2",
@@ -47,6 +49,22 @@ def copy(source, destination):
         raise ValueError(f"Source allowlist cannot contain symlinks: {source}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
+
+
+def require_pdfjs():
+    manifest = json.loads(PDFJS_MANIFEST.read_text(encoding="utf-8"))
+    if manifest.get("version") != "6.4.299":
+        raise RuntimeError("PDF.js source manifest has an unexpected version")
+    expected = dict(manifest["files"])
+    license_spec = manifest["license"]
+    expected[license_spec["path"]] = license_spec
+    for relative, item in expected.items():
+        path = PDFJS_ROOT / relative
+        if (not path.is_file() or path.is_symlink() or path.stat().st_size != item["bytes"] or
+                sha(path) != item["sha256"]):
+            raise RuntimeError(
+                f"Pinned PDF.js resource is missing or changed: {relative}; "
+                "run `python3 scripts/fetch_pdfjs.py` and rebuild")
 
 
 def source_files():
@@ -222,6 +240,7 @@ def main():
     uv = shutil.which("uv")
     if not uv:
         parser.error("uv is required only on the build machine")
+    require_pdfjs()
     swift = sorted((ROOT / "desktop").glob("*.swift"))
     if not (ROOT / "desktop/App.swift").is_file():
         parser.error("Main must supply desktop/App.swift first")

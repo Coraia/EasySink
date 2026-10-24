@@ -1,6 +1,7 @@
 """Small durable registry for the isolated PDF lab, separate from the user library."""
 
 from contextlib import contextmanager
+import hashlib
 import json
 import os
 import sqlite3
@@ -145,16 +146,52 @@ class LabStore:
         return self.task(task_id)
 
     def recover_registry(self):
-        """Classify interrupted registration; never silently delete retained material."""
-        missing = []
+        """Reconcile registered originals without trusting names or erasing task history."""
+        missing, invalid, restored = [], [], []
         for book in self.books():
-            if not self.source(book).is_file():
+            source = self.source(book)
+            verified = False
+            try:
+                if not source.is_symlink() and source.is_file() and source.stat().st_size == book["byte_size"]:
+                    digest = hashlib.sha256()
+                    with source.open("rb") as stream:
+                        while chunk := stream.read(1024 * 1024):
+                            digest.update(chunk)
+                    verified = digest.hexdigest() == book["file_sha256"]
+            except OSError:
+                pass
+            task = self.task(book["latest_task_id"])
+            if not verified:
                 missing.append(book["id"])
-                self.update(book["latest_task_id"], state="failed", error={
-                    "code": "source_missing", "message": "Registered original is missing."})
+                if source.exists() or source.is_symlink():
+                    invalid.append(book["id"])
+                if not task["error"] or task["error"].get("code") != "source_missing":
+                    self.update(task["id"], state="failed", error={
+                        "code": "source_missing",
+                        "message": "Registered original is missing or failed validation.",
+                        "previous_state": task["state"],
+                        "previous_error": task["error"],
+                    })
+                continue
+            if task["error"] and task["error"].get("code") == "source_missing":
+                previous = task["error"].get("previous_state")
+                previous_error = task["error"].get("previous_error")
+                if previous not in {"completed", "partial", "paused", "cancelled", "failed"}:
+                    total = task["end_page"] - task["start_page"] + 1
+                    metrics = task["metrics"].get("conversion_metrics", {})
+                    previous = "completed" if (
+                        task["done_pages"] >= total and
+                        (metrics.get("range_complete") or metrics.get("full_document_complete"))
+                    ) else ("partial" if task["done_pages"] else None)
+                    previous_error = None
+                if previous:
+                    self.update(task["id"], state=previous, error=previous_error)
+                    restored.append(book["id"])
         known = {b["file_sha256"] + ".pdf" for b in self.books()}
         report = {
             "missing_books": missing,
+            "invalid_originals": invalid,
+            "restored_books": restored,
             "unregistered_originals": [p.name for p in (self.root / "originals").glob("*.pdf")
                                       if p.name not in known],
             "interrupted_uploads": [p.name for p in (self.root / "incoming").iterdir()],

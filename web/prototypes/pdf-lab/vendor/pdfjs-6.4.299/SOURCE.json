@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "project": "Mozilla PDF.js",
+  "version": "6.4.299",
+  "release": "https://github.com/mozilla/pdf.js/releases/tag/v6.4.299",
+  "archive": {
+    "name": "pdfjs-6.4.299-dist.zip",
+    "url": "https://github.com/mozilla/pdf.js/releases/download/v6.4.299/pdfjs-6.4.299-dist.zip",
+    "bytes": 6331451,
+    "sha256": "f2245eb7ef3f674c872fe568a177bfec15874f5c034613e55d8e307f93ebd86d"
+  },
+  "files": {
+    "build/pdf.mjs": {
+      "bytes": 860818,
+      "sha256": "3ab3d2fee1200547309d5f5e4116066a1ccb6277451b9533aebe618530eb62ca"
+    },
+    "build/pdf.worker.mjs": {
+      "bytes": 2229713,
+      "sha256": "07ceb740d746e5d9012fcf9f27d5c7dea09f7d2f5e74f5c8109e5787551a2333"
+    }
+  },
+  "license": {
+    "path": "LICENSE",
+    "bytes": 10174,
+    "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+  }
+}
