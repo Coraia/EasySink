@@ -193,6 +193,77 @@ def test_delete_url_document_preserves_notes_and_removes_source(monkeypatch):
         assert notes[0]["body"] == "keep"
         assert notes[0]["source_available"] is False
 
+        reimported = c.post(
+            "/api/import/url",
+            headers=headers,
+            json={"request_id": str(uuid.uuid4()), "url": page_url},
+        )
+        assert reimported.status_code == 200, reimported.text
+        assert reimported.json()["state"] == "committed"
+        assert reimported.json()["doc_id"] != doc_id
+
+        notes_after = c.get("/api/notes").json()
+        assert len(notes_after) == 1
+        assert notes_after[0]["body"] == "keep"
+
+
+def test_url_import_strips_scripts_styles_svg_and_handles_modern_html(monkeypatch):
+    png = sample_png()
+    page_url = "https://simonwillison.net/2026/modern/"
+    img_url = "https://simonwillison.net/chart.png"
+    html = (
+        '<!doctype html><html><head>'
+        '<title>Fallback Title</title>'
+        '<meta name="author" content="Jane Doe">'
+        '<script>alert("xss")</script>'
+        '<style>body{color:red}</style>'
+        '</head><body>'
+        '<nav>Site Menu</nav>'
+        '<article>'
+        '<h1>Modern Web Article</h1>'
+        '<time datetime="2026-10-01T00:00:00Z">Oct 1</time>'
+        '<p>Paragraph with <a href="#top">Jump</a> link and real prose.</p>'
+        '<svg><path d="M0 0"/>SVGTEXT</svg>'
+        '<noscript>Enable JS</noscript>'
+        '<img src="/chart.png" loading="lazy" srcset="/chart.png 1x, /chart.png 2x" '
+        'style="color:transparent" alt="Chart">'
+        '</article>'
+        '<footer>Copyright 2026</footer>'
+        '</body></html>'
+    ).encode("utf-8")
+
+    def fake_fetch(url, kind, _control, **_kwargs):
+        if kind == "html" and url == page_url:
+            return url_transport.Fetched(url, url, html, "text/html", ())
+        if kind == "image" and url == img_url:
+            return url_transport.Fetched(url, url, png, "image/png", ())
+        raise AssertionError(f"unexpected fetch: {kind} {url}")
+
+    with url_client(monkeypatch, fake_fetch) as (c, headers):
+        res = c.post(
+            "/api/import/url",
+            headers=headers,
+            json={"request_id": str(uuid.uuid4()), "url": page_url},
+        )
+        assert res.status_code == 200, res.text
+        receipt = res.json()
+        assert receipt["state"] == "committed"
+        assert receipt["source"]["author"] == "Jane Doe"
+        assert receipt["source"]["published_at"] == "2026-10-01T00:00:00Z"
+
+        doc = c.get(f"/api/documents/{receipt['doc_id']}").json()
+        blocks = doc["blocks"]
+        full_text = "\n".join(b["text"] for b in blocks)
+        assert "Modern Web Article" in full_text
+        assert "Paragraph with Jump link and real prose." in full_text
+        for forbidden in ("alert", "color:red", "SVGTEXT", "Enable JS", "Site Menu", "Copyright 2026"):
+            assert forbidden not in full_text
+
+        img_block = next(b for b in blocks if b["type"] == "image")
+        asset = c.get(f"/api/import/url/snapshots/{receipt['snapshot_id']}/assets/{img_block['asset_id']}")
+        assert asset.status_code == 200
+        assert asset.content.startswith(b"\x89PNG\r\n\x1a\n")
+
 
 def test_url_import_rejects_invalid_url_and_non_article_cleanly(monkeypatch):
     responses = {
