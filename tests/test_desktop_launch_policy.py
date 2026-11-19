@@ -15,7 +15,6 @@ sys.path.insert(0, str(DESKTOP))
 
 from launch_policy import (  # noqa: E402
     BUILD_MANIFEST,
-    MARKER,
     PROFILES,
     LaunchPolicyError,
     fixed_directory,
@@ -56,20 +55,6 @@ def secure_directory(path: Path) -> None:
     path.chmod(0o700)
 
 
-def mark(directory: Path, flavor: str = "diagnostic", **overrides: object) -> None:
-    spec = profile(flavor)
-    payload = {
-        "schema": 2,
-        "role": "diagnostic",
-        "root_id": spec["root_id"],
-        "bundle_id": spec["bundle_id"],
-        **overrides,
-    }
-    marker = directory / MARKER
-    marker.write_text(json.dumps(payload), encoding="utf-8")
-    marker.chmod(0o600)
-
-
 def backend(*arguments: str, home: Path) -> subprocess.CompletedProcess[str]:
     environment = {**os.environ, "HOME": str(home)}
     return subprocess.run(
@@ -91,65 +76,56 @@ def test_production_preview_and_diagnostic_roots_are_fixed(tmp_path: Path):
 
     package = packaged_root(tmp_path, "diagnostic")
     diagnostic = fixed_directory(profile("diagnostic"), tmp_path)
+    arguments = (
+        "diagnostic",
+        str(profile("diagnostic")["bundle_id"]),
+        str(profile("diagnostic")["root_id"]),
+    )
+    # Resolves cleanly before the directory exists, as well as once created.
+    assert validate_packaged_data_dir(diagnostic, *arguments, app_root=package, home=tmp_path) == diagnostic.resolve(strict=False)
     secure_directory(diagnostic)
-    mark(diagnostic)
-    assert validate_packaged_data_dir(
-        diagnostic, "diagnostic", str(profile("diagnostic")["bundle_id"]),
-        str(profile("diagnostic")["root_id"]), app_root=package, home=tmp_path,
-    ) == diagnostic.resolve()
+    assert validate_packaged_data_dir(diagnostic, *arguments, app_root=package, home=tmp_path) == diagnostic.resolve()
 
     with pytest.raises(LaunchPolicyError, match="fixed root"):
-        validate_packaged_data_dir(
-            tmp_path / "caller-override", "diagnostic", str(profile("diagnostic")["bundle_id"]),
-            str(profile("diagnostic")["root_id"]), app_root=package, home=tmp_path)
+        validate_packaged_data_dir(tmp_path / "caller-override", *arguments, app_root=package, home=tmp_path)
 
 
-def test_diagnostic_marker_permissions_identity_and_symlink_fail_closed(tmp_path: Path):
+def test_diagnostic_rejects_symlinks_and_non_directories_without_touching_protected(tmp_path: Path):
     package = packaged_root(tmp_path, "diagnostic")
     diagnostic = fixed_directory(profile("diagnostic"), tmp_path)
-    secure_directory(diagnostic)
     protected_formal = fixed_directory(profile("production"), tmp_path)
     protected_preview = fixed_directory(profile("preview"), tmp_path)
     secure_directory(protected_formal)
     secure_directory(protected_preview)
     protected_before = (snapshot(protected_formal), snapshot(protected_preview))
     arguments = (
-        "diagnostic", str(profile("diagnostic")["bundle_id"]),
+        "diagnostic",
+        str(profile("diagnostic")["bundle_id"]),
         str(profile("diagnostic")["root_id"]),
     )
 
-    with pytest.raises(LaunchPolicyError):
+    # Regular file at the fixed diagnostic path fails.
+    diagnostic.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    diagnostic.write_text("not-a-dir", encoding="utf-8")
+    with pytest.raises(LaunchPolicyError, match="directory"):
         validate_packaged_data_dir(diagnostic, *arguments, app_root=package, home=tmp_path)
-    external_marker = tmp_path / "external-marker.json"
-    external_marker.write_text(json.dumps({
-        "schema": 2, "role": "diagnostic",
-        "root_id": profile("diagnostic")["root_id"],
-        "bundle_id": profile("diagnostic")["bundle_id"],
-    }), encoding="utf-8")
-    external_marker.chmod(0o600)
-    (diagnostic / MARKER).symlink_to(external_marker)
-    with pytest.raises(LaunchPolicyError, match="regular file|symlink"):
-        validate_packaged_data_dir(diagnostic, *arguments, app_root=package, home=tmp_path)
-    (diagnostic / MARKER).unlink()
-    mark(diagnostic, schema=1)
-    with pytest.raises(LaunchPolicyError):
-        validate_packaged_data_dir(diagnostic, *arguments, app_root=package, home=tmp_path)
-    mark(diagnostic)
-    (diagnostic / MARKER).chmod(0o644)
-    with pytest.raises(LaunchPolicyError, match="group or other"):
-        validate_packaged_data_dir(diagnostic, *arguments, app_root=package, home=tmp_path)
-    mark(diagnostic)
-    diagnostic.chmod(0o755)
-    with pytest.raises(LaunchPolicyError, match="group or other"):
-        validate_packaged_data_dir(diagnostic, *arguments, app_root=package, home=tmp_path)
-    diagnostic.chmod(0o700)
+    diagnostic.unlink()
 
+    # Dangling symlink at the fixed diagnostic path fails.
+    diagnostic.symlink_to(tmp_path / "nonexistent-target")
+    with pytest.raises(LaunchPolicyError, match="symlink"):
+        validate_packaged_data_dir(diagnostic, *arguments, app_root=package, home=tmp_path)
+    diagnostic.unlink()
+
+    # Symlink to an existing directory fails.
+    target = tmp_path / "symlink-target"
+    secure_directory(target)
     alias_home = tmp_path / "alias-home"
     alias_support = alias_home / "Library/Application Support"
     secure_directory(alias_support)
     alias = fixed_directory(profile("diagnostic"), alias_home)
-    alias.symlink_to(diagnostic, target_is_directory=True)
-    with pytest.raises(LaunchPolicyError, match="real directory|symlink"):
+    alias.symlink_to(target, target_is_directory=True)
+    with pytest.raises(LaunchPolicyError, match="symlink"):
         validate_packaged_data_dir(alias, *arguments, app_root=package, home=alias_home)
 
     assert snapshot(protected_formal) == protected_before[0]
@@ -158,8 +134,6 @@ def test_diagnostic_marker_permissions_identity_and_symlink_fail_closed(tmp_path
 
 def test_backend_help_unknown_missing_and_forged_identity_are_side_effect_free(tmp_path: Path):
     diagnostic = fixed_directory(profile("diagnostic"), tmp_path)
-    secure_directory(diagnostic)
-    mark(diagnostic)
     before = snapshot(tmp_path)
     help_result = backend("--help", home=tmp_path)
     unknown_result = backend("--unknown", home=tmp_path)

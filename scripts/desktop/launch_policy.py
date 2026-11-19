@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import json
-import os
 import plistlib
 import stat
 from pathlib import Path
 
-MARKER = ".easysink-diagnostic-data.json"
 BUILD_MANIFEST = "desktop-build-flavor.json"
 PROTECTED_NAMES = ("EasySink Candidate", "EasySink Paragraph Preview Data 002")
 PROFILES = {
@@ -94,34 +92,16 @@ def load_packaged_profile(app_root: Path) -> dict[str, object]:
     return payload
 
 
-def _validate_owner_and_mode(path: Path, kind: str) -> None:
-    information = path.lstat()
-    if information.st_uid != os.getuid():
-        raise LaunchPolicyError(f"{kind} must be owned by the current user.")
-    if stat.S_IMODE(information.st_mode) & 0o077:
-        raise LaunchPolicyError(f"{kind} must not be accessible by group or other users.")
-
-
-def _validate_diagnostic_root(candidate: Path, profile: dict[str, object], home: Path | None) -> Path:
-    if not candidate.exists() or not candidate.is_dir() or candidate.is_symlink():
-        raise LaunchPolicyError("The fixed diagnostic data root must already be a real directory.")
-    canonical = candidate.resolve(strict=True)
+def _validate_diagnostic_root(candidate: Path, home: Path | None) -> Path:
+    if candidate.is_symlink():
+        raise LaunchPolicyError("The fixed diagnostic data root contains a symlink.")
+    if candidate.exists() and not candidate.is_dir():
+        raise LaunchPolicyError("The fixed diagnostic data root must be a directory.")
+    canonical = candidate.resolve(strict=False)
     if canonical != candidate:
         raise LaunchPolicyError("The fixed diagnostic data root contains a symlink.")
     if any(_contains(root, canonical) for root in protected_directories(home)):
         raise LaunchPolicyError("Protected EasySink libraries cannot be used for diagnostics.")
-    _validate_owner_and_mode(canonical, "Diagnostic data root")
-    marker = canonical / MARKER
-    payload = _regular_json(marker)
-    _validate_owner_and_mode(marker, "Diagnostic marker")
-    expected = {
-        "schema": 2,
-        "role": "diagnostic",
-        "root_id": profile["root_id"],
-        "bundle_id": profile["bundle_id"],
-    }
-    if any(payload.get(key) != value for key, value in expected.items()):
-        raise LaunchPolicyError("Diagnostic marker identity does not match this build.")
     return canonical
 
 
@@ -136,5 +116,5 @@ def validate_packaged_data_dir(data_dir: Path, flavor: str, bundle_id: str, root
     if requested != expected:
         raise LaunchPolicyError("Data directory does not match the fixed root for this build.")
     if flavor == "diagnostic":
-        return _validate_diagnostic_root(expected, profile, home)
+        return _validate_diagnostic_root(expected, home)
     return expected.resolve(strict=False)

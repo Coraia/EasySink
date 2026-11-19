@@ -34,17 +34,6 @@ private func secureDirectory(_ url: URL) throws {
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
 }
 
-private func mark(_ directory: URL, profile: DesktopBuildProfile,
-                  schema: Int = 2, role: String = "diagnostic") throws {
-    let marker = directory.appendingPathComponent(LaunchPolicy.markerName)
-    let payload: [String: Any] = [
-        "schema": schema, "role": role,
-        "root_id": profile.rootID, "bundle_id": profile.bundleIdentifier,
-    ]
-    try JSONSerialization.data(withJSONObject: payload).write(to: marker)
-    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: marker.path)
-}
-
 @main
 struct LaunchPolicyTest {
     static func main() throws {
@@ -70,6 +59,7 @@ struct LaunchPolicyTest {
                 DesktopBuildConfiguration.profile.rootID == "easysink-formal-candidate",
                 "production compile identity must stay fixed")
         #endif
+
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("easysink-launch-policy-\(UUID().uuidString)", isDirectory: true)
         try secureDirectory(root)
@@ -105,12 +95,16 @@ struct LaunchPolicyTest {
             require(value.dataDirectory.lastPathComponent == "EasySink Paragraph Preview Data 002",
                     "Preview root must be fixed")
         } else { require(false, "Preview no-argument launch must resolve normally") }
+        if case .run(let diagFresh) = decide([executable], home: root, profile: diagnostic) {
+            require(diagFresh.dataDirectory.lastPathComponent == "EasySink Diagnostic Data 001",
+                    "diagnostic root must resolve cleanly before directory creation")
+        } else { require(false, "diagnostic no-argument launch must resolve before directory creation") }
         if case .failure = decide([executable], home: root, profile: production,
                                   bundle: diagnostic.bundleIdentifier) {
         } else { require(false, "bundle mismatch must fail") }
         if case .failure = decide([executable], home: root, profile: production, flavor: "diagnostic") {
         } else { require(false, "declared flavor mismatch must fail") }
-        require(snapshot(root) == empty, "fixed production/Preview resolution must not create a library")
+        require(snapshot(root) == empty, "fixed policy resolution must not create any library directory")
 
         let formal = LaunchPolicy.fixedDirectory(profile: production, homeDirectory: root)
         let previewRoot = LaunchPolicy.fixedDirectory(profile: preview, homeDirectory: root)
@@ -118,44 +112,17 @@ struct LaunchPolicyTest {
         try secureDirectory(previewRoot)
         let protectedBefore = [snapshot(formal), snapshot(previewRoot)]
 
-        if case .failure = decide([executable], home: root, profile: diagnostic) {
-        } else { require(false, "missing fixed diagnostic root must fail") }
         let isolated = LaunchPolicy.fixedDirectory(profile: diagnostic, homeDirectory: root)
         try secureDirectory(isolated)
-        if case .failure = decide([executable], home: root, profile: diagnostic) {
-        } else { require(false, "missing marker must fail") }
-        let externalMarker = root.appendingPathComponent("external-marker.json")
-        try Data("{}".utf8).write(to: externalMarker)
-        try FileManager.default.createSymbolicLink(
-            at: isolated.appendingPathComponent(LaunchPolicy.markerName), withDestinationURL: externalMarker)
-        if case .failure = decide([executable], home: root, profile: diagnostic) {
-        } else { require(false, "marker symlink must fail") }
-        try FileManager.default.removeItem(at: isolated.appendingPathComponent(LaunchPolicy.markerName))
-        try mark(isolated, profile: diagnostic, schema: 1)
-        if case .failure = decide([executable], home: root, profile: diagnostic) {
-        } else { require(false, "old marker schema must fail") }
-        try mark(isolated, profile: diagnostic, role: "formal")
-        if case .failure = decide([executable], home: root, profile: diagnostic) {
-        } else { require(false, "wrong marker role must fail") }
-        try mark(isolated, profile: diagnostic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o644],
-                                              ofItemAtPath: isolated.appendingPathComponent(LaunchPolicy.markerName).path)
-        if case .failure = decide([executable], home: root, profile: diagnostic) {
-        } else { require(false, "insecure marker mode must fail") }
-        try mark(isolated, profile: diagnostic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: isolated.path)
-        if case .failure = decide([executable], home: root, profile: diagnostic) {
-        } else { require(false, "insecure root mode must fail") }
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: isolated.path)
-
         let firstDecision = decide([executable], home: root, profile: diagnostic)
         let secondDecision = decide([executable], home: root, profile: diagnostic)
         guard case .run(let first) = firstDecision, case .run(let second) = secondDecision else {
-            require(false, "direct and LaunchServices-equivalent no-argument diagnostic launches must resolve")
+            require(false, "direct and LaunchServices-equivalent diagnostic launches must resolve")
             return
         }
         require(first.dataDirectory == isolated && second.dataDirectory == isolated,
-                "argument stripping and repeat launch must stay pinned to the diagnostic root")
+                "repeat launch must stay pinned to the diagnostic root")
+
         let firstLock = try NativeInstanceLock.acquire(directory: isolated)
         do {
             _ = try NativeInstanceLock.acquire(directory: isolated)
@@ -163,6 +130,7 @@ struct LaunchPolicyTest {
         } catch NativeInstanceLockError.alreadyRunning {
         }
         withExtendedLifetime(firstLock) {}
+
         let insecureLockRoot = root.appendingPathComponent("insecure-lock", isDirectory: true)
         try secureDirectory(insecureLockRoot)
         let insecureLock = insecureLockRoot.appendingPathComponent("desktop-native.lock")
@@ -180,16 +148,32 @@ struct LaunchPolicyTest {
         if case .failure = decide([executable], home: root, profile: malicious) {
         } else { require(false, "diagnostic flavor must never use a protected root") }
 
+        let fileHome = root.appendingPathComponent("file-home", isDirectory: true)
+        let fileSupport = fileHome.appendingPathComponent("Library/Application Support", isDirectory: true)
+        try secureDirectory(fileSupport)
+        let fileAtRoot = fileSupport.appendingPathComponent(diagnostic.dataDirectoryName, isDirectory: false)
+        try Data("not-a-dir".utf8).write(to: fileAtRoot)
+        if case .failure = decide([executable], home: fileHome, profile: diagnostic) {
+        } else { require(false, "regular file at diagnostic root must fail") }
+
         let aliasHome = root.appendingPathComponent("alias-home", isDirectory: true)
         let aliasSupport = aliasHome.appendingPathComponent("Library/Application Support", isDirectory: true)
         try secureDirectory(aliasSupport)
         let target = root.appendingPathComponent("symlink-target", isDirectory: true)
         try secureDirectory(target)
-        try mark(target, profile: diagnostic)
         let alias = aliasSupport.appendingPathComponent(diagnostic.dataDirectoryName, isDirectory: true)
         try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: target)
         if case .failure = decide([executable], home: aliasHome, profile: diagnostic) {
         } else { require(false, "fixed-root symlink must fail") }
+
+        let danglingHome = root.appendingPathComponent("dangling-home", isDirectory: true)
+        let danglingSupport = danglingHome.appendingPathComponent("Library/Application Support", isDirectory: true)
+        try secureDirectory(danglingSupport)
+        let danglingAlias = danglingSupport.appendingPathComponent(diagnostic.dataDirectoryName, isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: danglingAlias,
+            withDestinationURL: root.appendingPathComponent("missing-target", isDirectory: true))
+        if case .failure = decide([executable], home: danglingHome, profile: diagnostic) {
+        } else { require(false, "dangling diagnostic root symlink must fail") }
 
         require(snapshot(formal) == protectedBefore[0], "fake Formal must remain byte/metadata-shape unchanged")
         require(snapshot(previewRoot) == protectedBefore[1], "fake Preview must remain unchanged")

@@ -22,10 +22,8 @@ struct WiseReaderMain {
         }
         let instanceLock: NativeInstanceLock
         do {
-            if profile.flavor != .diagnostic {
-                try FileManager.default.createDirectory(at: configuration.dataDirectory,
-                    withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            }
+            try FileManager.default.createDirectory(at: configuration.dataDirectory,
+                withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             instanceLock = try NativeInstanceLock.acquire(directory: configuration.dataDirectory)
         } catch NativeInstanceLockError.alreadyRunning {
             FileHandle.standardError.write(Data("This EasySink data root is already open.\n".utf8))

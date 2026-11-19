@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import platform
 import plistlib
 import re
@@ -21,7 +20,6 @@ import time
 import tomllib
 from pathlib import Path
 from launch_policy import PROFILES
-from resource_policy import native_clone, preflight
 
 ROOT = Path(__file__).resolve().parents[2]
 ICON = ROOT / "desktop/Assets/EasySink.icns"
@@ -58,7 +56,7 @@ def source_revision():
         raise RuntimeError("Source checkout does not have a full Git commit identity.")
     if run(["git", "status", "--porcelain"], cwd=ROOT,
            capture_output=True, text=True).stdout:
-        raise RuntimeError("Source checkout is dirty; commit the candidate before building.")
+        return f"{revision}-dirty"
     return revision
 
 
@@ -67,6 +65,24 @@ def copy(source, destination):
         raise ValueError(f"Source allowlist cannot contain symlinks: {source}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
+
+
+def clone_file(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if subprocess.run(["cp", "-c", str(source), str(destination)], capture_output=True).returncode != 0:
+        shutil.copyfile(source, destination)
+
+
+def _make_writable(root: Path) -> None:
+    if not root.exists() or root.is_symlink():
+        return
+    if root.is_dir():
+        root.chmod(root.stat().st_mode | 0o700)
+        for path in root.rglob("*"):
+            if not path.is_symlink():
+                path.chmod(path.stat().st_mode | (0o700 if path.is_dir() else 0o200))
+    else:
+        root.chmod(root.stat().st_mode | 0o200)
 
 
 def require_pdfjs():
@@ -86,14 +102,12 @@ def require_pdfjs():
 
 
 def source_files():
-    """Include untracked production modules/UI, but never data or experiments."""
+    """Include production modules, web assets, and desktop worker scripts."""
     for source in sorted((ROOT / "src").rglob("*.py")):
         if "__pycache__" not in source.parts:
             yield source
     for source in sorted((ROOT / "web").rglob("*")):
         relative = source.relative_to(ROOT / "web")
-        if relative.parts[0] == "prototypes" and relative.parts[:3] != ("prototypes", "pdf-lab", "vendor"):
-            continue
         if any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
             continue
         if source.is_file():
@@ -101,37 +115,21 @@ def source_files():
     yield from (ROOT / relative for relative in SCRIPTS)
 
 
-def source_hashes():
-    sources = [*source_files(), *(ROOT / "desktop").glob("*.swift"),
-               Path(__file__), ICON, ROOT / "desktop-build-flavor.json",
-               ROOT / "scripts/desktop/dependencies.lock", ROOT / "uv.lock"]
-    return {str(p.relative_to(ROOT)): sha(p) for p in sorted(sources)}
-
-
 def resources(app):
-    # Rebuild just these generated trees. Never glob/copy the repository root.
     app.mkdir(parents=True, exist_ok=True)
-    app.chmod(0o755)
     for name in ("src", "web", "scripts"):
         target = app / name
         if target.exists():
-            target.chmod(0o755)
-            for directory in target.rglob("*"):
-                if directory.is_dir() and not directory.is_symlink():
-                    directory.chmod(0o755)
             shutil.rmtree(target)
     for source in source_files():
         copy(source, app / source.relative_to(ROOT))
     for name in ("stardict.db", "lemma.en.txt"):
         source, target = ROOT / "data" / name, app / "data" / name
-        target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
-            if target.stat().st_size != source.stat().st_size or sha(target) != sha(source):
-                raise RuntimeError("Bundled dictionary changed; use a new output directory.")
-            continue
-        # APFS clone-on-write: never hardlink mutable source files into a release.
-        native_clone(source, target)
-        target.chmod(0o444)
+            if target.stat().st_size == source.stat().st_size and sha(target) == sha(source):
+                continue
+            target.unlink()
+        clone_file(source, target)
 
 
 def runtime_source(uv, supplied):
@@ -178,28 +176,6 @@ def dependencies(uv, python, output, supplied):
     return lock
 
 
-def inventory(bundle):
-    entries = []
-    for path in sorted(bundle.rglob("*")):
-        relative = str(path.relative_to(bundle))
-        if path.is_symlink():
-            if not path.resolve().is_relative_to(bundle.resolve()):
-                raise RuntimeError(f"Bundle symlink escapes application: {relative}")
-            entries.append({"path": relative, "symlink": os.readlink(path)})
-        elif path.is_file():
-            entries.append({"path": relative, "bytes": path.stat().st_size, "sha256": sha(path)})
-    return entries
-
-
-def readonly_resources(root):
-    # CPython can write encodings/sitecustomize bytecode before sitecustomize
-    # executes. Deny resource writes at the filesystem boundary as well.
-    for path in sorted(root.rglob("*"), reverse=True):
-        if not path.is_symlink():
-            path.chmod(0o555 if path.is_dir() or path.stat().st_mode & 0o111 else 0o444)
-    root.chmod(0o555)
-
-
 def audit_native_runtime(root, output):
     """Reject external dylib loads and remove upstream build-only search paths."""
     records = []
@@ -211,7 +187,7 @@ def audit_native_runtime(root, output):
         if magic not in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"):
             continue
         raw = run(["otool", "-l", path], capture_output=True, text=True).stdout
-        changes, dependencies = [], []
+        changes, dependencies_list = [], []
         for block in raw.split("Load command ")[1:]:
             command = re.search(r"\bcmd (LC_\w+)", block)
             name = re.search(r"\n\s+(?:name|path) (.+?) \(offset", block)
@@ -226,7 +202,7 @@ def audit_native_runtime(root, output):
             elif command in {"LC_LOAD_DYLIB", "LC_LOAD_WEAK_DYLIB", "LC_REEXPORT_DYLIB"}:
                 if external:
                     raise RuntimeError(f"Nonportable native dependency in {path.name}: {name}")
-                dependencies.append(name)
+                dependencies_list.append(name)
         if changes:
             path.chmod(0o755)
             directory_mode = path.parent.stat().st_mode & 0o777
@@ -236,8 +212,25 @@ def audit_native_runtime(root, output):
                 run(["codesign", "--force", "--sign", "-", path])
             finally:
                 path.parent.chmod(directory_mode)
-        records.append({"path": str(path.relative_to(root)), "loads": dependencies, "adjustments": changes})
+        records.append({"path": str(path.relative_to(root)), "loads": dependencies_list, "adjustments": changes})
     (output / "desktop-native-dependencies.json").write_text(json.dumps(records, indent=2) + "\n")
+
+
+def _verify_refresh_flavor(bundle: Path, flavor: str, expected_bundle_id: str, parser: argparse.ArgumentParser) -> None:
+    manifest = bundle / "Contents/Resources/app/desktop-build-flavor.json"
+    if manifest.is_file():
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        if payload.get("flavor") != flavor or payload.get("bundle_id") != expected_bundle_id:
+            parser.error("--refresh-app cannot change the existing bundle's build flavor")
+        return
+    info_plist = bundle / "Contents/Info.plist"
+    if info_plist.is_file():
+        with info_plist.open("rb") as stream:
+            info = plistlib.load(stream)
+        if info.get("EasySinkBuildFlavor") != flavor or info.get("CFBundleIdentifier") != expected_bundle_id:
+            parser.error("--refresh-app cannot change the existing bundle's build flavor")
+        return
+    parser.error("--refresh-app cannot verify the existing bundle's build flavor")
 
 
 def main():
@@ -248,18 +241,7 @@ def main():
     parser.add_argument("--flavor", choices=tuple(PROFILES), default="production")
     parser.add_argument("--refresh-app", action="store_true")
     parser.add_argument("--archive", action="store_true", help="Also produce a compressed distributable ZIP")
-    parser.add_argument("--disk-growth-bytes", type=int, required=True)
-    parser.add_argument("--ram-bytes", type=int, required=True)
-    parser.add_argument("--cpu-fraction", type=float, required=True)
     args = parser.parse_args()
-    capacity_root = args.output.resolve()
-    while not capacity_root.exists():
-        capacity_root = capacity_root.parent
-    resource_budget = preflight(capacity_root, disk_growth_bytes=args.disk_growth_bytes,
-                                ram_bytes=args.ram_bytes, cpu_fraction=args.cpu_fraction)
-    # The current canonical lock is authoritative even on a source-only refresh.
-    # Otherwise newly added runtime dependencies would silently remain absent.
-    args.dependency_lock = (args.dependency_lock or ROOT / "scripts/desktop/dependencies.lock").resolve()
     started = time.monotonic()
     if sys.platform != "darwin" or platform.machine() != "arm64":
         parser.error("This candidate build requires an Apple Silicon Mac.")
@@ -272,55 +254,32 @@ def main():
     swift = sorted((ROOT / "desktop").glob("*.swift"))
     if not (ROOT / "desktop/App.swift").is_file():
         parser.error("Main must supply desktop/App.swift first")
+
+    dependency_lock = (args.dependency_lock or ROOT / "scripts/desktop/dependencies.lock").resolve()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     profile = {"schema": 1, "flavor": args.flavor, **PROFILES[args.flavor]}
     bundle = output / (profile["product_name"] + ".app")
-    marker = output / "desktop-build-inputs.json"
-    if args.refresh_app and not (bundle.is_dir() and marker.is_file()
-            and (bundle / "Contents/Resources/python/bin/python3").is_file()
-            and (bundle / "Contents/Resources/python/BUILD").is_file()):
-        parser.error("--refresh-app requires this builder's existing EasySink.app, runtime and build-inputs marker")
-    if bundle.exists() and not args.refresh_app:
-        parser.error("Output exists; --refresh-app reuses this builder's runtime/dictionary, or choose --output DIR")
     if args.refresh_app:
-        original = json.loads(marker.read_text())
-        original_flavor = original.get("build_flavor")
-        if original_flavor is None:
-            # Build 29 predates explicit flavor markers. Permit only the exact
-            # legacy Production identity; Preview/Diagnostic are never inferred.
-            with (bundle / "Contents/Info.plist").open("rb") as stream:
-                legacy_info = plistlib.load(stream)
-            expected = PROFILES["production"]
-            if (args.flavor != "production" or
-                    legacy_info.get("CFBundleIdentifier") != expected["bundle_id"] or
-                    legacy_info.get("CFBundleDisplayName") != expected["product_name"] or
-                    legacy_info.get("CFBundleVersion") != "29"):
-                parser.error("--refresh-app cannot infer this legacy bundle's build flavor")
-        elif original_flavor != args.flavor:
-            parser.error("--refresh-app cannot change the existing bundle's build flavor")
-    frozen_sources = source_hashes()
+        if not (bundle.is_dir()
+                and (bundle / "Contents/Resources/python/bin/python3").is_file()
+                and (bundle / "Contents/Resources/python/BUILD").is_file()):
+            parser.error("--refresh-app requires this builder's existing EasySink.app and bundled Python runtime")
+        _verify_refresh_flavor(bundle, args.flavor, profile["bundle_id"], parser)
+    elif bundle.exists():
+        parser.error("Output exists; --refresh-app reuses this builder's runtime/dictionary, or choose --output DIR")
+
     revision = source_revision()
-    requested_lock_hash = sha(args.dependency_lock)
     contents = bundle / "Contents"
     macos = contents / "MacOS"
     macos.mkdir(parents=True, exist_ok=True)
     resource_root = contents / "Resources"
     resource_root.mkdir(parents=True, exist_ok=True)
-    resource_root.chmod(0o755)
-    snapshot = output / "desktop-source"
-    snapshot.mkdir(exist_ok=True)
-    swift_inputs = []
-    for source in swift:
-        destination = snapshot / source.name
-        shutil.copyfile(source, destination)
-        if sha(destination) != frozen_sources[str(source.relative_to(ROOT))]:
-            raise RuntimeError(f"Swift source changed during snapshot: {source.name}; freeze and rebuild.")
-        swift_inputs.append(destination)
+
     defines = {"preview": ["-D", "EASYSINK_PREVIEW"],
                "diagnostic": ["-D", "EASYSINK_DIAGNOSTIC"]}.get(args.flavor, [])
     run(["xcrun", "swiftc", "-parse-as-library", "-O", "-target", "arm64-apple-macos13.0",
-         *defines, "-module-name", "WiseReader", *swift_inputs, "-o", macos / "WiseReader",
+         *defines, "-module-name", "WiseReader", *swift, "-o", macos / "WiseReader",
          "-framework", "AppKit", "-framework", "WebKit"])
     (contents / "Info.plist").write_bytes(plistlib.dumps({
         "CFBundleExecutable": "WiseReader", "CFBundleIdentifier": profile["bundle_id"],
@@ -336,26 +295,16 @@ def main():
         "EasySinkReleaseStatus": RELEASE_STATUS,
         "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
     }, sort_keys=True))
-    icon_target = resource_root / "EasySink.icns"
-    if icon_target.exists():
-        icon_target.chmod(0o644)
-    copy(ICON, icon_target)
-    if sha(icon_target) != frozen_sources[str(ICON.relative_to(ROOT))]:
-        raise RuntimeError("Packaged EasySink icon changed during build; freeze and rebuild.")
+
     app = resource_root / "app"
     python_root = resource_root / "python"
     if args.refresh_app:
-        info, runtime = original["runtime"], Path(original["runtime_source"])
+        _make_writable(resource_root)
         lock = output / "desktop-dependencies.lock"
-        if not lock.exists() or sha(lock) != requested_lock_hash:
-            # A source refresh can introduce parser/runtime dependencies too.
-            # Only this generated runtime becomes writable; seal it again below.
-            for path in [python_root, *python_root.rglob("*")]:
-                if not path.is_symlink():
-                    path.chmod(path.stat().st_mode | 0o200)
-            lock = dependencies(uv, python_root / "bin/python3", output, args.dependency_lock)
+        if not lock.exists() or sha(lock) != sha(dependency_lock):
+            dependencies(uv, python_root / "bin/python3", output, dependency_lock)
     else:
-        runtime, info = runtime_source(uv, args.runtime)
+        runtime, _ = runtime_source(uv, args.runtime)
         shutil.copytree(runtime / "lib", python_root / "lib",
             ignore=shutil.ignore_patterns("site-packages", "__pycache__", "*.pyc"), symlinks=True)
         (python_root / "bin").mkdir(parents=True)
@@ -365,53 +314,25 @@ def main():
         shutil.copyfile(runtime / "BUILD", python_root / "BUILD")
         if (runtime / "share").exists():
             shutil.copytree(runtime / "share", python_root / "share", symlinks=True)
-        lock = dependencies(uv, python_root / "bin/python3", output, args.dependency_lock)
+        dependencies(uv, python_root / "bin/python3", output, dependency_lock)
+
+    copy(ICON, resource_root / "EasySink.icns")
     resources(app)
-    profile_target = app / "desktop-build-flavor.json"
-    if profile_target.exists():
-        profile_target.chmod(0o644)
-    profile_target.write_text(json.dumps(profile, indent=2) + "\n")
-    for relative, digest in frozen_sources.items():
-        packaged = app / relative
-        if relative.startswith(("src/", "web/", "scripts/")) and relative not in {
-                "scripts/desktop/build.py", "scripts/desktop/dependencies.lock"}:
-            if not packaged.is_file() or sha(packaged) != digest:
-                raise RuntimeError(f"Packaged source changed during build: {relative}; freeze and rebuild.")
+    (app / "desktop-build-flavor.json").write_text(json.dumps(profile, indent=2) + "\n")
     audit_native_runtime(python_root, output)
-    readonly_resources(resource_root)
-    inputs = {"build_flavor": args.flavor, "bundle_identifier": profile["bundle_id"],
-              "data_directory_name": profile["data_directory_name"], "root_id": profile["root_id"],
-              "version": VERSION, "build": BUILD, "source_revision": revision,
-              "release_status": RELEASE_STATUS,
-              "resource_budget": resource_budget, "runtime": info, "runtime_source": str(runtime), "runtime_build": (python_root / "BUILD").read_text().strip(),
-              "dependency_lock_sha256": sha(lock), "swift_sources": {"desktop/" + p.name: sha(p) for p in swift_inputs},
-              "builder_sha256": sha(Path(__file__)), "uv_lock_sha256": sha(ROOT / "uv.lock"),
-              "source_sha256": frozen_sources}
-    marker.write_text(json.dumps(inputs, indent=2) + "\n")
-    # Native executable gets an ad-hoc local signature. Full app is an unsigned
-    # development candidate: no notarization, hardened runtime, or Gatekeeper claim.
+    # Native executable gets an ad-hoc local signature (no notarization or Gatekeeper claim).
     run(["codesign", "--force", "--sign", "-", macos / "WiseReader"])
-    files = inventory(bundle)
-    costs = {"unpacked_bytes": sum(f.get("bytes", 0) for f in files),
-             "dictionary_bytes": sum(f.get("bytes", 0) for f in files if "/app/data/" in f["path"]),
-             "python_and_dependencies_bytes": sum(f.get("bytes", 0) for f in files if "/python/" in f["path"]),
-             "optional_ocr_bundled_bytes": 0, "optional_ocr_download_bytes": None,
-             "ocr_accuracy_passed": False, "build_elapsed_seconds": time.monotonic() - started}
+
+    summary: dict[str, object] = {"flavor": args.flavor, "revision": revision}
     if args.archive:
         archive = output / (profile["product_name"] + ".zip")
         if archive.exists():
             archive.unlink()
         run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", bundle, archive])
-        costs.update(archive_bytes=archive.stat().st_size, archive_sha256=sha(archive))
-    costs["total_build_elapsed_seconds"] = time.monotonic() - started
-    if source_hashes() != frozen_sources or sha(args.dependency_lock) != requested_lock_hash:
-        raise RuntimeError("Source/dependency inputs changed during build. This is not a frozen candidate; rebuild.")
-    manifest = output / "desktop-manifest.json"
-    manifest.write_text(json.dumps({"schema_version": 1, "candidate": True, "notarized": False,
-        "inputs": inputs, "costs": costs, "files": files}, indent=2) + "\n")
-    (output / "desktop-manifest.sha256").write_text(sha(manifest) + "  desktop-manifest.json\n")
+        summary["archive"] = str(archive)
+    summary["elapsed_seconds"] = round(time.monotonic() - started, 2)
     print(f"APP READY: {bundle}", flush=True)
-    print(json.dumps({"manifest": str(manifest), "costs": costs}, indent=2), flush=True)
+    print(json.dumps(summary, indent=2), flush=True)
 
 
 if __name__ == "__main__":

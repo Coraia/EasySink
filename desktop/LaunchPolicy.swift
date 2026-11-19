@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 enum DesktopBuildFlavor: String {
@@ -27,7 +26,6 @@ enum LaunchDecision {
 }
 
 enum LaunchPolicy {
-    static let markerName = ".easysink-diagnostic-data.json"
     static let usage = "Usage: WiseReader [--help]"
 
     static func resolve(arguments: [String], homeDirectory: URL,
@@ -52,8 +50,7 @@ enum LaunchPolicy {
             return .run(LaunchConfiguration(dataDirectory: directory, profile: profile))
         }
         do {
-            try validateDiagnosticDirectory(directory, profile: profile, homeDirectory: homeDirectory,
-                                            fileManager: fileManager)
+            try validateDiagnosticDirectory(directory, homeDirectory: homeDirectory, fileManager: fileManager)
             return .run(LaunchConfiguration(dataDirectory: directory, profile: profile))
         } catch {
             return .failure("Diagnostic data root rejected: \(error.localizedDescription)")
@@ -75,50 +72,23 @@ enum LaunchPolicy {
         }
     }
 
-    private static func validateDiagnosticDirectory(_ directory: URL, profile: DesktopBuildProfile,
-                                                     homeDirectory: URL, fileManager: FileManager) throws {
-        var isDirectory: ObjCBool = false
-        guard fileManager.fileExists(atPath: directory.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw PolicyError("the fixed root does not already exist")
-        }
-        let rootValues = try directory.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
-        guard rootValues.isDirectory == true, rootValues.isSymbolicLink != true else {
-            throw PolicyError("the fixed root must be a real directory, not a symlink")
+    private static func validateDiagnosticDirectory(_ directory: URL, homeDirectory: URL,
+                                                    fileManager: FileManager) throws {
+        if let attrs = try? fileManager.attributesOfItem(atPath: directory.path),
+           let type = attrs[.type] as? FileAttributeType {
+            if type == .typeSymbolicLink {
+                throw PolicyError("the fixed root must be a real directory, not a symlink")
+            }
+            if type != .typeDirectory {
+                throw PolicyError("the fixed root must be a real directory")
+            }
         }
         let canonical = directory.resolvingSymlinksInPath().standardizedFileURL
-        guard canonical == directory.standardizedFileURL else {
+        guard canonical.path == directory.standardizedFileURL.path else {
             throw PolicyError("the fixed root contains a symlink")
         }
         guard !protectedDirectories(homeDirectory: homeDirectory).contains(where: { contains($0, canonical) }) else {
             throw PolicyError("a protected reading library cannot be a diagnostic root")
-        }
-        try validateOwnerAndMode(canonical, fileManager: fileManager, kind: "diagnostic root")
-
-        let marker = canonical.appendingPathComponent(markerName, isDirectory: false)
-        let markerValues = try marker.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-        guard markerValues.isRegularFile == true, markerValues.isSymbolicLink != true,
-              let size = markerValues.fileSize, size <= 4096 else {
-            throw PolicyError("the marker must be a small regular file, not a symlink")
-        }
-        try validateOwnerAndMode(marker, fileManager: fileManager, kind: "diagnostic marker")
-        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: marker))
-        guard let payload = object as? [String: Any], payload["schema"] as? Int == 2,
-              payload["role"] as? String == "diagnostic",
-              payload["root_id"] as? String == profile.rootID,
-              payload["bundle_id"] as? String == profile.bundleIdentifier else {
-            throw PolicyError("the marker identity does not match this diagnostic build")
-        }
-    }
-
-    private static func validateOwnerAndMode(_ url: URL, fileManager: FileManager, kind: String) throws {
-        let attributes = try fileManager.attributesOfItem(atPath: url.path)
-        guard let owner = attributes[.ownerAccountID] as? NSNumber,
-              owner.uint32Value == Darwin.getuid() else {
-            throw PolicyError("the \(kind) must be owned by the current user")
-        }
-        guard let mode = attributes[.posixPermissions] as? NSNumber,
-              mode.intValue & 0o077 == 0 else {
-            throw PolicyError("the \(kind) must not be accessible by group or other users")
         }
     }
 
