@@ -26,13 +26,18 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
     if (update) publish();
   }
   function allowed(pages = ctx.reader?.pages) {
-    return Boolean(pages && ctx.reader === pages.r && pages.canGrab(true) &&
+    return Boolean(pages && ctx.reader === pages.r && pages.canGrab(true, { allowOpenCard: true }) &&
       !pages.r.scope.signal.aborted && document.hasFocus() && !document.hidden &&
       !document.activeElement?.closest('input,textarea,select,[contenteditable]'));
   }
-  function inPaper(target) {
+  function inPaper(target, horizontal = false) {
     if (!(target instanceof Element)) return false;
-    if (target.closest('.annotation-pop')) return false;
+    const card = target.closest('.annotation-pop');
+    if (card) {
+      // A word card is scrollable assistance, not a modal. Keep vertical card
+      // scrolling, but let a deliberate horizontal gesture turn the paper.
+      return horizontal && !target.closest('a,button,input,textarea,select,[contenteditable]');
+    }
     if (!target.closest('#reading-stage')) return false;
     return !target.closest('a,input,textarea,select,[contenteditable],#reading-selection,#translation-pane,.inline-grammar,#tool-panel,#reader-chrome') &&
       (!target.closest('button') || Boolean(target.closest('.reading-edge-grip')));
@@ -110,7 +115,7 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
     bind(pages.r);
     const direction = Math.sign(x), waiting = pages.animating || pending.length > 0;
     if (pending.length >= 8) { cancel('queue-overflow'); pages.r.status('翻页暂时繁忙，请重试'); return; }
-    const session = waiting ? null : pages.beginTurn(direction, clientY);
+    const session = waiting ? null : pages.beginTurn(direction, clientY, false, { allowOpenCard: true });
     const leaf = document.querySelector('#article .page-leaf').getBoundingClientRect();
     const article = document.getElementById('article'), leaves = [...article.children];
     const gap = pages.count === 2 ? leaves[1].getBoundingClientRect().left - leaves[0].getBoundingClientRect().right : 0;
@@ -138,7 +143,7 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
         g.session.release(g.complete, reason, { inputAt: g.lastAt });
       } else {
         idle(g.pages);
-        if (g.complete) Promise.resolve(g.pages.adjacent(g.direction)).catch(e => {
+        if (g.complete) Promise.resolve(g.pages.adjacent(g.direction, 'tap', { allowOpenCard: true })).catch(e => {
           if (!g.pages.r.scope.signal.aborted) g.pages.r.status(e.message);
         });
       }
@@ -198,7 +203,7 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
     if (!g || g.pages.animating) return;
     if (!allowed(g.pages)) { cancel('queued-interaction'); return; }
     pending.shift(); g.waiting = false;
-    g.session = g.pages.beginTurn(g.direction, g.clientY);
+    g.session = g.pages.beginTurn(g.direction, g.clientY, false, { allowOpenCard: true });
     if (g.session) flight = g;
     draw(g, performance.now());
     if (g.ended) {
@@ -206,7 +211,7 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
         if (g.complete) g.session.prefetchNext?.();
         g.session.release(g.complete, 'native-queued-ended', { inputAt: g.lastAt });
       }
-      else { idle(g.pages); if (g.complete) g.pages.adjacent(g.direction); }
+      else { idle(g.pages); if (g.complete) g.pages.adjacent(g.direction, 'tap', { allowOpenCard: true }); }
     }
   }
   function receiveDesktop(event) {
@@ -225,8 +230,9 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
         !Number.isInteger(e.phase) || e.phase < 0 || e.phase > 63 ||
         !Number.isInteger(e.momentum) || e.momentum < 0 || e.momentum > 63 ||
         !(e.phase || e.momentum)) return;
+    const horizontal = Boolean(active) || Boolean((e.phase & 1) && e.dx === 0 && e.dy === 0) || Math.abs(e.dx) > Math.abs(e.dy);
     if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.buttons || !allowed() ||
-        !inPaper(document.elementFromPoint(e.clientX, e.clientY))) {
+        !inPaper(document.elementFromPoint(e.clientX, e.clientY), horizontal)) {
       over = false; cancel('desktop-interaction-blocked'); return;
     }
     clientY = e.clientY; over = true;
@@ -242,7 +248,8 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
   }, options);
   document.addEventListener('wheel', e => {
     if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.buttons) { cancel('other-input'); return; }
-    if (!inPaper(e.target) || !allowed()) { over = false; cancel('interaction-blocked'); return; }
+    const horizontal = Boolean(active) || Math.abs(e.deltaX) > Math.abs(e.deltaY);
+    if (!inPaper(e.target, horizontal) || !allowed()) { over = false; cancel('interaction-blocked'); return; }
     clientY = e.clientY; over = true; gate();
     // Only horizontal page input is owned. Vertical scrolling and word cards survive.
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || active) {

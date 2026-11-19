@@ -120,7 +120,7 @@ export class ReadingPages {
       this.annotationLayout = null;
       this.wordReflow?.dispose();
     }
-    this.r.interaction.syncPhase();
+    this.r.interaction?.syncPhase();
     for (const finish of [...(this.stableWaiters || [])]) finish(false);
     return this.layoutEpoch;
   }
@@ -149,11 +149,11 @@ export class ReadingPages {
       landed.leaf?.isConnected && landed.leaf.parentElement===landed.article && !this.canonicalDirty && !this.r.scope.signal.aborted);
   }
   markStable() {
-    if (!this.r.interaction.isSettled()) {
-      this.r.interaction.syncPhase();
+    if (!this.r.interaction?.isSettled()) {
+      this.r.interaction?.syncPhase();
       return;
     }
-    this.r.interaction.syncPhase();
+    this.r.interaction?.syncPhase();
     this.lastViewAnchor = this.r.captureView?.().visibleAnchor || null;
     for (const finish of [...(this.stableWaiters || [])]) finish(true);
     return true;
@@ -516,11 +516,12 @@ export class ReadingPages {
     }
     if(page.length)yield page;
   }
-  async adjacent(direction, reason = "tap") {
-    if(this.r.popElement)return;
+  async adjacent(direction, reason = "tap", { allowOpenCard = false } = {}) {
+    if (!allowOpenCard && this.r.popElement) return;
+    if (allowOpenCard && this.r.popElement) this.r.closePop();
     const intent=this.navigation;
     if (this.wordReflow.pendingLayout || this.wordReflow.flushing) await this.wordReflow.flush();
-    if(this.r.scope.signal.aborted || this.r.popElement || intent!==this.navigation)return;
+    if (this.r.scope.signal.aborted || (!allowOpenCard && this.r.popElement) || intent !== this.navigation) return;
     if (this.r.focus.isOpen() || this.animating || this.displayPending) return;
     const presentationOutside=this.presentationOutside(direction);
     const target = presentationOutside!==null ? this.index+direction*this.count : this.index > 0
@@ -530,7 +531,7 @@ export class ReadingPages {
       const next = this.neighbor(direction);
       if (next) {
         const rect = $("#article").getBoundingClientRect();
-        const session = this.beginTurn(direction, rect.top + rect.height * 0.68, true);
+        const session = this.beginTurn(direction, rect.top + rect.height * 0.68, true, { allowOpenCard });
         if (reason.startsWith("keyboard-")) session?.prefetchNext();
         session?.release(true, reason);
       } else this.r.status(this.r.doc.chapter
@@ -538,7 +539,7 @@ export class ReadingPages {
         : direction > 0 ? "已到本篇末尾" : "已到本篇开头");
       return;
     }
-    return this.turn(Math.max(0, target), true, reason);
+    return this.turn(Math.max(0, target), true, reason, { allowOpenCard });
   }
   accelerateTurn(direction, reason = "keyboard-held") {
     if(this.r.popElement)return false;
@@ -1265,9 +1266,9 @@ export class ReadingPages {
   lightEnabled() {
     return local.get("page-light", true);
   }
-  canGrab(ownPreview = false) {
+  canGrab(ownPreview = false, { allowOpenCard = false } = {}) {
     // Word-card input belongs to the card until the reader closes it.
-    return this.r.interaction.canGrab({ ownPreview });
+    return this.r.interaction.canGrab({ ownPreview, allowOpenCard });
   }
   updateEdges() {
     const article = $("#article"),
@@ -1321,15 +1322,14 @@ export class ReadingPages {
       void this.wordReflow.flush({reconcile:true,anchor:this.r.captureView().visibleAnchor,ticket:this.captureLayoutTicket()});
     return true;
   }
-  beginTurn(direction, clientY, force = false) {
-    // Forced button/keyboard entry must obey the same word-card boundary.
-    if(this.r.scope.signal.aborted || this.r.popElement)return null;
+  beginTurn(direction, clientY, force = false, { allowOpenCard = false } = {}) {
+    if (this.r.scope.signal.aborted || (!allowOpenCard && this.r.popElement)) return null;
     // A canonical reflow that already owns the document must finish first.
     // Pending (not-yet-started) work is safe: this turn freezes the current
     // presentation and either disposes it on commit or resumes it on cancel.
     if(this.wordReflow.flushing)return null;
     const setup = this.painter.collectPerformance ? { enteredAt: performance.now(), inputEvents: [] } : null;
-    if ((!force && !this.canGrab()) || this.animating || this.displayPending || this.painter.scene)
+    if ((!force && !this.canGrab(false, { allowOpenCard })) || this.animating || this.displayPending || this.painter.scene)
       return null;
     // A preview is reversible. Assistance expires only when a new view commits.
     const presented=this.presentationOutside(direction);
@@ -1375,9 +1375,12 @@ export class ReadingPages {
     });
     const turnPainter=this.painter,turnScene=turnPainter.scene;
     this.animating = true;
-    // The open-card guard has already passed; retire any pending lookup so
-    // its late response cannot open a card during this new turn.
+    // Close any open word card before starting the turn; wait one frame when a
+    // card was open so WebKit retires its compositor layer before attaching curl.
+    const hadOpenCard = Boolean(this.r.popElement);
     this.r.closePop();
+    const cardDismissed = hadOpenCard
+      ? new Promise(resolve => requestAnimationFrame(() => resolve())) : null;
     if (setup) {
       setup.previewCreatedAt = performance.now();
       this.painter.attachSetup = null;
@@ -1669,6 +1672,7 @@ export class ReadingPages {
       else if (!preview.raf) preview.raf = requestAnimationFrame(draw);
     };
     const prepare = async (source, index) => {
+      if (cardDismissed) await cardDismissed;
       if (!canAttach()) return;
       if (setup) setup.incomingStartedAt = performance.now();
       const frontIndex = currentSource.index + (direction > 0 ? this.count - 1 : 0),
@@ -1736,11 +1740,12 @@ export class ReadingPages {
     } else prepare(this, target);
     return session;
   }
-  async turn(index, animate = false, reason = "tap") {
-    if(this.r.popElement)return;
+  async turn(index, animate = false, reason = "tap", { allowOpenCard = false } = {}) {
+    if (!allowOpenCard && this.r.popElement) return;
+    if (allowOpenCard && this.r.popElement) this.r.closePop();
     const intent=this.navigation;
     if (this.wordReflow.pendingLayout || this.wordReflow.flushing) await this.wordReflow.flush();
-    if(this.r.scope.signal.aborted || this.r.popElement || intent!==this.navigation)return;
+    if (this.r.scope.signal.aborted || (!allowOpenCard && this.r.popElement) || intent !== this.navigation) return;
     if (
       this.displayPending ||
       this.animating ||
@@ -1755,12 +1760,12 @@ export class ReadingPages {
       if (
         navigation !== this.navigation ||
         generation !== this.generation ||
-        this.r.popElement ||
+        (!allowOpenCard && this.r.popElement) ||
         this.r.scope.signal.aborted
       )
         return;
     }
-    if ((index >= this.pages.length && !this.annotationLayout && !this.presentedView) || this.r.popElement || this.r.scope.signal.aborted) return;
+    if ((index >= this.pages.length && !this.annotationLayout && !this.presentedView) || (!allowOpenCard && this.r.popElement) || this.r.scope.signal.aborted) return;
     if (
       animate &&
       Math.abs(index - this.index) === this.count &&
@@ -1771,13 +1776,14 @@ export class ReadingPages {
           Math.sign(index - this.index),
           rect.top + rect.height * 0.68,
           true,
+          { allowOpenCard },
         );
       if (reason.startsWith("keyboard-")) session?.prefetchNext();
       session?.release(true, reason);
     } else {
       if(this.annotationLayout || this.presentedView) {
         const source=await this.preparePresentation(Math.sign(index-this.index));
-        if(source && navigation===this.navigation && generation===this.generation && !this.r.popElement && !this.r.scope.signal.aborted)this.commitPresentation(source);
+        if(source && navigation===this.navigation && generation===this.generation && (allowOpenCard || !this.r.popElement) && !this.r.scope.signal.aborted)this.commitPresentation(source);
       }else this.commitPage(index);
     }
   }

@@ -59,7 +59,7 @@ export function installReadingTrackpad(ctx) {
         Promise.resolve()
           .then(() => {
             if (!g.reader.scope.signal.aborted && ctx.reader === g.reader)
-              return g.pages.adjacent(g.direction);
+              return g.pages.adjacent(g.direction, "wheel", { allowOpenCard: true });
           })
           .catch((err) => {
             if (!g.reader.scope.signal.aborted) {
@@ -122,20 +122,20 @@ export function installReadingTrackpad(ctx) {
       return;
     const g = pending[0];
     if (!g || g.pages !== pages) return;
-    if (!pages.canGrab()) {
+    if (!pages.canGrab(false, { allowOpenCard: true })) {
       cancel("queued-interaction");
       return;
     }
     pending.shift();
     g.root.dataset.trackpadQueue = String(pending.length);
     g.waiting = false;
-    g.session = pages.beginTurn(g.direction, g.clientY);
+    g.session = pages.beginTurn(g.direction, g.clientY, false, { allowOpenCard: true });
     if (g.session) flight = pages;
     paintModel(g, true);
     if (g.ended || active !== g) {
       coast(g);
       if (!g.session && g.progress >= 0.5 && !g.reversing)
-        Promise.resolve(pages.adjacent(g.direction)).catch(console.error);
+        Promise.resolve(pages.adjacent(g.direction, "wheel", { allowOpenCard: true })).catch(console.error);
     } else arm(g);
   }
   function bind(pages, root) {
@@ -186,11 +186,16 @@ export function installReadingTrackpad(ctx) {
       return;
     }
     const target = ev.target instanceof Element ? ev.target : null;
-    const inPaper = Boolean(target?.closest("#reading-stage")) && !target.closest(
-      "button, a, input, textarea, select, [contenteditable], #reading-selection, #translation-pane, .inline-grammar, .annotation-pop, #tool-panel, #reader-chrome",
-    );
-    if (!inPaper) {
-      // Card scrolling owns its own stream and must not seed a later page turn.
+    const inCard =
+      Boolean(target?.closest(".annotation-pop")) &&
+      !target.closest("button, a, input, textarea, select, [contenteditable]");
+    const inPaper =
+      Boolean(target?.closest("#reading-stage")) &&
+      !target.closest(
+        "button, a, input, textarea, select, [contenteditable], #reading-selection, #translation-pane, .inline-grammar, .annotation-pop, #tool-panel, #reader-chrome",
+      );
+    if (!inPaper && !inCard) {
+      // Panel scrolling owns its own stream and must not seed a later page turn.
       cancel("outside-paper");
       last = -Infinity;
       x = y = 0;
@@ -219,15 +224,16 @@ export function installReadingTrackpad(ctx) {
       else if (Math.abs(y) >= 12 && Math.abs(y) > Math.abs(x) * dominance)
         axis = "y";
     }
+    if (inCard && axis !== "x") return;
     const reader = ctx.reader,
       pages = reader?.pages;
     const ours = Boolean(
       pages?.preview &&
       (flight === pages || (active?.session && active.pages === pages)),
     );
-    if (!pages || !inPaper || ev.buttons || !pages.canGrab(ours)) {
+    if (!pages || (!inPaper && !inCard) || ev.buttons || !pages.canGrab(ours, { allowOpenCard: true })) {
       cancel("interaction-blocked");
-      if (axis === "x" && (inPaper || !reader)) ev.preventDefault();
+      if (axis === "x" && (inPaper || inCard || !reader)) ev.preventDefault();
       return;
     }
     if (axis !== "x") return;
@@ -246,7 +252,7 @@ export function installReadingTrackpad(ctx) {
       reader.status("翻页暂时繁忙，请重试");
       return;
     }
-    const session = waiting ? null : pages.beginTurn(direction, ev.clientY);
+    const session = waiting ? null : pages.beginTurn(direction, ev.clientY, false, { allowOpenCard: true });
     const g = (active = {
       reader,
       pages,
