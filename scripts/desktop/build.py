@@ -28,7 +28,7 @@ ICON = ROOT / "desktop/Assets/EasySink.icns"
 VERSION = "1.3.0"
 BUILD = "38"
 RELEASE_STATUS = "Word-card paging withdrawn; close card before turning. Build37 source-anchor safety retained; targeted validation only."
-PDFJS_ROOT = ROOT / "web/prototypes/pdf-lab/vendor/pdfjs-6.4.299"
+PDFJS_ROOT = ROOT / "web/vendor/pdfjs-6.4.299"
 PDFJS_MANIFEST = PDFJS_ROOT / "SOURCE.json"
 PDF_PINS = {
     "pdfplumber": "0.11.10", "pdfminer-six": "20260107", "pypdfium2": "5.14.0",

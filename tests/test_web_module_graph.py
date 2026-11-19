@@ -96,12 +96,12 @@ def test_production_web_relative_imports_and_pdfjs_resolve():
                 missing.append(f"{rel_src} escapes web/: {target}")
                 continue
 
+            if rel_target.parts and rel_target.parts[0] == "prototypes":
+                prototype_leaks.append(f"{rel_src} -> {rel_target}")
+
             if rel_src.as_posix() == "plugins/pdf.js" and "pdfjs-" in rel_target.as_posix():
                 pdfjs_dir = target
                 continue
-
-            if rel_target.parts and rel_target.parts[0] == "prototypes":
-                prototype_leaks.append(f"{rel_src} -> {rel_target}")
 
             if target.is_file() and target.suffix == ".js" and target not in visited:
                 queue.append(target)
@@ -109,5 +109,6 @@ def test_production_web_relative_imports_and_pdfjs_resolve():
     assert not missing, f"Broken production JS references: {missing}"
     assert not prototype_leaks, f"Production modules import from web/prototypes/: {prototype_leaks}"
     assert pdfjs_dir is not None and pdfjs_dir.is_dir(), "Missing PDFJS directory reference in web/plugins/pdf.js"
+    assert pdfjs_dir.relative_to(WEB_ROOT).parts[:2] == ("vendor", "pdfjs-6.4.299")
     assert (pdfjs_dir / "build" / "pdf.mjs").is_file()
     assert (pdfjs_dir / "build" / "pdf.worker.mjs").is_file()

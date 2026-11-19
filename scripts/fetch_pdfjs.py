@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VENDOR = ROOT / "web/prototypes/pdf-lab/vendor/pdfjs-6.4.299"
+VENDOR = ROOT / "web/vendor/pdfjs-6.4.299"
 MANIFEST = VENDOR / "SOURCE.json"
 
 

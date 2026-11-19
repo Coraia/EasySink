@@ -7,7 +7,7 @@ import { attachRegionPicker } from "../pdf-region-picker.js";
 import { mountPDFEnhancement } from "../pdf-enhancement.js";
 
 const PDFJS = new URL(
-  "../prototypes/pdf-lab/vendor/pdfjs-6.4.299/",
+  "../vendor/pdfjs-6.4.299/",
   import.meta.url,
 );
 const MAX_PIXELS = 16_000_000;
