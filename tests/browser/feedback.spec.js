@@ -132,6 +132,22 @@ test("retaining words is additive and undo restores prior feedback", async ({
   for (const target of ["phone", "morning"])
     await request.post("/api/feedback", { data: { target, verdict: "reset" } });
 });
+test("closing word card immediately after clicking retain still persists and renders the annotation", async ({
+  page,
+  request,
+}) => {
+  await request.patch("/api/profile", { data: { density: 2 } });
+  const d = await document(request);
+  await openReader(page, d.id);
+  await openWordCard(page, "phone");
+  await page.locator(".annotation-pop [data-retained]").click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".annotation-pop")).toHaveCount(0);
+  await expect(page.locator('[data-target="phone"]')).toHaveCount(1);
+  await page.reload();
+  await expect(page.locator('[data-target="phone"]')).toHaveCount(1);
+  await request.post("/api/feedback", { data: { target: "phone", verdict: "reset" } });
+});
 test("moderate and more assistance respond for the reported sample", async ({
   page,
   request,

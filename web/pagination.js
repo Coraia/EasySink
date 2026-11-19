@@ -114,13 +114,13 @@ export class ReadingPages {
   }
   invalidateLayout({geometry = false} = {}) {
     this.layoutEpoch = (this.layoutEpoch || 0) + 1;
-    this.stableEpoch = null;
     this.layoutComplete = false;
     if (geometry) {
       this.geometryEpoch = (this.geometryEpoch || 0) + 1;
       this.annotationLayout = null;
       this.wordReflow?.dispose();
     }
+    this.r.interaction.syncPhase();
     for (const finish of [...(this.stableWaiters || [])]) finish(false);
     return this.layoutEpoch;
   }
@@ -149,12 +149,11 @@ export class ReadingPages {
       landed.leaf?.isConnected && landed.leaf.parentElement===landed.article && !this.canonicalDirty && !this.r.scope.signal.aborted);
   }
   markStable() {
-    const word = this.wordReflow;
-    if (!this.layoutComplete || !this.complete || this.displayPending || this.r.restoring ||
-        this.animating || this.retainedLayoutPending || this.r.annotationRefreshPending || word?.pendingLayout || word?.flushing || word?.pendingCanonical ||
-        (word?.owner?.isConnected && ["preparing", "playing"].includes(word.owner.dataset.reflowPhase)) ||
-        this.r.scope.signal.aborted) return;
-    this.stableEpoch = this.layoutEpoch;
+    if (!this.r.interaction.isSettled()) {
+      this.r.interaction.syncPhase();
+      return;
+    }
+    this.r.interaction.syncPhase();
     this.lastViewAnchor = this.r.captureView?.().visibleAnchor || null;
     for (const finish of [...(this.stableWaiters || [])]) finish(true);
     return true;
@@ -274,7 +273,6 @@ export class ReadingPages {
     }
     delete $(".reader")?.dataset.pageTurning;
     clearTimeout(this.animationTimeout);
-    this.animationToken = (this.animationToken || 0) + 1;
     this.painter.finish();
     this.animating = false;
     this.markStable();
@@ -1269,19 +1267,7 @@ export class ReadingPages {
   }
   canGrab(ownPreview = false) {
     // Word-card input belongs to the card until the reader closes it.
-    return (
-      !this.r.scope.signal.aborted &&
-      !this.r.popElement &&
-      !this.r.focus.isOpen() &&
-      !this.r.aiSetupOpen &&
-      !this.r.grammarInspecting &&
-      !this.r.panelId &&
-      !document.querySelector("dialog[open]") &&
-      !$("#reading-stage").inert &&
-      $("#translation-pane").hidden &&
-      !this.displayPending &&
-      (!this.animating || ownPreview)
-    );
+    return this.r.interaction.canGrab({ ownPreview });
   }
   updateEdges() {
     const article = $("#article"),
@@ -1387,7 +1373,7 @@ export class ReadingPages {
       direction,
       boundaryWarm: Boolean(boundary && this.ranges.get(boundary.doc_id)?.packet),
     });
-    const turnRun=this.animationToken,turnPainter=this.painter,turnScene=turnPainter.scene;
+    const turnPainter=this.painter,turnScene=turnPainter.scene;
     this.animating = true;
     // The open-card guard has already passed; retire any pending lookup so
     // its late response cannot open a card during this new turn.
@@ -1402,7 +1388,6 @@ export class ReadingPages {
       !preview.cancelled &&
       token === this.navigation &&
       generation === this.generation &&
-      turnRun === this.animationToken &&
       !this.r.scope.signal.aborted;
     const canAttach = () => valid() && this.painter===turnPainter && turnPainter.scene===turnScene;
     const finalize = (complete, reason) => {

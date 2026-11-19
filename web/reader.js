@@ -2,6 +2,7 @@ import { actionIcon } from "./reading-action-icons.js";
 import { sameSelection } from "./source-selection.js";
 import { renderDictionaryCard } from "./dictionary-card.js";
 import { anchorFromDOMRange } from "./selection-range.js";
+import { ReaderInteraction } from "./reader-state.js";
 import { $, $$, e, api, Scope, local, toast, errorBox } from "./core.js";
 import { ReadingPages } from "./pagination.js?v=20261018-keyboard-paging-tuned";
 import { captureAnnotationLayout, updateAnnotationLayout, captureRetainedWordLayout, reconcileRetainedWordLayout } from "./annotation-layout.js";
@@ -19,7 +20,7 @@ export class Reader {
     this.scope = scope;
     this.doc = doc;
     this.sourceBlocks = handoff?.pages.r.sourceBlocks || doc.blocks;
-    this.generation = 0;
+    this.interaction = new ReaderInteraction(this);
     this.lookups = 0;
     this.panelScope = null;
     this.panelId = null;
@@ -314,7 +315,7 @@ export class Reader {
       .map((s, i) => (i % 2 ? `<mark class="search-hit">${e(s)}</mark>` : e(s)))
       .join("");
   }
-  draw({preserveLayout = false} = {}) {
+  draw({preserveLayout = false, signal = null} = {}) {
     const liveReflow = preserveLayout && this.pages.wordReflow.eligible();
     const retained = preserveLayout && !liveReflow ? captureRetainedWordLayout(this.pages) : null;
     const layout = preserveLayout && !liveReflow && !retained
@@ -327,7 +328,8 @@ export class Reader {
       : null;
     const prepared = this.handoff?.pages;
     const ready = retained ? reconcileRetainedWordLayout(this.pages, retained) : liveReflow ? this.pages.wordReflow.update().then(updated => {
-      if (!updated) return this.pages.reflow(this.pages.position(), {reason: "annotation"});
+      if (!updated && !signal?.aborted && !this.scope.signal.aborted)
+        return this.pages.reflow(this.pages.position(), {reason: "annotation"});
     }) : prepared && !this.handoff.adopted
       ? (this.handoff.adopted = true, this.pages.adopt(prepared))
       : this.pages.reflow(this.pages.position(), {reason: preserveLayout ? "annotation" : "source"});
@@ -349,16 +351,15 @@ export class Reader {
   async refresh(density, {pdfBackground = false, nextDocument = null, preserveLayout = false} = {}) {
     if (this.scope.signal.aborted) return;
     if (pdfBackground && (this.restoring || !this.pdfCanRefresh?.())) return false;
-    const generation = ++this.generation;
+    const refresh = this.interaction.beginRefresh();
     let anchor = this.position();
     let restoredPosition = false;
-    this.restoring = true;
     try {
       const doc = nextDocument || await api(
         `/documents/${this.doc.id}?compact=true${density !== undefined ? "&density=" + density : ""}`,
-        { signal: this.scope.signal },
+        { signal: refresh.signal },
       );
-      if (this.scope.signal.aborted || generation !== this.generation) return;
+      if (refresh.signal.aborted) return false;
       if (doc.id !== this.doc.id || (pdfBackground && !this.pdfCanRefresh?.())) return false;
       if (pdfBackground && doc.density !== this.doc.density) return false;
       if (pdfBackground && doc.pdf && anchor.pdf_source && doc.version !== this.doc.version) {
@@ -380,22 +381,29 @@ export class Reader {
       this.doc = doc;
       this.sourceBlocks = doc.blocks;
       const anchored = preserveLayout && this.pages.wordReflow.eligible();
-      await this.draw({preserveLayout});
+      await this.draw({preserveLayout, signal: refresh.signal});
       if (anchored && !this.popElement) await this.pages.wordReflow.flush({reconcile:true});
-      if (this.scope.signal.aborted || generation !== this.generation) return false;
-      if (!anchored) await this.restore(anchor, {automatic: true});
-      if (this.scope.signal.aborted || generation !== this.generation) return false;
+      if (refresh.signal.aborted) return false;
+      if (!anchored) await this.restore(anchor, {automatic: true, signal: refresh.signal});
+      if (refresh.signal.aborted) return false;
       restoredPosition = pdfBackground;
       return true;
+    } catch (err) {
+      if (err.name === "AbortError" && refresh.signal.aborted) return false;
+      throw err;
     } finally {
-      if (generation === this.generation)
+      if (refresh.signal.aborted) {
+        refresh.detach();
+      } else {
         requestAnimationFrame(() => {
-          if (!this.scope.signal.aborted && generation === this.generation) {
-            this.restoring = false;
+          refresh.detach();
+          if (!this.scope.signal.aborted && !refresh.signal.aborted) {
+            refresh.complete();
             this.pages.markStable();
             if (restoredPosition) this.emit("position");
           }
         });
+      }
     }
   }
   async density(value) {
@@ -547,7 +555,7 @@ export class Reader {
     this.popScope = null;
     this.popElement?.remove();
     this.popElement = null;
-    this.wordLookupGeneration = (this.wordLookupGeneration || 0) + 1;
+    this.interaction.cancelLookup();
     this.positionSelection?.();
     if (wasOpen) this.emit?.("reading-uncovered");
   }
@@ -556,7 +564,6 @@ export class Reader {
   }
   pop(el, custom) {
     this.closePop();
-    this.wordLookupGeneration = (this.wordLookupGeneration || 0) + 1;
     const selectionMenu = $("#reading-selection");
     if (selectionMenu) selectionMenu.hidden = true;
     const item = custom || this.annotations[+el.dataset.annotation];
@@ -707,14 +714,14 @@ export class Reader {
     $(".close", pop).focus({ preventScroll: true });
   }
   async lookup(word, el, anchor) {
-    const generation = this.wordLookupGeneration = (this.wordLookupGeneration || 0) + 1;
+    const lookup = this.interaction.beginLookup();
     try {
       const result = await api("/lookup", {
         method: "POST",
         body: { word, mark_unknown: false },
-        signal: this.scope.signal,
+        signal: lookup.signal,
       });
-      if (this.scope.signal.aborted || generation !== this.wordLookupGeneration || this.selecting || this.suppressWordClick) return;
+      if (lookup.signal.aborted || this.selecting || this.suppressWordClick) return;
       this.lookups++;
       this.pop(el, {
         text: word,
@@ -728,6 +735,8 @@ export class Reader {
       });
     } catch (err) {
       if (err.name !== "AbortError") toast(err.message);
+    } finally {
+      lookup.finish();
     }
   }
 }

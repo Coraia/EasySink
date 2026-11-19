@@ -26,16 +26,10 @@ export function install(ctx) {
       confirmed = null,
       queue = Promise.resolve();
     const capturePosition = () => {
-      const pages = reader.pages, word = pages?.wordReflow;
+      const pages = reader.pages;
       // A navigation target may be inside the visible spread. Resume must use
       // its first source, sampled only after the actual layout has settled.
-      if (!reader.restoring && !document.hidden && !reader.popElement &&
-          !scope.signal.aborted && pages?.complete && pages.layoutComplete &&
-          Number.isInteger(pages.layoutEpoch) && pages.stableEpoch === pages.layoutEpoch &&
-          !pages.displayPending && !pages.animating && !pages.canonicalDirty &&
-          !pages.retainedLayoutPending && !reader.annotationRefreshPending &&
-          !word?.pendingLayout && !word?.flushing && !word?.pendingCanonical &&
-          !["preparing", "playing"].includes(word?.owner?.dataset.reflowPhase)) {
+      if (reader.interaction.canRecordPosition()) {
         const view = reader.captureView(), anchor = view.visibleAnchor;
         const offset = pages.offsets?.get(anchor?.block_id);
         if (view.documentId === id && view.sourceVersion === reader.doc.version &&

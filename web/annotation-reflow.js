@@ -12,7 +12,7 @@ const cssText = css => ({font:css.font, color:css.color, letterSpacing:css.lette
 export class AnnotationReflow {
   constructor(pages) {
     this.reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
-    this.pages=pages; this.serial=0; this.cache=new Map(); this.groups=[];
+    this.pages=pages; this._run=null; this._flushSignal=null; this.updating=false; this._closePending=false; this.cache=new Map(); this.groups=[];
     pages.r.scope.cleanup(()=>this.dispose());
     pages.r.on('before-selection',()=>this.interruptPreparation());
     pages.r.on('before-page',event=>this.retireDeferredPrefixHistory(event));
@@ -24,6 +24,14 @@ export class AnnotationReflow {
     pages.r.on('reading-uncovered',()=>{
       this.resumeAfterTurn();
     });
+  }
+  currentRun() {
+    if(!this._run || this._run.signal.aborted) this._run=this.pages.r.interaction.beginReflow();
+    return this._run;
+  }
+  resetRun() {
+    this.pages.r.interaction.cancelReflow();
+    this._run=null;
   }
   focus(anchor) {
     if (this.eligible() && this.anchor.block_id===anchor.block_id && this.anchor.start===anchor.start) return;
@@ -68,7 +76,7 @@ export class AnnotationReflow {
     this.registryItems=[...this.pages.r.annotations];
     this.annotationContext=this.annotationContextKey();
     this.earlierContext=this.earlierAnnotationContextKey();
-    this.workJobs=new Set();
+    this._closePending=false;
     // A canonical note can still be deferred on this spread. Start from what
     // this real word displays so a direct action never inherits that deferral.
     const shown=this.registryItems[+node.closest('[data-annotation]')?.dataset.annotation];
@@ -151,8 +159,10 @@ export class AnnotationReflow {
   resumeAfterTurn(anchor = this.pendingLayout?.originView?.visibleAnchor) {
     clearTimeout(this.flushTimer);
     if(this.pages.r.scope.signal.aborted || this.pages.r.popElement) return;
+    if(this.updating) { this._closePending=true; return; }
     const run=()=>{
       if(this.pages.r.scope.signal.aborted || this.pages.r.popElement) return;
+      if(this.updating) { this._closePending=true; return; }
       // A page turn owns the visible presentation. Canonical reflow calls
       // finishAnimation(), so running it here would cancel that active turn.
       // The turn finalizer wakes this work after choosing its outcome anchor.
@@ -225,8 +235,8 @@ export class AnnotationReflow {
     this.deferredPrefixLeaf=document.querySelector('#article .page-leaf');
   }
   interruptPreparation() {
-    if(!this.workJobs?.size) return;
-    ++this.serial;
+    if(!this.updating && !this.warming?.size) return;
+    this.resetRun();
     this.warming=new Map();
     this.finish();
     this.preparedMotions?.forEach(value=>{value.groups.forEach(a=>a.cancel());value.ghosts.remove();});
@@ -245,7 +255,7 @@ export class AnnotationReflow {
     const prefixChanged=earlier!==this.earlierContext;
     if(prefixChanged) this.deferredPrefixPresentation=true;
     this.earlierContext=earlier;
-    ++this.serial;
+    this.resetRun();
     this.finish();
     this.preparedMotions?.forEach(value=>{value.groups.forEach(a=>a.cancel());value.ghosts.remove();});
     this.preparedMotions?.clear();this.cache.clear();this.warming=new Map();
@@ -260,42 +270,51 @@ export class AnnotationReflow {
   }
   async update() {
     if(!this.eligible()) return false;
-    const jobs=this.workJobs,job={};jobs.add(job);
+    let applied=false;
+    this.updating=true;this.pages.r.interaction.syncPhase();
     try {
-    const started=performance.now();
-    const p=this.pages, contextChanged=this.refreshAnnotationContext();
-    const target=p.activeAnnotations.find(n=>n.block.id===this.anchor.block_id && n.start<=this.anchor.start && n.end>=this.anchor.end);
-    const signature=JSON.stringify(target?[target.start,target.end,target.note]:null);
-    if(!contextChanged && !this.adopted && signature===this.annotationSignature) {
-      return true;
-    }
-    if(signature===this.signature) return true;
-    const warming=this.warming?.get(signature);
-    const serial=warming?this.serial:++this.serial;
-    let state=this.cache.get(signature);
-    if(warming) state=await warming;
-    if(!state) {
-      state=await this.layout(serial);
-      if(!state || serial!==this.serial || !this.eligible()) return true;
-      // Retain the reversible endpoints; repeated +/- does no text measurement.
-      if(this.cache.size>=4) this.cache.delete(this.cache.keys().next().value);
-      this.cache.set(signature,state);
-    }
-    if(serial!==this.serial || !this.eligible()) return true;
-    if(signature===this.signature) return true;
+      const started=performance.now();
+      const p=this.pages, contextChanged=this.refreshAnnotationContext();
+      const target=p.activeAnnotations.find(n=>n.block.id===this.anchor.block_id && n.start<=this.anchor.start && n.end>=this.anchor.end);
+      const signature=JSON.stringify(target?[target.start,target.end,target.note]:null);
+      if(!contextChanged && !this.adopted && signature===this.annotationSignature) {
+        applied=true;
+        return true;
+      }
+      if(signature===this.signature) { applied=true; return true; }
+      const warming=this.warming?.get(signature);
+      const {signal}=warming?this.currentRun():(this.resetRun(),this.currentRun());
+      let state=this.cache.get(signature);
+      if(warming) state=await warming;
+      if(!state) {
+        state=await this.layout(signal);
+        if(!state || signal.aborted || !this.eligible()) return false;
+        // Retain the reversible endpoints; repeated +/- does no text measurement.
+        if(this.cache.size>=4) this.cache.delete(this.cache.keys().next().value);
+        this.cache.set(signature,state);
+      }
+      if(signal.aborted || !this.eligible()) return false;
+      if(signature===this.signature) { applied=true; return true; }
 
-    state.suffixPieces ||= state.pieces.filter(piece=>!this.prefix.includes(piece));
-    await this.prepareDOM(state);
-    if(serial!==this.serial || !this.eligible() || !state.doms) return true;
-    await this.transition(state,signature);
-    if(serial!==this.serial || !this.eligible()) return true;
-    document.querySelector("#article").dataset.reflowWorkMs=(performance.now()-started).toFixed(1);
-    return true;
-    } finally {jobs.delete(job);}
+      state.suffixPieces ||= state.pieces.filter(piece=>!this.prefix.includes(piece));
+      await this.prepareDOM(state,signal);
+      if(signal.aborted || !this.eligible() || !state.doms) return false;
+      await this.transition(state,signature,{signal});
+      if(signal.aborted || !this.eligible()) return false;
+      document.querySelector("#article").dataset.reflowWorkMs=(performance.now()-started).toFixed(1);
+      applied=true;
+      return true;
+    } finally {
+      this.updating=false;this.pages.r.interaction.syncPhase();
+      if(this._closePending) {
+        this._closePending=false;
+        if(applied && !this.pages.r.popElement) this.resumeAfterTurn();
+      }
+    }
   }
   prepareNote(note) {
     if(!this.eligible()) return;
-    const a=this.anchor, serial=this.serial;
+    const a=this.anchor, {signal}=this.currentRun();
     const target=note?{block:this.pages.blocks.get(a.block_id),start:a.start,end:a.end,
       text:a.quote,target:a.quote,note,kind:'retained',source:'context-retained'}:null;
     const key=JSON.stringify(target?[target.start,target.end,target.note]:null);
@@ -303,23 +322,20 @@ export class AnnotationReflow {
     if(this.cache.has(key)||this.warming.has(key)) return;
     const map=this.warming;
     const warming=(async()=>{
-      const jobs=this.workJobs,job={};jobs.add(job);
-      try {
-      const state=await this.layout(serial,target);
-      if(!state || serial!==this.serial || !this.eligible()) return null;
+      const state=await this.layout(signal,target);
+      if(!state || signal.aborted || !this.eligible()) return null;
 
       state.suffixPieces=state.pieces.filter(piece=>!this.prefix.includes(piece));
-      await this.prepareDOM(state);
-      if(serial!==this.serial || !this.eligible() || !state.doms) return null;
+      await this.prepareDOM(state,signal);
+      if(signal.aborted || !this.eligible() || !state.doms) return null;
       this.cache.set(key,state);
-      if(!this.signature && Boolean(note)!==this.initialHasNote) await this.transition(state,key,{prepareOnly:true});
+      if(!this.signature && Boolean(note)!==this.initialHasNote) await this.transition(state,key,{prepareOnly:true,signal});
       return state;
-      } finally {jobs.delete(job);}
     })().catch(()=>null).finally(()=>{if(map.get(key)===warming)map.delete(key);});
     map.set(key,warming);
   }
-  async layout(serial, override) {
-    if(serial!==this.serial || !this.eligible()) return null;
+  async layout(signal, override) {
+    if(signal.aborted || !this.eligible()) return null;
     const p=this.pages, a=this.anchor, col=this.column, box=this.prose[col];
     const textBox=this.textBox;
     const left=textBox.x, width=textBox.width;
@@ -378,7 +394,7 @@ export class AnnotationReflow {
         }
         chunkStart=chunkEnd;
         await pause();
-        if(serial!==this.serial || !this.eligible()) {measure.remove();return null;}
+        if(signal.aborted || !this.eligible()) {measure.remove();return null;}
         if(covered)break;
       }
     }
@@ -390,10 +406,10 @@ export class AnnotationReflow {
       const id=gloss.dataset.reflowNote || (()=>{const item=this.registryItems[+gloss.closest('[data-annotation]').dataset.annotation];return JSON.stringify([item.block.id,item.start,item.end]);})();
       const text=`〈${gloss.textContent}〉`;gloss.textContent='';gloss.classList.add('reflow-glyph-note');
       [...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(text)].forEach(({segment:c},i)=>{const span=document.createElement('span');span.textContent=c;span.dataset.reflowGlyph=`${id}:${i}`;gloss.append(span);});
-      if(performance.now()-noteSlice>4) {await pause();noteSlice=performance.now();if(serial!==this.serial || !this.eligible()) {measure.remove();return null;}}
+      if(performance.now()-noteSlice>4) {await pause();noteSlice=performance.now();if(signal.aborted || !this.eligible()) {measure.remove();return null;}}
     }
     await pause();
-    if(serial!==this.serial || !this.eligible()) {measure.remove();return null;}
+    if(signal.aborted || !this.eligible()) {measure.remove();return null;}
     const measured=rectOf(measure.getBoundingClientRect());let result=[...this.prefix];
     const unfinished=new Map();
 
@@ -422,7 +438,7 @@ export class AnnotationReflow {
         offset+=node.length;
         if(performance.now()-readSlice>4) {
           await pause();readSlice=performance.now();
-          if(serial!==this.serial || !this.eligible()) {measure.remove();return null;}
+          if(signal.aborted || !this.eligible()) {measure.remove();return null;}
         }
       }
     }
@@ -434,7 +450,7 @@ export class AnnotationReflow {
       if(page>=this.count+1) {unfinished.set(JSON.stringify(parts),parts);continue;}
       result.push({key:`g:${encoded}`,block:parts[0],start:parts[1],end:parts[2],order:order.get(parts[0]),text:glyph.textContent,
         r:place(r),style:cssText(getComputedStyle(glyph)),gloss:true,page});
-      if(performance.now()-readSlice>4) {await pause();readSlice=performance.now();if(serial!==this.serial || !this.eligible()){measure.remove();return null;}}
+      if(performance.now()-readSlice>4) {await pause();readSlice=performance.now();if(signal.aborted || !this.eligible()){measure.remove();return null;}}
     }
     measure.remove();
     // The unseen overflow leaf may end beside another annotation. Move that
@@ -461,11 +477,10 @@ export class AnnotationReflow {
     if(fragments.some((parts,i)=>!parts.length && this.pages.pages[this.index+i]?.length)) return null;
     return {pieces:result,fragments,overflowGloss,fonts:blockFonts,annotations:[...this.annotationItems.filter(n=>!(n.block.id===a.block_id && n.start<=a.start && n.end>=a.end)),...(focused?[focused]:[])]};
   }
-  async prepareDOM(state) {
+  async prepareDOM(state, signal) {
     if(state.doms) return;
-    const serial=this.serial;
-    await this.preparePrefix();
-    if(serial!==this.serial || !this.eligible() || !this.prefixState) return;
+    await this.preparePrefix(signal);
+    if(signal.aborted || !this.eligible() || !this.prefixState) return;
     let slice=performance.now();
     const doms=[];
     const p=this.pages, annotations=p.r.annotations;
@@ -515,7 +530,7 @@ export class AnnotationReflow {
           Object.assign(node.style,{...item.style,left:'0px',top:'0px'});
           line.append(node);item.node=node;item.template=node;pagePieces.push(item);
           if(item.gloss)node.style.color='var(--gloss)';else if(item.style.color===this.inkColor)node.style.color='var(--ink)';
-          if(performance.now()-slice>4) {await pause();slice=performance.now();if(serial!==this.serial || !this.eligible())return;}
+          if(performance.now()-slice>4) {await pause();slice=performance.now();if(signal.aborted || !this.eligible())return;}
         }
         }
         if(sourcePieces.length && p.blocks.get(part.id)?.type!=='heading') {
@@ -537,21 +552,21 @@ export class AnnotationReflow {
         for(const item of pagePieces) {
           const actual=item.node.getBoundingClientRect();
           item.node.style.left=`${item.r.x-actual.x}px`;item.node.style.top=`${item.r.y-actual.y}px`;
-          if(performance.now()-slice>4) {await pause();slice=performance.now();if(serial!==this.serial || !this.eligible())return;}
+          if(performance.now()-slice>4) {await pause();slice=performance.now();if(signal.aborted || !this.eligible())return;}
         }
       } finally {stage.remove();}
       doms.push([...prose.childNodes]);
     }
     state.doms=doms;
   }
-  async preparePrefix() {
+  async preparePrefix(signal) {
     if(this.prefixState) return;
-    this.prefixPreparing ||= this.buildPrefix();
+    this.prefixPreparing ||= this.buildPrefix(signal);
     const preparing=this.prefixPreparing;
     try {await preparing;} finally {if(this.prefixPreparing===preparing)this.prefixPreparing=null;}
   }
-  async buildPrefix() {
-    const serial=this.serial,leaves=this.leaves;
+  async buildPrefix(signal) {
+    const leaves=this.leaves;
     let slice=performance.now();
     const order=new Map(this.pages.r.doc.blocks.map((b,i)=>[b.id,i]));
     const targetOrder=order.get(this.anchor.block_id),a={...this.anchor};
@@ -562,7 +577,7 @@ export class AnnotationReflow {
         let spacer=run.node.parentElement.closest('.reflow-reservation-text');
         if(!spacer) {spacer=document.createElement('span');spacer.className='reflow-reservation-text';run.node.replaceWith(spacer);spacer.append(run.node);}
         spacers.push(spacer);
-        if(performance.now()-slice>4) {await pause();slice=performance.now();if(serial!==this.serial || !this.eligible())return;}
+        if(performance.now()-slice>4) {await pause();slice=performance.now();if(signal.aborted || !this.eligible())return;}
       }
       for(const node of leaf.querySelectorAll('[data-annotation]')) {
         const item=this.pages.r.annotations[+node.dataset.annotation];
@@ -574,7 +589,7 @@ export class AnnotationReflow {
         else if(block.dataset.block===a.block_id)trims.push(block);
       }
     }
-    if(serial===this.serial && this.eligible())this.prefixState={doms:leaves.map(leaf=>[...leaf.querySelector('.reading-prose').childNodes]),spacers,annotations,words,hiddenBlocks,trims,anchor:a};
+    if(!signal.aborted && this.eligible())this.prefixState={doms:leaves.map(leaf=>[...leaf.querySelector('.reading-prose').childNodes]),spacers,annotations,words,hiddenBlocks,trims,anchor:a};
   }
   activatePrefix(state) {
     const plan=this.prefixState;if(plan.activated)return;plan.activated=true;
@@ -642,7 +657,7 @@ export class AnnotationReflow {
       document.querySelector('#article').dataset.reflowDrawTrace=JSON.stringify(this.drawTrace.slice(-12));
     }
   }
-  async transition(state,signature,{prepareOnly=false}={}) {
+  async transition(state,signature,{prepareOnly=false,signal=this.currentRun().signal}={}) {
     if(!prepareOnly)document.querySelector('#article').dataset.reflowPhase='preparing';
     if(this.reduced) {if(prepareOnly)return;this.finish();this.draw(state);this.adopt(state,signature);return;}
     if(this.pair && [this.pair.from,this.pair.to].includes(signature)) {
@@ -664,7 +679,6 @@ export class AnnotationReflow {
     }
     const staged=this.preparedMotions?.get(signature);
     if(!prepareOnly && staged && staged.base===this.signature) {
-      const transitionSerial=this.serial;
       this.preparedMotions.delete(signature);
       this.finish();this.draw(state,staged.keys);
       this.ghosts=staged.ghosts;this.ghosts.style.opacity='1';this.groups=staged.groups;
@@ -673,7 +687,7 @@ export class AnnotationReflow {
       // layout can otherwise consume the opening part of the animation.
       await new Promise(requestAnimationFrame);
       await new Promise(requestAnimationFrame);
-      if(transitionSerial!==this.serial || !this.eligible())return;
+      if(signal.aborted || !this.eligible())return;
       const start=document.timeline.currentTime;
       this.groups.forEach(animation=>{animation.currentTime=0;animation.play();animation.startTime=start;});
       document.querySelector('#article').dataset.reflowPhase='playing';
@@ -681,7 +695,7 @@ export class AnnotationReflow {
       this.timer=setTimeout(()=>this.settle(),250);this.adopt(state,signature);
       return;
     }
-    const serial=this.serial,baseSignature=this.signature;
+    const baseSignature=this.signature;
     const previous=this.before;
 
     const old=new Map(previous.filter(n=>n.page<this.count).map(n=>[n.key,n])), box=document.querySelector('#article').getBoundingClientRect();
@@ -723,12 +737,12 @@ export class AnnotationReflow {
         Object.assign(copy.style,{...item.style,color:item.gloss?"var(--gloss)":item.style.color===this.inkColor?"var(--ink)":item.style.color,left:`${rect.x-x}px`,top:`${rect.y-y}px`,width:`${rect.width}px`,height:`${rect.height}px`});node.append(copy);
         if(performance.now()-slice>4) {
           await pause();slice=performance.now();
-          if(serial!==this.serial || !this.eligible()) return;
+          if(signal.aborted || !this.eligible()) return;
         }
       }
       prepared.push({node,frames:group.frames});
     }
-    if(serial!==this.serial || !this.eligible()) return;
+    if(signal.aborted || !this.eligible()) return;
     // Stage a bounded compositor surface per frame. A first mount of every
     // glyph layer together stalls native WebKit even when JS itself is short.
     ghosts.style.opacity='.01';
@@ -740,7 +754,7 @@ export class AnnotationReflow {
       const animation=group.node.animate(group.frames,{duration:220,fill:'both',easing:'linear'});
       animation.pause();animation.currentTime=group.frames[0].opacity===0?220:0;warmed.push(animation);
       if(index%2===1 || index===prepared.length-1) await new Promise(requestAnimationFrame);
-      if(serial!==this.serial || !this.eligible()) {warmed.forEach(a=>a.cancel());ghosts.remove();return;}
+      if(signal.aborted || !this.eligible()) {warmed.forEach(a=>a.cancel());ghosts.remove();return;}
     }
     const keys=new Set([...grouped.values()].flatMap(g=>g.items.map(i=>i.item.key)));
     if(prepareOnly) {
@@ -755,7 +769,7 @@ export class AnnotationReflow {
     this.groups.forEach(animation=>{animation.currentTime=0;});
     await new Promise(requestAnimationFrame);
     await new Promise(requestAnimationFrame);
-    if(serial!==this.serial || !this.eligible())return;
+    if(signal.aborted || !this.eligible())return;
     const start=document.timeline.currentTime;
     this.groups.forEach(animation=>{animation.currentTime=0;animation.play();animation.startTime=start;});
     document.querySelector('#article').dataset.reflowPhase='playing';
@@ -804,7 +818,7 @@ export class AnnotationReflow {
   }
   async flush({reconcile = false, anchor = this.pendingLayout?.originView?.visibleAnchor,
     ticket = this.pages.captureLayoutTicket()} = {}) {
-    if(this.flushing && this.flushSerial===this.serial) return this.flushing;
+    if(this.flushing && this._flushSignal && !this._flushSignal.aborted) return this.flushing;
     // Notifications do not own a new layout revision. Apply actual dirty data
     // once, after the turn has either retained or committed its source window.
     if(!this.pages.isCurrent(ticket) || !this.pages.validAnchor(anchor)) return false;
@@ -814,12 +828,12 @@ export class AnnotationReflow {
     const ownsPresentation=this.eligible(),navigation=this.pages.navigation;
     if(!mutation || mutation.docId!==ticket.docId || mutation.sourceVersion!==ticket.sourceVersion ||
         mutation.revision!==ticket.annotationRevision || (!ownsPresentation && !reconcile) || this.pages.animating) return false;
-    const serial=this.flushSerial=this.serial;
+    const flushSignal=this._flushSignal=this.currentRun().signal;
     const started=this.pages.reflow(anchor,{keepDOM:true,reason:'annotation'});
     const flow=this.pages.flowReady,publication=this.pages.captureLayoutTicket();
     const pending=(async()=>{
       const landed=await started,complete=landed && await flow;
-      if(serial!==this.serial || !this.pages.isCurrent(publication)) return false;
+      if(flushSignal.aborted || !this.pages.isCurrent(publication)) return false;
       // Canonical page numbers may change without changing a single visible
       // source node. Keep the same DOM owner valid for the delayed metadata
       // refresh; otherwise it falls back to the new canonical page's start.
@@ -830,7 +844,7 @@ export class AnnotationReflow {
         this.pages.painter.warm();this.pages.warmRanges();
       }
       return complete;
-    })().finally(()=>{if(this.flushing===pending)this.flushing=null;this.pages.markStable();});
+    })().finally(()=>{if(this.flushing===pending){this.flushing=null;this._flushSignal=null;}this.pages.markStable();});
     this.flushing=pending;
     return pending;
   }
@@ -873,7 +887,7 @@ export class AnnotationReflow {
     this.pages.markStable();
   }
   dispose() {
-    ++this.serial;clearTimeout(this.flushTimer);
+    this.resetRun();this._closePending=false;clearTimeout(this.flushTimer);
     const pending=this.pendingLayout,p=this.pages;
     // A presentation departure is not acknowledgement of a pending mutation.
     // Keep it until that revision is applied, superseded, or its source retires.

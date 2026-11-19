@@ -428,7 +428,7 @@ export function setupReadingInteractions(r) {
   r.scope.on($("#article"), "pointerdown", (ev) => {
     if (ev.button !== 0 || (ev.target.closest("button,a,input,textarea,select") && !ev.target.closest(".source-unit"))) return;
     r.suppressWordClick = false;
-    r.wordLookupGeneration = (r.wordLookupGeneration || 0) + 1;
+    r.interaction.cancelLookup();
     r.wordGesture = { x: ev.clientX, y: ev.clientY, moved: false };
     r.selecting = true;
     r.positionSelection();
