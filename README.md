@@ -4,7 +4,7 @@
 
 当前产品基线：**V1 · `v1.0.0`（2026-10-10）**。使用 FastAPI / SQLite / 本地词典，前端为可拆卸 ES modules，macOS 客户端复用阅读核心。该标签冻结本次已体验的源码；包内历史版本号暂保持不变，以对应已安装并走查的客户端。
 
-版本范围、证据摘要及已知限制见 [V1 版本记录](docs/releases/v1.0.0.json)。本次为当前 Mac 上的个人使用基线；签名公证、干净机器分发和完整设备覆盖尚未验收。已同意后续处理高负载下个别慢帧、学术译文的术语与限定范围问题，保留原始失败记录。
+版本范围、证据摘要及已知限制见 [V1 版本记录](docs/archive/releases/v1.0.0.json)。本次为当前 Mac 上的个人使用基线；签名公证、干净机器分发和完整设备覆盖尚未验收。已同意后续处理高负载下个别慢帧、学术译文的术语与限定范围问题，保留原始失败记录。
 
 ## 启动
 
@@ -56,30 +56,10 @@ npx playwright install chromium
 
 ## 文档
 
-- [项目交接 · 2026-10-17：V1.2 进展与 Codex / Claude Code 接手入口](docs/handoffs/2026-10-17.md)
-- [历史交接 · 2026-10-12](docs/handoffs/2026-10-12.md)
-- [V1 版本记录与遗留项](docs/releases/v1.0.0.json)
-- [V1 → V1.1 → V2 路线图](docs/65-v1-v2-roadmap.md)
-- [macOS 客户端运行与构建](desktop/README.md)
+- [工程开发与协作规范](AGENTS.md)
 - [领域词汇表](GLOSSARY.md)
-- [工程技能的 issue tracker 约定](docs/agents/issue-tracker.md)、[领域文档约定](docs/agents/domain.md)
-- [PDF 支持设计对齐与决策进度](docs/50-pdf-alignment.md)
-- [PDF 一期共同理解摘要（已确认）](docs/53-pdf-shared-understanding.md)
-- [PDF 一期规格](docs/54-pdf-spec.md)
-- [PDF 一期开发契约](docs/55-pdf-development-contract.md)
-- [PDF 一期转换比较与验收计划](docs/56-pdf-acceptance-plan.md)
-- [PDF 配置与 GitHub 规格交付台账](docs/57-pdf-tracker-handoff.md)
-- [PDF 一期纵向任务与发布记录](docs/58-pdf-ticket-plan.md)
-- [PDF 开发主控与最新授权](docs/59-pdf-development-control.md)
-- [PDF 与现有阅读器的整合契约](docs/60-pdf-reading-integration.md)
-- [PDF 候选组件上游事实核对](docs/51-pdf-upstream-facts.md)
-- [PDF 局部纠错的参考与备选设计](docs/52-pdf-correction-reference.md)
-- [正式翻页曲面、原生触控板与高清渲染验收](docs/49-paper-production.md)
-- [2026-10-08 验收摘要与复现信息](docs/evaluations/20261008-paper/acceptance.json)
-- [Web 03 交互契约、开发说明与验收](docs/12-web-v3.md)
-- [2026-10-04 反馈修复与验收](docs/09-feedback-fixes-acceptance.md)
-- [初版 02 产品、模块清单、开发契约和体验路线](docs/07-web-prototype-v2.md)
-- [本轮评审依据](docs/06-web-review.md)
-- [历史可行性](docs/01-feasibility.md)、[历史 PRD](docs/02-prd.md)、[历史设计](docs/03-design.md)、[历史验收](docs/05-acceptance.md)
+- [架构决策记录（ADR）](docs/adr/)
+- [macOS 客户端运行与构建](desktop/README.md)
+- [历史规格、路线图、交接与验收归档](docs/archive/)
 
 数据保存在 `data/user.db`，词典与用户库分离；PDF 原件和转换资料默认在 `data/user-pdf/`。功能开关不删除保留资料。升级前备份在 `data/backups/`；本轮比较基线为 `69f0fd0`。不要向 Git 提交数据库、原件、模型、日志或 API key。

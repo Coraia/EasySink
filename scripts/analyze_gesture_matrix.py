@@ -151,7 +151,7 @@ def main():
         'web/page-curl-renderer.js', 'web/page-fold.js', 'web/paper-model.js',
         'playwright.config.js', 'playwright.measure.config.js', 'scripts/test_server.py',
         'tests/browser/reader-helpers.js', 'tests/measurement/gesture-matrix.spec.js',
-        'scripts/analyze_gesture_matrix.py', 'docs/34-gesture-matrix-contract.md',
+        'scripts/analyze_gesture_matrix.py', 'docs/archive/34-gesture-matrix-contract.md',
     ]}
     if any(w['version'] == 'previous' for w in raw):
         baseline = Path(args.baseline_dir or os.environ.get('WR_MATRIX_BASELINE_DIR', DEFAULT_BASELINE)).expanduser().resolve()
