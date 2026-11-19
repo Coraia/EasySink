@@ -35,26 +35,10 @@ async function targets(page) {
     b.fragments.filter((f) => f.type !== "plain").map((f) => f.target),
   );
 }
-async function doubleClickWord(page, word) {
-  const point = await page.locator("#article").evaluate((el, word) => {
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) {
-      const n = walker.currentNode;
-      if (n.parentElement.closest(".gloss,[data-annotation],.bookmark-marker"))
-        continue;
-      const m = new RegExp("\\b" + word + "\\b", "i").exec(n.textContent);
-      if (m) {
-        const range = document.createRange();
-        range.setStart(n, m.index);
-        range.setEnd(n, m.index + word.length);
-        const rect = range.getBoundingClientRect();
-        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-      }
-    }
-    throw Error("Word not found: " + word);
-  }, word);
-  await page.mouse.dblclick(point.x, point.y);
+async function openWordCard(page, word) {
+  await page.locator(`#article .source-unit[data-word="${word}"]`).first().click();
   await expect(page.locator(".annotation-pop h3")).toHaveText(word);
+  await expect(page.locator(".annotation-pop [data-retained]")).toBeEnabled();
 }
 test.beforeEach(async ({ page, request }) => {
   page.__errors = [];
@@ -99,8 +83,8 @@ test("retaining words is additive and undo restores prior feedback", async ({
   const baseline = await targets(page);
   const evidence = { baseline, steps: [] };
   for (const word of ["phone", "morning"]) {
-    await doubleClickWord(page, word);
-    await page.getByRole("button", { name: "保留注释", exact: true }).click();
+    await openWordCard(page, word);
+    await page.locator(".annotation-pop [data-retained]").click();
     await expect(page.locator("#toast")).toContainText("已在这里保留注释");
     await expect(page.locator(`[data-target="${word}"]`)).toHaveCount(1);
     const current = await targets(page);
@@ -123,15 +107,25 @@ test("retaining words is additive and undo restores prior feedback", async ({
   });
   // A previously-known word: undo must restore known, rather than reset its history.
   await page.locator('[data-target="phone"]').click();
-  await page.getByRole("button", { name: "已保留注释 ✓", exact: true }).click();
+  await expect(page.locator(".annotation-pop [data-retained]")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.locator(".annotation-pop [data-retained]").click();
+  await expect(page.locator(".annotation-pop [data-retained]")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  await expect(page.locator("#toast")).toContainText("已取消这里的显式保留");
+  await expect(page.locator('[data-target="phone"]')).toHaveCount(0);
   await page.getByRole("button", { name: "关闭注释" }).click();
   await expect(page.locator('[data-target="phone"]')).toHaveCount(0);
   await request.post("/api/feedback", {
     data: { target: "phone", verdict: "known" },
   });
   await page.reload();
-  await doubleClickWord(page, "phone");
-  await page.getByRole("button", { name: "保留注释", exact: true }).click();
+  await openWordCard(page, "phone");
+  await page.locator(".annotation-pop [data-retained]").click();
   await page.locator("#toast button").click();
   await page.reload();
   await expect(page.locator('[data-target="phone"]')).toHaveCount(0);
@@ -347,11 +341,18 @@ test("repeated feedback remains additive across densities; pure source remains i
       if (await page.locator("[data-selection-clear]").isVisible())
         await page.locator("[data-selection-clear]").click();
       if (i === 0) {
-        await doubleClickWord(page, word);
-        await page.getByRole("button", { name: "保留注释", exact: true }).click();
+        await openWordCard(page, word);
+        await page.locator(".annotation-pop [data-retained]").click();
+        await expect(
+          page.locator(".annotation-pop [data-retained]"),
+        ).toHaveAttribute("aria-pressed", "true");
+        await expect(page.locator("#toast")).toContainText("已在这里保留注释");
+        await expect(page.locator(`[data-target="${word}"]`)).toHaveCount(1);
       } else {
         await page.locator(`[data-target="${word}"]`).click();
-        await expect(page.getByRole("button", { name: "已保留注释 ✓", exact: true })).toBeVisible();
+        await expect(
+          page.locator(".annotation-pop [data-retained]"),
+        ).toHaveAttribute("aria-pressed", "true");
       }
       await page.getByRole("button", { name: "关闭注释" }).click();
       await expect(page.locator(".annotation-pop")).toHaveCount(0);

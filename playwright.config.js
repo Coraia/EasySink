@@ -1,6 +1,10 @@
-import { defineConfig } from "@playwright/test";
+import fs from "node:fs";
+import { defineConfig, chromium } from "@playwright/test";
 const evidence = process.env.WR_E2E_EVIDENCE;
 const appPort = process.env.WR_E2E_PORT || "18767";
+const channel =
+  process.env.WR_E2E_CHANNEL ||
+  (fs.existsSync(chromium.executablePath()) ? undefined : "chrome");
 export default defineConfig({
   outputDir: evidence ? evidence + "/results" : "test-results",
   testDir: "./tests/browser",
@@ -18,6 +22,7 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${appPort}`,
     browserName: "chromium",
+    ...(channel ? { channel } : {}),
     viewport: { width: 1440, height: 1000 },
     trace: evidence ? "on" : "retain-on-failure",
     screenshot: evidence ? "on" : "only-on-failure",

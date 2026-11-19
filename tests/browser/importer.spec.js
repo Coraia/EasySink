@@ -240,6 +240,8 @@ for (const mode of ["single", "nested"])
     await expectEpubReady(page);
     await page.locator("#open-import").click();
     await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");
+    await tools(page, "outline");
+    await chapter(page, 0);
 
     await expect(page.locator("#article h2").first()).toHaveText(
       "A conversation with a stranger",
@@ -343,11 +345,12 @@ test("one EPUB stays one shelf entry across reload and search; chapters only app
   const bookId = importedDoc.chapter.book_id;
   const book = await (await request.get("/api/library/books/" + bookId)).json();
   const ids = book.chapters.map((ch) => ch.doc_id);
+  expect(ids).toContain(chapterId);
   await expect(page.locator("#translate-book")).toHaveCount(0);
   for (let round = 0; round < 2; round++) {
     await page.goto("/");
     const card = page
-      .locator(`#article-grid .book-card[href="#/read/${ids[0]}"]`)
+      .locator(`#article-grid .book-card[href="#/read/${chapterId}"]`)
       .filter({
         has: page.getByRole("heading", {
           name: "The Quiet Reader",
@@ -371,14 +374,14 @@ test("one EPUB stays one shelf entry across reload and search; chapters only app
     contentType: "image/png",
   });
   await page
-    .locator(`#article-grid .book-card[href="#/read/${ids[0]}"]`)
+    .locator(`#article-grid .book-card[href="#/read/${chapterId}"]`)
     .filter({
       has: page.getByRole("heading", { name: "The Quiet Reader", exact: true }),
     })
     .click();
   await expect(page.locator(".reader")).toHaveAttribute(
     "data-document-id",
-    String(ids[0]),
+    String(chapterId),
   );
   await tools(page, "outline");
   await expect(page.locator("#tool-panel .toc-link")).toHaveCount(2);

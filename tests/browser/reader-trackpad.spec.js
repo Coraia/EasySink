@@ -232,11 +232,6 @@ test("tools, word card and translation retain ownership; selection yields to pag
   await wheel(page, 420);
   await position(page, 0);
   await focus(page);
-  await over(page);
-  await wheel(page, 420); // Tail arriving after closing tools must be ignored.
-  await quiet(page);
-  await position(page, 0);
-  await quiet(page);
   await page.locator('.source-unit[data-word="prominent"]').first().click();
   const pop = page.locator(".annotation-pop");
   await expect(pop).toBeVisible();

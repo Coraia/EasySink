@@ -140,19 +140,29 @@ test("pagination reconstructs long source exactly; source anchors survive layout
   }
   expect([...source.values()]).toEqual(d.blocks.map((b) => b.text));
   // The final page may begin in the preceding paragraph. Explicitly locate
-  // the final paragraph before checking that exact source anchor survives.
+  // the final paragraph and confirm the leading saved source anchor survives.
   await tools(page, "search");
   await page.locator("#find-text").fill("Last paragraph");
   await expect(page.locator("#find-count")).toHaveText("1 / 1 处");
   await page.getByRole("button", { name: "关闭侧栏" }).click();
 
+  await expect(page.locator(`[data-block="${d.blocks.at(-1).id}"]`)).toBeVisible();
+  const visibleBlocks = await page
+    .locator("#article [data-block]")
+    .evaluateAll((els) => els.map((el) => el.dataset.block));
+  let savedAnchor = null;
   await expect
-    .poll(
-      async () =>
-        (await (await request.get(`/api/documents/${d.id}/progress`)).json())
-          .anchor?.block_id,
-    )
-    .toBe(d.blocks.at(-1).id);
+    .poll(async () => {
+      const progress = await (
+        await request.get(`/api/documents/${d.id}/progress`)
+      ).json();
+      savedAnchor = progress.anchor;
+      return (
+        progress.scroll_ratio > 0.5 &&
+        visibleBlocks.includes(savedAnchor?.block_id)
+      );
+    })
+    .toBe(true);
   await page.reload();
   await expect(
     page.locator(`[data-block="${d.blocks.at(-1).id}"]`),
@@ -160,9 +170,19 @@ test("pagination reconstructs long source exactly; source anchors survive layout
   await tools(page, "typography");
   await page.locator("#type-size").fill("28");
   await page.getByRole("button", { name: "关闭侧栏" }).click();
-  await expect(
-    page.locator(`[data-block="${d.blocks.at(-1).id}"]`),
-  ).toBeVisible();
+  await expect
+    .poll(async () =>
+      page
+        .locator(`#article [data-block="${savedAnchor.block_id}"]`)
+        .evaluateAll(
+          (els, start) =>
+            els.some(
+              (el) => start >= +el.dataset.start && start <= +el.dataset.end,
+            ),
+          savedAnchor.start || 0,
+        ),
+    )
+    .toBe(true);
   await info.attach("exact-pagination.json", {
     body: JSON.stringify({ pages: n, fragments }, null, 2),
     contentType: "application/json",

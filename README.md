@@ -45,12 +45,11 @@ AI 是可选的：基础词注来自本地词典；点词后主动请求上下�
 ## 验证
 
 ```bash
-npm ci
-npx playwright install chromium
-.venv/bin/python scripts/e2e_acceptance.py
+npm run test:regression                  # pytest + Node 单元测试 + 核心阅读循环 Playwright 回归
+.venv/bin/python scripts/regression.py --backend-only  # 仅跑后端与静态模块检查（约 10 秒）
 ```
 
-本轮按用户要求以直接浏览器走查与实际性能记录为主，不新增事后单元测试，也不在开发中运行完整 E2E 套件。既有完整 E2E 入口仅在开发结束时按需运行，生成 `.runtime/acceptance/<时间>/` 下的 HTML、trace、截图、源码快照及校验清单。PDF 整合的原始操作、首次失败、复验截图和测量位于 `outputs/pdf-reading-walkthrough-20261008-1512/`；AI 应用流程使用 18768 本地模拟供应商，不证明真实模型质量或计费。
+日常开发与重构前优先运行 `.venv/bin/python scripts/regression.py --backend-only` 或 `npm run test:regression`（自动使用本地已安装的 Chrome 或 Playwright Chromium）。完整 E2E 归档入口 `.venv/bin/python scripts/e2e_acceptance.py` 保留作按需全量验收（输出至 `.runtime/acceptance/<时间>/`）；AI 验收流程使用 18768 本地模拟供应商，不证明真实模型质量或计费。
 
 浏览器测试使用 18767 上的独立临时库，不污染个人内容。生产前端不需要 npm 构建；npm 仅用于格式化和浏览器验收。
 

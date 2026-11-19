@@ -65,7 +65,8 @@ test("the source dictionary card opens a phrase member without changing the phra
   await dictionary.getByRole("button", { name: "ice", exact: true }).click();
   await expect(page.locator(".annotation-pop h3")).toHaveText("ice");
   await expect(page.locator(".annotation-pop .dictionary-candidates")).toBeVisible();
-  await expect(page.locator("[data-collection-word]")).toHaveText("收藏词语");
+  await expect(page.locator("[data-collection-word]")).toHaveAttribute("aria-label", "收藏词语");
+  await expect(page.locator("[data-collection-word]")).toHaveAttribute("aria-pressed", "false");
   await page.getByRole("button", { name: "关闭注释", exact: true }).click();
   await expect(phrase).toContainText("break the ice");
   const state = await (await request.get(`/api/collections/state/${doc.id}`)).json();
@@ -105,9 +106,27 @@ test("adopting an unsaved word updates only its occurrence, undo restores it, an
   await occurrences.first().click();
   await expect(page.locator(".annotation-pop .dictionary-candidates")).toBeVisible();
   await page.locator("[data-retained]").click();
-  await expect(page.locator("[data-retained]")).toHaveText("已保留注释 ✓");
+  await expect(page.locator("[data-retained]")).toHaveAttribute("aria-pressed", "true");
   const retained = page.locator('#article [data-target="conviction"]');
   await expect(retained).toHaveCount(1);
+  const glossText = async () =>
+    page.evaluate(() => {
+      const target = document.querySelector('#article [data-target="conviction"]');
+      if (!target) return "";
+      const direct = target.querySelector(".gloss");
+      if (direct) return direct.textContent.trim().replace(/^[〈\s]+|[〉\s]+$/g, "");
+      const idx = target.dataset.annotation;
+      if (idx === undefined) return "";
+      return [
+        ...document.querySelectorAll(
+          `#article .page-leaf .gloss[data-annotation="${idx}"], #article .page-leaf [data-annotation="${idx}"] .gloss`,
+        ),
+      ]
+        .map((node) => node.textContent)
+        .join("")
+        .trim()
+        .replace(/^[〈\s]+|[〉\s]+$/g, "");
+    });
   const isolationChecks = [];
   const verifyOtherOccurrence = async (phase) => {
     if (await page.locator(".annotation-pop").isVisible())
@@ -126,30 +145,33 @@ test("adopting an unsaved word updates only its occurrence, undo restores it, an
     await page.getByRole("button", { name: "关闭注释", exact: true }).click();
     await retained.click();
     await expect(page.locator(".collections-current-meaning")).toContainText("令人信服");
-    await expect(page.getByRole("button", { name: "已用于此处释义 ✓", exact: true })).toBeDisabled();
-    await expect(retained.locator(".gloss")).toHaveText("令人信服");
+    await expect(page.getByRole("button", { name: "已用于此处释义", exact: true })).toBeDisabled();
+    await expect.poll(glossText).toBe("令人信服");
   };
-  const originalGloss = await retained.locator(".gloss").innerText();
+  await expect.poll(glossText).not.toBe("");
+  const originalGloss = await glossText();
   await page.getByRole("button", { name: "解释这里的意思", exact: true }).click();
   await expect(page.locator(".context-result")).toContainText("令人信服");
   await page.getByRole("button", { name: "用于此处释义", exact: true }).click();
-  await expect(retained.locator(".gloss")).toHaveText("令人信服");
+  await expect.poll(glossText).toBe("令人信服");
   await expect(page.locator(".collections-current-meaning")).toContainText("令人信服");
-  await expect(page.locator("[data-collection-word]")).toHaveText("收藏词语");
+  await expect(page.locator("[data-collection-word]")).toHaveAttribute("aria-label", "收藏词语");
+  await expect(page.locator("[data-collection-word]")).toHaveAttribute("aria-pressed", "false");
   let state = await (await request.get(`/api/collections/state/${doc.id}`)).json();
   expect(state.items).toEqual([]);
   expect(state.feedback).toHaveLength(1);
   expect(state.feedback[0].understood).not.toBe(true);
   await page.locator("#toast").getByRole("button", { name: "撤销", exact: true }).click();
-  await expect(retained.locator(".gloss")).toHaveText(originalGloss);
+  await expect.poll(glossText).toBe(originalGloss);
   // Undo is outside the word card, so the reader closes that card on pointerdown.
   await retained.click();
   await expect(page.locator(".collections-current-meaning")).toBeHidden();
   await page.getByRole("button", { name: "用于此处释义", exact: true }).click();
-  await expect(retained.locator(".gloss")).toHaveText("令人信服");
+  await expect.poll(glossText).toBe("令人信服");
   await verifyOtherOccurrence("after-readoption");
   await page.locator("[data-collection-word]").click();
-  await expect(page.locator("[data-collection-word]")).toHaveText("已收藏词语 ✓");
+  await expect(page.locator("[data-collection-word]")).toHaveAttribute("aria-label", "取消收藏词语");
+  await expect(page.locator("[data-collection-word]")).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "我的释义 / 已存解释", exact: true }).click();
   const editor = page.getByRole("dialog", { name: "收藏详情", exact: true });
   await editor.getByRole("textbox", { name: "我的释义", exact: true }).fill("我的理解：论证产生的说服力。");
@@ -161,12 +183,13 @@ test("adopting an unsaved word updates only its occurrence, undo restores it, an
   await editor.getByRole("button", { name: "关闭", exact: true }).click();
   await retained.click();
   await page.locator("[data-collection-word]").click();
-  await expect(page.locator("[data-collection-word]")).toHaveText("收藏词语");
-  await expect(retained.locator(".gloss")).toHaveText("令人信服");
+  await expect(page.locator("[data-collection-word]")).toHaveAttribute("aria-label", "收藏词语");
+  await expect(page.locator("[data-collection-word]")).toHaveAttribute("aria-pressed", "false");
+  await expect.poll(glossText).toBe("令人信服");
   await page.reload();
   await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");
   await expect(retained).toHaveCount(1);
-  await expect(retained.locator(".gloss")).toHaveText("令人信服");
+  await expect.poll(glossText).toBe("令人信服");
   await verifyOtherOccurrence("after-reload");
   state = await (await request.get(`/api/collections/state/${doc.id}`)).json();
   expect(state.items).toEqual([]);

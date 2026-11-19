@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:regression": ".venv/bin/python scripts/regression.py",
+    "test:e2e:core": ".venv/bin/python scripts/regression.py --e2e-only",
     "test:e2e": "playwright test",
     "test:ui": "playwright test --ui"
   },

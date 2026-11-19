@@ -36,9 +36,12 @@ When the same mistake happens twice (or the user corrects a pattern), do not mer
 | --- | --- |
 | Never touch personal Formal/Preview libraries in tests | `tests/conftest.py`, `scripts/test_server.py`, flavor bundle/root isolation |
 | Never commit local DBs, `.env`, secrets, or build artifacts | `.gitignore` |
-| Source anchors use UTF-16 on web ↔ Python code points on backend | `tests/test_tokenize.py`, `collections_smoke` (to move into `tests/`) |
+| Source anchors use UTF-16 on web ↔ Python code points on backend | `tests/test_tokenize.py`, `tests/test_anchors_and_collections.py` |
+| Observable URL import & reading evidence contracts survive internal cleanup | `tests/test_url_import.py`, `tests/test_reading_evidence.py` |
+| Production JS modules & PDF.js paths resolve cleanly | `tests/test_web_module_graph.py` |
+| Core reading loop & backend invariants pass before merging | `npm run test:regression` (`scripts/regression.py`) |
 | No unnecessary defensive code or swallowed exceptions | Review + `.agents/skills/deslop`, `.agents/skills/code-quality-review` (promote recurring patterns to lint/tests) |
-| Frontend async paging/reflow uses one state machine + `AbortController` | Planned Step 4 refactor + Playwright regression net |
+| Frontend async paging/reflow uses one state machine + `AbortController` | Planned Step 4 refactor + Playwright core specs |
 
 ## Data & Product Safety Invariants
 
