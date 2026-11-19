@@ -1,6 +1,6 @@
 """Reproducible isolated API walkthrough, always on disposable databases.
 
-Run: PYTHONPATH=src .venv/bin/python -m wise_reader.collections_smoke
+Run: PYTHONPATH=src .venv/bin/python tests/collections_smoke.py
 Failure classes are recorded in docs/parallel/v11-records-status.md before this
 helper was written. This is API smoke evidence, not device/model acceptance.
 """

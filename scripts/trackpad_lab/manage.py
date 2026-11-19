@@ -37,8 +37,6 @@ def start():
     client=RUNTIME/'client.json'
     client.write_text(json.dumps({'url':url}))
     client.chmod(0o600)
-    config=ROOT/'web/prototypes/trackpad-native/bridge-config.js'
-    config.write_text('export const bridgeURL = '+json.dumps(url)+';\n')
     env={**os.environ,'WR_PHASE_TOKEN':token,'WR_PHASE_BINARY':str(BINARY)}
     with (RUNTIME/'server.log').open('ab') as log:
         process=subprocess.Popen([str(ROOT/'.venv/bin/python'),'-m','uvicorn','scripts.trackpad_lab.server:app','--host','127.0.0.1','--port','8769','--no-access-log','--log-level','warning'],cwd=ROOT,env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)

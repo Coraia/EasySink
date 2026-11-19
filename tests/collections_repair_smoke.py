@@ -1,7 +1,7 @@
 """R1–R3 production-route replay, synthetic data in fresh temporary databases.
 
 Failure classes precede this helper in v11-records-integration-review.md.
-Run with PYTHONPATH=src .venv/bin/python -m wise_reader.collections_repair_smoke.
+Run with PYTHONPATH=src .venv/bin/python tests/collections_repair_smoke.py.
 No provider, user configuration, running service, browser or unit-test doubles.
 Every request/response is retained losslessly; large bodies use gzip artifacts.
 """

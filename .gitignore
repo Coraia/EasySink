@@ -19,7 +19,6 @@ build/
 data/backups/
 data/*.db-*
 .runtime/
-web/prototypes/trackpad-native/bridge-config.js
 node_modules/
 test-results/
 playwright-report/
