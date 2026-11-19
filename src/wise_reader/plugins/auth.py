@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import sqlite3
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
@@ -113,7 +114,7 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
                 "INSERT INTO wr_user(username, pass_hash, created_at) VALUES (?,?,?)",
                 (username, _hash(body.password), _now()),
             )
-        except Exception as e:
+        except sqlite3.IntegrityError as e:
             raise HTTPException(409, "username taken") from e
         token = secrets.token_urlsafe(32)
         ctx.store.execute(

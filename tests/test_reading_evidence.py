@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 
 from fastapi.testclient import TestClient
@@ -115,3 +116,20 @@ def test_evidence_does_not_block_business_operations():
             assert note.status_code == 200
             fb = c.post("/api/feedback", json={"lemma": "serendipity", "verdict": "known"})
             assert fb.status_code == 200
+
+
+def test_evidence_ignores_backward_clock_jump():
+    with TestClient(create_app()) as c:
+        epoch = c.get("/api/evidence/status").json()["epoch"]
+        enabled = c.post("/api/evidence/control", json={"action": "enable", "epoch": epoch, "confirm": True}).json()
+        assert enabled["enabled"] == 1
+
+        c.app.state.evidence.store.execute("UPDATE wr_evidence_control SET clock=? WHERE id=1", (time.time() + 3600,))
+
+        status = c.get("/api/evidence/status")
+        assert status.status_code == 200
+        assert status.json()["enabled"] == 1
+        assert status.json()["pause"] == ""
+
+        posted = c.post("/api/evidence/batch", json={"epoch": enabled["epoch"], "events": _sample_events(uuid.uuid4().hex)})
+        assert posted.status_code == 200, posted.text

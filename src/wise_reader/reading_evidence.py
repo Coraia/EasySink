@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 import time
@@ -145,7 +146,6 @@ class Evidence:
         # Cached consent is only populated from committed status/control. Producer
         # capture never reads or writes SQLite on the reader's critical path.
         self._consent = None
-        self._clock_seen = self._state()['clock']
         if autostart:
             self._worker = Thread(target=self._run, name="reading-evidence", daemon=True)
             self._worker.start()
@@ -197,8 +197,10 @@ class Evidence:
                         if epoch == self._state()['epoch']:
                             self.fault = 'capture-identity-conflict'
                     except Exception:
+                        logging.getLogger(__name__).exception("evidence flush conflict check failed")
                         self.fault = 'capture-storage-failure'
                 except Exception:
+                    logging.getLogger(__name__).exception("evidence flush storage failure")
                     self.fault = 'capture-storage-failure'
 
     def close(self):
@@ -236,29 +238,15 @@ class Evidence:
         return {'disk_bytes': disk, 'accounted_bytes': accounted,
                 'accounting': 'max(conservative record charge, SQLite pages+WAL+SHM) + bounded queue reserve'}
 
-    def _time(self, state):
-        wall = time.time()
-        high = max(state['clock'], self._clock_seen)
-        # Fail closed on a material backward jump, rather than extending the window.
-        regressed = wall < high - 1
-        self._clock_seen = max(wall, high)
-        return self._clock_seen, regressed
-
     def status(self):
         with self.store.transaction():
             state = self._state()
-            now, regressed = self._time(state)
+            now = time.time()
             usage = self.usage(state)
-            reason = self.fault or ('clock-regression' if regressed else '') or ('90-day-limit' if state['started'] is not None and now - state['started'] >= DAYS else '') or ('256-MiB-limit' if usage['accounted_bytes'] >= LIMIT else '')
+            reason = self.fault or ('90-day-limit' if state['started'] is not None and now - state['started'] >= DAYS else '') or ('256-MiB-limit' if usage['accounted_bytes'] >= LIMIT else '')
             if state['enabled'] and reason:
                 self._pause(reason, now)
                 state = self._state()
-            elif state['enabled'] and now - state['clock'] >= 1:
-                # Persist the observed high-water mark on the asynchronous status
-                # cadence, not on each reader operation. Otherwise a restart can
-                # forget a clock advance and silently extend the collection window.
-                self.store.execute('UPDATE wr_evidence_control SET clock=? WHERE id=1', (now,))
-                state['clock'] = now
             with self._queue_lock:
                 self._consent = state['epoch'] if state['enabled'] and not self.fault else None
                 queue_status = {'queued_events': len(self._queue), 'queued_bytes': self._queue_bytes}
@@ -280,14 +268,13 @@ class Evidence:
                 self.store.execute("UPDATE wr_evidence_control SET enabled=0,started=NULL,charged=0,pause='',epoch=?,clock=? WHERE id=1",
                                    (uuid.uuid4().hex, time.time()))
                 self.fault = ""
-                self._clock_seen = time.time()
             elif action == "disable":
                 self.store.execute("UPDATE wr_evidence_control SET enabled=0,started=NULL,epoch=? WHERE id=1", (uuid.uuid4().hex,))
             elif action == "enable":
                 if state["pause"] or self.usage(state)['accounted_bytes'] >= LIMIT:
                     raise HTTPException(409, "采集已到界或故障暂停；请先导出、清除阅读证据")
                 if not state["enabled"]:
-                    now = max(time.time(), state["clock"])
+                    now = time.time()
                     self.store.execute("UPDATE wr_evidence_control SET enabled=1,started=?,clock=?,epoch=? WHERE id=1",
                                        (now, now, uuid.uuid4().hex))
             else:
@@ -319,11 +306,9 @@ class Evidence:
     def _append(self, epoch, events):
         """Caller owns transaction. Ack must only escape after its commit."""
         state = self._state()
-        now, regressed = self._time(state)
+        now = time.time()
         if not state["enabled"] or self.fault or epoch != state["epoch"]:
             raise HTTPException(409, "采集已关闭或epoch已失效")
-        if regressed:
-            return self._pause('clock-regression', now)
         if now - state["started"] >= DAYS:
             return self._pause("90-day-limit", now)
         pending, contexts, charge = [], {}, 0
@@ -451,6 +436,7 @@ class Evidence:
                     try:
                         captured['_undo_before'] = self._undo_before(captured.get('undo_token'))
                     except Exception:
+                        logging.getLogger(__name__).exception("evidence undo metadata capture failed")
                         captured['_undo_before'] = {}
                 result = call()
                 # Optional read-only metadata capture must not change business output.
@@ -458,6 +444,7 @@ class Evidence:
                     try:
                         captured['_resource_receipt'] = self._resource_receipt(kind, result, captured)
                     except Exception:
+                        logging.getLogger(__name__).exception("evidence resource receipt capture failed")
                         captured['_resource_receipt'] = {'resources': [], 'resources_gap': 'metadata-unavailable'}
         except HTTPException as exc:
             self.capture_result(request, kind, 'conflict' if exc.status_code == 409 else 'failed',
@@ -513,6 +500,7 @@ class Evidence:
                 if len(self._queue) >= 32:
                     self._wake.set()
         except Exception:
+            logging.getLogger(__name__).exception("evidence producer capture failed")
             self.fault = 'capture-producer-failure'
 
     def events(self, after=0, limit=100):

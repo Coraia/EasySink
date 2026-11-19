@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.responses import PlainTextResponse
 
@@ -44,7 +46,9 @@ def register(app: FastAPI, ctx: PluginContext) -> None:
                 "SELECT n.*, COALESCE(d.title,json_extract(NULLIF(n.source_snapshot,''),'$.title')) AS title FROM wr_note n"
                 " LEFT JOIN document d ON d.id = n.doc_id ORDER BY n.id"
             )
-        except Exception:
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc):
+                raise
             rows = []
         parts = ["# Wise Reader 笔记\n"]
         for r in rows:

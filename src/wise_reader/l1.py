@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Protocol
 
@@ -161,6 +162,7 @@ def generate(
         raw = client.complete(PROMPT, numbered)
         kept, raw_n, dropped = validate(raw, doc)
     except Exception as e:
+        logging.getLogger(__name__).warning("l1_generate_failed error=%s", type(e).__name__)
         return [], {**stats, "failed": True, "error": type(e).__name__}
     stats["raw"] = raw_n
     stats["dropped"] = dropped

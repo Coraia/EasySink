@@ -5,6 +5,7 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import re
 import uuid
 from pathlib import Path
@@ -176,9 +177,9 @@ def register_picturebook(app, store, ai):
                 # Even HTTP 5xx may have happened after execution upstream.
                 if 400 <= code < 500:
                     state, message = "failed", f"插画服务拒绝请求（HTTP {code}），请检查配置或额度"
-            except Exception:
+            except Exception as exc:
                 # Do not include untrusted response bodies or credentials in public errors.
-                pass
+                logging.getLogger(__name__).warning("picturebook_illustration_failed art_key=%s error=%s", art_key, type(exc).__name__)
             with store.transaction():
                 store.execute("UPDATE wr_picturebook_attempt SET state=?, message=?, updated_at=? WHERE id=?", (state, message, _now(), attempt))
                 store.execute("UPDATE wr_picturebook_art SET state=?, message=?, updated_at=? WHERE art_key=? AND attempt_id=?", (state, message, _now(), art_key, attempt))
