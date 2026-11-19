@@ -1,7 +1,7 @@
 import { actionIcon } from "./reading-action-icons.js";
 import { sameSelection } from "./source-selection.js";
 import { renderDictionaryCard } from "./dictionary-card.js";
-import { anchorFromDOMRange, sourceRuns } from "./selection-range.js";
+import { anchorFromDOMRange } from "./selection-range.js";
 import { $, $$, e, api, Scope, local, toast, errorBox } from "./core.js";
 import { ReadingPages } from "./pagination.js?v=20261018-keyboard-paging-tuned";
 import { captureAnnotationLayout, updateAnnotationLayout, captureRetainedWordLayout, reconcileRetainedWordLayout } from "./annotation-layout.js";
@@ -14,29 +14,6 @@ import {
   readerIcon,
 } from "./reader-chrome.js?v=20261018-keyboard-paging-tuned";
 export class Reader {
-  static inputVeilAlpha(value) {
-    const color=String(value ?? "").trim().toLowerCase();
-    if(color==="transparent")return 0;
-    const slash=color.match(/^rgba?\(([^/()]*)\/([^/()]*)\)$/);
-    let channels,alpha;
-    if(slash){channels=slash[1].trim().split(/\s+/);alpha=slash[2].trim();}
-    else {
-      const rgba=color.match(/^rgba\(([^()]*)\)$/);
-      if(!rgba)return 1; // Three-channel rgb(), including black, is opaque.
-      const parts=rgba[1].split(",").map(s=>s.trim());
-      if(parts.length!==4)return 1;
-      channels=parts.slice(0,3);alpha=parts[3];
-    }
-    const number=/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(%?)$/;
-    if(channels.length!==3 || !channels.every(channel=>{
-      const match=channel.match(number),n=Number(match?.[1]);
-      return match && Number.isFinite(n) && n>=0 && n<=(match[2]?100:255);
-    }))return 1;
-    const match=alpha.match(number);
-    if(!match)return 1;
-    const n=Number(match[1])/(match[2]?100:1);
-    return Number.isFinite(n) && n>=0 && n<=1?n:1;
-  }
   constructor(ctx, scope, doc, handoff = null) {
     this.ctx = ctx;
     this.scope = scope;
@@ -460,56 +437,22 @@ export class Reader {
   visibleSource(within = null) {
     const article = $("#article"), parts = within ? this.sourceParts(within) : null;
     if (!article || (within && !parts)) return null;
-    const range = document.createRange();
-    for (const run of sourceRuns(article)) {
-      const id = run.block.dataset.block, block = this.pages.blocks.get(id);
-      if (!block || run.node.textContent !== block.text.slice(run.start, run.end)) continue;
-      const matches = parts?.filter(p => p.block_id === id &&
-        (p.start === p.end ? p.start >= run.start && p.start < run.end : p.start < run.end && p.end > run.start));
-      if (parts && !matches.length) continue;
-      const parent = run.node.parentElement, leaf = parent.closest(".page-leaf");
-      // Moving ink is drawn on a compositor surface; its transparent DOM is
-      // source mapping, not proof of visible glyphs at those rectangles.
-      if (!leaf || parent.closest(".reflow-moving,[aria-hidden='true']")) continue;
-      let left = 0, top = 0, right = innerWidth, bottom = innerHeight, hidden = false;
-      for (let node = parent; node; node = node.parentElement) {
-        const css = getComputedStyle(node);
-        if (css.display === "none" || css.visibility !== "visible" || +css.opacity === 0) { hidden = true; break; }
-        const box = node.getBoundingClientRect();
-        if (node === leaf || node === article || /hidden|clip|scroll|auto/.test(css.overflowX)) {
-          left = Math.max(left, box.left); right = Math.min(right, box.right);
-        }
-        if (node === leaf || node === article || /hidden|clip|scroll|auto/.test(css.overflowY)) {
-          top = Math.max(top, box.top); bottom = Math.min(bottom, box.bottom);
-        }
-        if (node === article) break;
+    let fallback = null;
+    for (const node of article.querySelectorAll(".page-leaf [data-block]")) {
+      if (node.closest(".reflow-moving,[aria-hidden='true']")) continue;
+      const id = node.dataset.block, start = +node.dataset.start, end = +node.dataset.end;
+      if (!id || !Number.isInteger(start) || !Number.isInteger(end) || !this.pages?.blocks?.get(id)) continue;
+      if (parts) {
+        const match = parts.find(p => p.block_id === id && (start === end
+          ? p.start === start && p.end === end
+          : p.start === p.end ? p.start >= start && p.start < end : p.start < end && p.end > start));
+        if (!match) continue;
+        return this.anchorFor(id, Math.max(start, match.start), Math.max(start, match.start));
       }
-      if (hidden || right <= left || bottom <= top) continue;
-      const color = getComputedStyle(parent).color;
-      if (color === "transparent" || /rgba\([^)]*,\s*0\s*\)$/.test(color)) continue;
-      for (const match of run.node.textContent.matchAll(/\S/gu)) {
-        const start = run.start + match.index, end = start + match[0].length;
-        if (matches && !matches.some(p => p.start === p.end
-          ? p.start >= start && p.start < end : p.start < end && p.end > start)) continue;
-        range.setStart(run.node, match.index); range.setEnd(run.node, match.index + match[0].length);
-        for (const box of range.getClientRects()) {
-          const x1 = Math.max(left, box.left), x2 = Math.min(right, box.right),
-            y1 = Math.max(top, box.top), y2 = Math.min(bottom, box.bottom);
-          if (x2 - x1 < .5 || y2 - y1 < .5) continue;
-          const hit = document.elementFromPoint((x1 + x2) / 2, (y1 + y2) / 2);
-          // The reader's tool veil disables input to the paper (inert) while
-          // its glyphs remain visible. Hit testing alone cannot prove occlusion.
-          const veil = hit?.matches("#chrome-dismiss,#panel-dismiss") ? getComputedStyle(hit) : null;
-          const alpha = veil ? Reader.inputVeilAlpha(veil.backgroundColor) : 1;
-          const softVeil = veil && alpha <= .1 && veil.backgroundImage === "none" &&
-            veil.filter === "none" && (!veil.backdropFilter || veil.backdropFilter === "none") &&
-            veil.boxShadow === "none" && !hit.children.length && !hit.textContent.trim();
-          if (hit && (hit === parent || parent.contains(hit) || softVeil))
-            return this.anchorFor(id, start, start);
-        }
-      }
+      if (start < end) return this.anchorFor(id, start, start);
+      fallback ??= this.anchorFor(id, start, start);
     }
-    return null;
+    return fallback;
   }
   captureView({within} = {}) {
     const copy = value => value ? structuredClone(value) : null;
