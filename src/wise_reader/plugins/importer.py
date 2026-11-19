@@ -311,19 +311,8 @@ async def _url_json(request: Request):
             raise HTTPException(413, "URL request exceeds 16 KiB")
         data.extend(chunk)
 
-    def pairs(items):
-        result = {}
-        for key, value in items:
-            if key in result:
-                raise ValueError('duplicate key')
-            result[key] = value
-        return result
-
-    def invalid_constant(value):
-        raise ValueError('invalid JSON constant')
-
     try:
-        body = json.loads(data.decode('utf-8'), object_pairs_hook=pairs, parse_constant=invalid_constant)
+        body = json.loads(data.decode('utf-8'))
         if not isinstance(body, dict):
             raise ValueError('object required')
     except (ValueError, UnicodeError, RecursionError):
@@ -356,8 +345,9 @@ def _url_response(receipt, store, library_id=None):
             if source is None:
                 raise ValueError('source unavailable')
             metadata = json.loads(source.pop('metadata_json'))
-            source.update(author=metadata['author'], published_at=metadata['published_at'])
+            source.update(author=metadata.get('author'), published_at=metadata.get('published_at'))
         except Exception:
+            logging.getLogger(__name__).exception('Failed reading URL committed metadata')
             value.update(state='unknown', code='source_read_failed', message='保存结果待核对，请保留请求编号。',
                          stage='status', retryable=False)
             return JSONResponse(value, status_code=503, headers={'Cache-Control': 'no-store'})
@@ -394,7 +384,7 @@ def _register_url_routes(app: FastAPI, ctx: PluginContext):
         _url_origin(request, write=False)
         try:
             _, library_id = current_owner()
-        except Exception:
+        except ImportFailure:
             return JSONResponse({'code': 'library_identity_unavailable'}, status_code=503,
                                 headers={'Cache-Control': 'no-store'})
         return JSONResponse({'library_id': library_id}, headers={'Cache-Control': 'no-store'})
@@ -402,7 +392,7 @@ def _register_url_routes(app: FastAPI, ctx: PluginContext):
     def invoke(request_id, action, expected_library, url: str = '', user_approved: bool = False):
         try:
             owner, library_id = current_owner()
-        except Exception:
+        except ImportFailure:
             return _url_response(Receipt(request_id, 'unknown', error_code='url_unavailable'), ctx.store)
         if library_id != expected_library:
             return JSONResponse({'code': 'library_mismatch', 'request_id': request_id,
@@ -423,7 +413,11 @@ def _register_url_routes(app: FastAPI, ctx: PluginContext):
                         prepared = URLPreparer(ctx.engine.prepare_import).prepare(url, control)
                         sealed = owner.staging.prepare(prepared.source, prepared.document, prepared.assets,
                                                        prepared.raw_html, control)
-                        return owner.commit(begun.attempt, sealed, ctx.engine)
+                        try:
+                            return owner.commit(begun.attempt, sealed, ctx.engine)
+                        except BaseException:
+                            owner.staging.discard(sealed.stage_dir)
+                            raise
                     receipt = owner.execute(begun.attempt, Execution(control, work))
             elif action == 'cancel':
                 receipt = owner.cancel(request_id)
