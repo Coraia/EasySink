@@ -111,7 +111,7 @@ def run():
                    and len(s.get("explanation_history", [])) == 1
                    for s in record.get("subranges", []) if s.get("explanation"))
 
-    files = [Path(__file__), Path(plugin.__file__), Path(__file__).with_name("collections_transfer.py"), Path(__file__).with_name("collections.py")]
+    files = [Path(__file__), Path(plugin.__file__), Path(content.__file__).with_name("collections_transfer.py"), Path(content.__file__).with_name("collections.py")]
     log({"production_files": {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
          "scope": "synthetic source and persisted assist fixtures; production FastAPI routes and Store; temporary DBs only"})
     try:
