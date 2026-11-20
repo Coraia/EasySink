@@ -1273,7 +1273,7 @@ export class ReadingPages {
   updateEdges() {
     const article = $("#article"),
       stage = $("#reading-stage"),
-      leaves = [...article.children];
+      leaves = [...article.querySelectorAll(":scope > .page-leaf")];
     if (!leaves.length) return;
     const rect = article.getBoundingClientRect(),
       bounds = stage.getBoundingClientRect();
@@ -1350,7 +1350,7 @@ export class ReadingPages {
       .forEach((el) => el.classList.remove("actions-visible"));
     const article = $("#article"),
       rect = article.getBoundingClientRect(),
-      elements = [...article.children],
+      elements = [...article.querySelectorAll(":scope > .page-leaf")],
       element = elements[direction > 0 && this.count === 2 ? 1 : 0],
       leaf = element.getBoundingClientRect(),
       token = ++this.navigation;

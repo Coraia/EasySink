@@ -117,7 +117,7 @@ export function installNativeReadingTrackpad(ctx, config = {}) {
     if (pending.length >= 8) { cancel('queue-overflow'); pages.r.status('翻页暂时繁忙，请重试'); return; }
     const session = waiting ? null : pages.beginTurn(direction, clientY, false, { allowOpenCard: true });
     const leaf = document.querySelector('#article .page-leaf').getBoundingClientRect();
-    const article = document.getElementById('article'), leaves = [...article.children];
+    const article = document.getElementById('article'), leaves = [...article.querySelectorAll(':scope > .page-leaf')];
     const gap = pages.count === 2 ? leaves[1].getBoundingClientRect().left - leaves[0].getBoundingClientRect().right : 0;
     const g = active = { id: ++serial, pages, direction, session, waiting, wasQueued: waiting,
       clientY, distance: direction * x, dy: -y, progress: 0, lastAt: at,

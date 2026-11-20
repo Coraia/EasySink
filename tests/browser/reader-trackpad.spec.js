@@ -678,3 +678,55 @@ test("release lands quickly in both directions without a jump or a second page c
     contentType: "image/png",
   });
 });
+
+test("double-spread horizontal swipe with open word card curls the right leaf when reflow ghosts are mounted", async ({
+  page,
+  request,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("wr2:page-motion", JSON.stringify("curl")),
+  );
+  const doc = await book(request);
+  await read(page, doc.id);
+  // Warm GPU curl context so the live fold geometry attaches synchronously.
+  await page.locator("#reading-edge-next").click();
+  await position(page, 2);
+  await page.locator("#reading-edge-prev").click();
+  await position(page, 0);
+  await page.locator('.source-unit[data-word="prominent"]').first().click();
+  const pop = page.locator(".annotation-pop");
+  await expect(pop).toBeVisible();
+  await expect
+    .poll(() => page.locator("#article > .annotation-reflow-ghosts").count())
+    .toBe(1);
+  expect(
+    await page.evaluate(() => document.querySelector("#article").children.length),
+  ).toBeGreaterThan(2);
+  await over(page, pop);
+  let curl;
+  await held(page, 1, async () => {
+    await wheel(page, 180);
+    await expect
+      .poll(async () =>
+        page.evaluate(() =>
+          JSON.parse(document.querySelector("#page-curl-layer").dataset.pin || "null"),
+        ),
+      )
+      .not.toBeNull();
+    curl = await page.evaluate(() => {
+      const layer = document.querySelector("#page-curl-layer");
+      const leaves = [...document.querySelectorAll("#article > .page-leaf")];
+      return {
+        binding: JSON.parse(layer.dataset.binding || "null"),
+        pin: JSON.parse(layer.dataset.pin || "null"),
+        rightLeafLeft: leaves[1].getBoundingClientRect().left,
+      };
+    });
+    await wheel(page, 240);
+  });
+  expect(curl.binding.x).toBeGreaterThanOrEqual(curl.rightLeafLeft - 1);
+  expect(curl.pin.x).toBeGreaterThan(curl.rightLeafLeft);
+  await finishGesture(page);
+  await expect(pop).toHaveCount(0);
+  await position(page, 2);
+});
