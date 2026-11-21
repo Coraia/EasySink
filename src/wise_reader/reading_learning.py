@@ -66,7 +66,12 @@ def estimate(store, lexicon, profile):
     for row in rows:
         value = json.loads(row["data"])
         usage = value.get("usage")
-        scope = [value["quote"], usage] if usage else [value["doc_id"], value["anchor"]]
+        if isinstance(usage, dict) and usage.get("protocol") == "lexeme-v1" and isinstance(usage.get("lemma"), str):
+            scope = ["lexeme-v1", usage["lemma"]]
+        elif usage:
+            scope = [value["quote"], usage]
+        else:
+            scope = [value["doc_id"], value["anchor"]]
         groups[packed(scope)] = value
     lexemes = {}
     for value in groups.values():

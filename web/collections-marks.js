@@ -162,6 +162,21 @@ export function createAnnotationOverlay(reader) {
             state.end > state.start &&
             (state.understood === true || (state.retained && state.note)),
         );
+        const isWordOnlyKnown = (state) =>
+          state.understood === true &&
+          !(state.retained && state.note) &&
+          state.usage?.protocol === "lexeme-v1";
+        const suppressesFragment = (state, fragment) => {
+          if (!(state.start < fragment.end && state.end > fragment.start))
+            return false;
+          if (isWordOnlyKnown(state))
+            return (
+              fragment.kind !== "phrase" &&
+              state.start <= fragment.start &&
+              state.end >= fragment.end
+            );
+          return true;
+        };
         // A gloss belongs to the complete annotated expression. A retained
         // member/partial word (or contextual suppression) cannot leave that
         // expression's gloss attached to its remaining half, nor duplicate it.
@@ -169,10 +184,7 @@ export function createAnnotationOverlay(reader) {
           const fragment = fragments[i];
           if (
             fragment.type !== "plain" &&
-            active.some(
-              (state) =>
-                state.start < fragment.end && state.end > fragment.start,
-            )
+            active.some((state) => suppressesFragment(state, fragment))
           )
             fragments[i] = {
               type: "plain",
@@ -181,12 +193,22 @@ export function createAnnotationOverlay(reader) {
               end: fragment.end,
             };
         }
+        const effective = active.filter(
+          (state) =>
+            !isWordOnlyKnown(state) ||
+            !fragments.some(
+              (fragment) =>
+                fragment.type !== "plain" &&
+                state.start < fragment.end &&
+                state.end > fragment.start,
+            ),
+        );
         const cuts = [
           ...new Set([
             0,
             block.text.length,
             ...fragments.flatMap((f) => [f.start, f.end]),
-            ...active.flatMap((s) => [s.start, s.end]),
+            ...effective.flatMap((s) => [s.start, s.end]),
           ]),
         ].sort((a, b) => a - b);
         const next = [];
@@ -194,7 +216,7 @@ export function createAnnotationOverlay(reader) {
           const start = cuts[i],
             end = cuts[i + 1],
             base = fragments.find((f) => f.start <= start && f.end >= end);
-          const hits = active.filter(
+          const hits = effective.filter(
             (state) => state.start <= start && state.end >= end,
           );
           const retained = hits

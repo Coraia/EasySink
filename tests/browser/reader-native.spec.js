@@ -324,7 +324,7 @@ for (const complete of [false, true]) test(`real annotation reflow preserves the
     'using unaided observation, calm discussion, and careful notes. Each person checked the final diagram.').join('\n\n');
   await request.patch('/api/profile', {data: {density: 15, vocab_size: 8000}});
   const doc = await prepared(page, request, 'double', {desktop: true, text});
-  const need = page.getByRole('button', {name: '需注释：后续相同适用表达继续显示', exact: true});
+  const need = page.getByRole('button', {name: '需注释：后续该词或短语继续显示', exact: true});
   await page.locator('#article .page-leaf').nth(1).locator('[data-word="unaided"]').first().click();
   await expect(page.locator('[data-retained]')).toBeEnabled();
   await page.locator('[data-retained]').click();
@@ -383,7 +383,7 @@ for (const complete of [false, true]) test(`real annotation reflow preserves the
   });
   const clean = await page.evaluate(() => window.__sourceWitness());
   await page.locator('#article .page-leaf').nth(1).locator('[data-word="unaided"]').first().click();
-  const known = page.getByRole('button', {name: '认识：后续相同适用表达不再自动标注', exact: true});
+  const known = page.getByRole('button', {name: '认识：后续该词或短语不再自动标注', exact: true});
   await known.click();
   await expect(known).toHaveAttribute('aria-pressed', 'true');
   await expect(known).toBeEnabled();

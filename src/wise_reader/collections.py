@@ -384,7 +384,7 @@ class Collections:
     def usage_preview(self, doc_id, anchor):
         from wise_reader.usage_feedback import choices
         snap = validate(self.store, doc_id, anchor)
-        return {"choices": choices(self.store, snap)}
+        return {"choices": choices(self.store, snap, self.lexicon)}
 
     def usage_feedback(self, doc_id, anchor, action, scope_id, fields):
         from wise_reader.usage_feedback import selected_scope
@@ -394,7 +394,7 @@ class Collections:
             snap = validate(self.store, doc_id, anchor)
             old = self.store.query_one("SELECT * FROM wr_collection_feedback WHERE dedupe=? AND deleted=0", (key(snap, "feedback"),))
             data = json.loads(old["data"]) if old else {**snap, "understood": None, "retained": False, "note": "", "detail": "", "target": ""}
-            usage = selected_scope(self.store, snap, scope_id)
+            usage = selected_scope(self.store, snap, scope_id, self.lexicon)
             data["usage"] = usage
             if action != "scope":
                 if action == "need":
@@ -496,7 +496,7 @@ class Collections:
             raise HTTPException(413, "本章记录过多，请使用分页收藏列表")
         from wise_reader.usage_feedback import project
         values = [item(r) for r in feedback]
-        return {"items": [item(r) for r in collections], "feedback": values, "usage_matches": project(self.store, doc_id, values)}
+        return {"items": [item(r) for r in collections], "feedback": values, "usage_matches": project(self.store, doc_id, values, self.lexicon)}
 
     def source(self, record_id):
         saved = item(self.row(record_id))

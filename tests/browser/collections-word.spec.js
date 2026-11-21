@@ -200,3 +200,73 @@ test("adopting an unsaved word updates only its occurrence, undo restores it, an
     contentType: "application/json",
   });
 });
+
+test("single-word known defaults to whole-word scope while keeping dictionary phrases independent", async ({
+  page,
+  request,
+}) => {
+  await request.patch("/api/profile", {
+    data: { density: 15, vocab_size: 1000, l1_enabled: false, repeat: true },
+  });
+  const doc = await (
+    await request.post("/api/documents", {
+      data: {
+        title: "Whole-word default scope acceptance",
+        text: "It is very ubiquitous, and it is still ubiquitous here, so we can just see it too. We had to break the ice, while the ice was still there for us.",
+      },
+    })
+  ).json();
+  await read(page, doc.id);
+
+  // Case A: single word defaults to whole-word scope even between stop words/punctuation.
+  const ubiquitousAnnos = page.locator('#article .annotation[data-target="ubiquitous"]');
+  await expect(ubiquitousAnnos).toHaveCount(2);
+  await ubiquitousAnnos.first().click();
+
+  await expect(page.locator("[data-usage-label]")).toHaveText("范围：整个词 ubiquitous");
+  await expect(page.locator("[data-usage-status]")).toHaveText("未反馈");
+
+  const known = page.getByRole("button", {
+    name: "认识：后续该词或短语不再自动标注",
+    exact: true,
+  });
+  await known.click();
+  await expect(page.locator("[data-usage-status]")).toHaveText("已认识 · 全书生效");
+  await expect(page.locator("[data-usage-status]")).not.toContainText("等待确认范围");
+  await expect(ubiquitousAnnos).toHaveCount(0);
+
+  await page.getByRole("button", { name: "关闭注释", exact: true }).click();
+  await page.reload();
+  await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");
+  await expect(ubiquitousAnnos).toHaveCount(0);
+
+  // Resetting via "恢复自动" restores both occurrences.
+  await page.locator('#article [data-word="ubiquitous"]').first().click();
+  await page.getByRole("button", { name: "恢复自动判断", exact: true }).click();
+  await expect(page.locator("[data-usage-status]")).toHaveText("未反馈");
+  await page.getByRole("button", { name: "关闭注释", exact: true }).click();
+  await expect(ubiquitousAnnos).toHaveCount(2);
+
+  // Case B: marking member word "ice" known suppresses standalone "ice" without suppressing "break the ice".
+  const phrase = page.locator('#article .annotation[data-kind="phrase"]');
+  await expect(phrase).toContainText("break the ice");
+  await expect(page.locator('#article .annotation[data-target="ice"]')).toHaveCount(1);
+
+  await phrase.click();
+  const dictionary = page.locator(".annotation-pop .dictionary-candidates");
+  await dictionary.getByText("单独查词", { exact: true }).click();
+  await dictionary.getByRole("button", { name: "ice", exact: true }).click();
+  await expect(page.locator(".annotation-pop h3")).toHaveText("ice");
+  await expect(page.locator("[data-usage-label]")).toHaveText("范围：整个词 ice");
+  await known.click();
+  await expect(page.locator("[data-usage-status]")).toHaveText("已认识 · 全书生效");
+  await page.getByRole("button", { name: "关闭注释", exact: true }).click();
+
+  await expect(phrase).toContainText("break the ice");
+  await expect(page.locator('#article .annotation[data-target="ice"]')).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");
+  await expect(phrase).toContainText("break the ice");
+  await expect(page.locator('#article .annotation[data-target="ice"]')).toHaveCount(0);
+});

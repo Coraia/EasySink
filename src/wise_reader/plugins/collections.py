@@ -66,7 +66,7 @@ class UsagePreviewIn(BaseModel):
 
 class UsageFeedbackIn(UsagePreviewIn):
     action: Literal["known", "need", "auto", "scope"]
-    scope_id: str = Field(default="pending", max_length=80)
+    scope_id: str = Field(default="pending", max_length=120)
     note: str = Field(default="", max_length=12000)
     detail: str = Field(default="", max_length=12000)
     target: str = Field(default="", max_length=1000)

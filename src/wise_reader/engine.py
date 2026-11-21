@@ -191,13 +191,19 @@ class Engine:
         baseline = l2.filter_candidates(l0_cands, l1_cands, profile, len(doc.tokens), density, verdicts)
         adjusted, learning_model = effective_profile(self.store, self.lexicon, profile)
         version, blocks = content.get_content(self.store, row)
-        hidden, forced = engine_preferences(self.store, doc_id, doc, blocks)
-        def allowed(annotation):
+        hidden_words, hidden_spans, forced = engine_preferences(
+            self.store, doc_id, doc, blocks, lexicon=self.lexicon
+        )
+        all_hidden = hidden_words + hidden_spans
+        def word_allowed(annotation):
             start, end = doc.slice(annotation.first_token, annotation.last_token)
-            return not any(lo < end and hi > start for lo,hi in hidden)
+            return not any(lo < end and hi > start for lo, hi in all_hidden)
+        def phrase_allowed(annotation):
+            start, end = doc.slice(annotation.first_token, annotation.last_token)
+            return not any(lo <= start and hi >= end for lo, hi in hidden_spans)
         force_spans = {(a.first_token,a.last_token) for a in forced}
-        selected_words = [a for a in l0_cands if allowed(a) and (a.first_token,a.last_token) not in force_spans]
-        selected_phrases = [a for a in l1_cands if allowed(a) and (a.first_token,a.last_token) not in force_spans]
+        selected_words = [a for a in l0_cands if word_allowed(a) and (a.first_token,a.last_token) not in force_spans]
+        selected_phrases = [a for a in l1_cands if phrase_allowed(a) and (a.first_token,a.last_token) not in force_spans]
         shown = l2.filter_candidates(selected_words + forced, selected_phrases, adjusted, len(doc.tokens), density, verdicts)
         frags = render.fragments(doc, shown) if not compact else []
         dens = profile.density if density is None else density
