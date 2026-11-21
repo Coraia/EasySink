@@ -148,6 +148,108 @@ test("closing word card immediately after clicking retain still persists and ren
   await expect(page.locator('[data-target="phone"]')).toHaveCount(1);
   await request.post("/api/feedback", { data: { target: "phone", verdict: "reset" } });
 });
+test("consecutive reflows in the same paragraph hide old suffix glosses without overlapping words", async ({
+  page,
+  request,
+}) => {
+  await request.patch("/api/profile", { data: { density: 0 } });
+  const d = await document(request);
+  const waitReflowSettled = async () => {
+    await expect(page.locator("#article")).not.toHaveAttribute("data-reflow-phase", "preparing");
+    await expect(page.locator("#article")).not.toHaveAttribute("data-reflow-phase", "playing");
+  };
+  const inspectGlosses = () =>
+    page.evaluate(() => {
+      const visible = (el) => {
+        const style = getComputedStyle(el);
+        const r = el.getBoundingClientRect();
+        return style.visibility !== "hidden" && style.display !== "none" && r.width > 0 && r.height > 0;
+      };
+      const glosses = [...document.querySelectorAll("#article .gloss, #article .reflow-note-piece")].filter(visible);
+      const orphans = glosses
+        .filter((el) => el.closest("[data-annotation]") === null || el.classList.contains("annotation-gloss-space"))
+        .map((el) => ({ text: el.textContent, className: el.className }));
+      const byAnnotation = new Map();
+      for (const el of glosses) {
+        const host = el.closest("[data-annotation]");
+        const id = host?.dataset.annotation ?? null;
+        if (id === null) continue;
+        if (!byAnnotation.has(id)) byAnnotation.set(id, { id, text: "" });
+        byAnnotation.get(id).text += el.textContent;
+      }
+      const words = [...document.querySelectorAll("#article [data-word]")].filter(visible);
+      const overlaps = [];
+      for (const g of glosses) {
+        const a = g.getBoundingClientRect();
+        for (const w of words) {
+          const b = w.getBoundingClientRect();
+          if (a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1) {
+            overlaps.push({ gloss: g.textContent, word: w.dataset.word });
+          }
+        }
+      }
+      const annotatedTargets = [...document.querySelectorAll("#article [data-annotation][data-word]")].filter(visible)
+        .map((el) => ({ id: el.dataset.annotation, word: el.dataset.word }));
+      return { orphans, annotations: [...byAnnotation.values()], annotatedTargets, overlaps };
+    });
+
+  try {
+    await openReader(page, d.id);
+    await openWordCard(page, "appointment");
+    await page.locator(".annotation-pop [data-retained]").click();
+    await expect(page.locator("#toast")).toContainText("已在这里保留注释");
+    await expect(page.locator('[data-target="appointment"]')).toHaveCount(1);
+
+    await page.reload();
+    await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");
+    await expect(page.locator('[data-target="appointment"]')).toHaveCount(1);
+
+    await openWordCard(page, "morning");
+    await page.locator(".annotation-pop [data-retained]").click();
+    await expect(page.locator("#toast")).toContainText("已在这里保留注释");
+    await expect(page.locator('[data-target="morning"]')).toHaveCount(1);
+    await waitReflowSettled();
+
+    await openWordCard(page, "phone");
+    await page.locator(".annotation-pop [data-retained]").click();
+    await expect(page.locator("#toast")).toContainText("已在这里保留注释");
+    await expect(page.locator('[data-target="phone"]')).toHaveCount(1);
+    await waitReflowSettled();
+
+    const afterAdd = await inspectGlosses();
+    expect(afterAdd.orphans).toEqual([]);
+    expect(afterAdd.overlaps).toEqual([]);
+    expect(afterAdd.annotatedTargets.map((t) => t.word)).toEqual(["morning", "phone", "appointment"]);
+    expect(afterAdd.annotations).toHaveLength(3);
+    for (const entry of afterAdd.annotations) {
+      expect(entry.text.startsWith("〈")).toBe(true);
+      expect(entry.text.endsWith("〉")).toBe(true);
+      expect(entry.text.split("〈").length - 1).toBe(1);
+      expect(entry.text.split("〉").length - 1).toBe(1);
+    }
+
+    await page.getByRole("button", { name: "关闭注释", exact: true }).click();
+    await expect(page.locator(".annotation-pop")).toHaveCount(0);
+
+    await openWordCard(page, "appointment");
+    await expect(page.locator(".annotation-pop [data-retained]")).toHaveAttribute("aria-pressed", "true");
+    await page.locator(".annotation-pop [data-retained]").click();
+    await expect(page.locator(".annotation-pop [data-retained]")).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator("#toast")).toContainText("已取消这里的显式保留");
+    await expect(page.locator('[data-target="appointment"]')).toHaveCount(0);
+    await waitReflowSettled();
+
+    const afterRemove = await inspectGlosses();
+    expect(afterRemove.orphans).toEqual([]);
+    expect(afterRemove.overlaps).toEqual([]);
+    expect(afterRemove.annotatedTargets.map((t) => t.word)).toEqual(["morning", "phone"]);
+    expect(afterRemove.annotations).toHaveLength(2);
+    await expect(page.locator('#article .source-unit[data-word="appointment"]')).toHaveAttribute("role", "button");
+  } finally {
+    for (const target of ["phone", "morning", "appointment"])
+      await request.post("/api/feedback", { data: { target, verdict: "reset" } });
+  }
+});
 test("moderate and more assistance respond for the reported sample", async ({
   page,
   request,

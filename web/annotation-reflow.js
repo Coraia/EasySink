@@ -597,10 +597,17 @@ export class AnnotationReflow {
     const reused=new Set(state.suffixPieces.filter(piece=>piece.word).map(piece=>this.units.get(piece.key)?.node).filter(Boolean));
     for(const node of plan.annotations) {
       if(reused.has(node))continue;
-      const gloss=node.querySelector('.gloss');if(gloss) {gloss.classList.replace('gloss','annotation-gloss-space');gloss.setAttribute('aria-hidden','true');}
-      node.style.borderColor='transparent';node.style.background='transparent';delete node.dataset.annotation;delete node.dataset.target;node.removeAttribute('role');node.removeAttribute('tabindex');
+      const glosses=node.matches('.gloss')?[node]:[...node.querySelectorAll('.gloss')];
+      for(const gloss of glosses) {
+        gloss.classList.replace('gloss','annotation-gloss-space');
+        gloss.setAttribute('aria-hidden','true');
+        gloss.style.visibility='hidden';
+        gloss.style.pointerEvents='none';
+      }
+      node.style.borderColor='transparent';node.style.background='transparent';delete node.dataset.annotation;delete node.dataset.target;delete node.dataset.kind;
+      if(node!==this.targetNode) {node.removeAttribute('role');node.removeAttribute('tabindex');}
     }
-    for(const node of plan.words) {if(reused.has(node))continue;delete node.dataset.word;node.removeAttribute('role');node.removeAttribute('tabindex');node.setAttribute('aria-hidden','true');node.style.pointerEvents='none';node.style.visibility='hidden';}
+    for(const node of plan.words) {if(reused.has(node))continue;delete node.dataset.word;delete node.dataset.target;delete node.dataset.kind;node.removeAttribute('role');node.removeAttribute('tabindex');node.setAttribute('aria-hidden','true');node.style.pointerEvents='none';node.style.visibility='hidden';}
     for(const block of plan.hiddenBlocks) {
       const fragment=block.closest('.source-fragment');if(fragment){fragment.style.visibility='hidden';fragment.setAttribute('aria-hidden','true');fragment.inert=true;}
       delete block.dataset.block;block.style.visibility='hidden';block.style.pointerEvents='none';block.setAttribute('aria-hidden','true');
@@ -622,7 +629,7 @@ export class AnnotationReflow {
       if(entry.template!==template) {
         if(entry.template)node.replaceWith(entry.template);
         else if(node.parentNode) {
-          const space=node.cloneNode(true);delete space.dataset.word;delete space.dataset.annotation;space.removeAttribute('role');space.removeAttribute('tabindex');space.setAttribute('aria-hidden','true');space.style.visibility='hidden';space.style.pointerEvents='none';node.replaceWith(space);
+          const space=node.cloneNode(true);delete space.dataset.word;delete space.dataset.annotation;delete space.dataset.target;delete space.dataset.kind;space.removeAttribute('role');space.removeAttribute('tabindex');space.setAttribute('aria-hidden','true');space.style.visibility='hidden';space.style.pointerEvents='none';node.replaceWith(space);
         }
         node.querySelectorAll('.reflow-reservation-text').forEach(space=>space.replaceWith(...space.childNodes));
         const names=new Set([...template.attributes].map(attribute=>attribute.name));
