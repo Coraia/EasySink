@@ -54,7 +54,7 @@ PLUGINS: tuple[PluginSpec, ...] = (
     PluginSpec("tts", "朗读", "优先电脑本地语音，就地播放与停止；远程语音由你选择。", backend="tts"),
     PluginSpec("theme", "主题", "纸色 / 夜间 / 羊皮纸。"),
     PluginSpec("typography", "排版", "字号、行距、栏宽。"),
-    PluginSpec("search", "文内搜索", "在当前篇里找词并跳转。"),
+    PluginSpec("search", "文内搜索", "在当前篇或整本书中找词并跳转。", backend="search"),
     PluginSpec("stats", "阅读统计", "累计阅读时长与篇数。", backend="stats"),
     PluginSpec("evidence", "本机阅读证据", "首次明确开启后才采集；独立关闭、导出与清除。", backend="evidence"),
     PluginSpec("shortcuts", "快捷键", "键盘操作密度、沉浸、搜索。"),

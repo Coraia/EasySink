@@ -73,6 +73,7 @@ const ctx = {
     // This committed page turn supersedes an older interrupted jump. Handoff
     // skips normal jump restoration, so leaving it queued would move a later reopen.
     local.remove(`jump:${reader.doc.id}`);
+    local.remove(`search-highlight:${reader.doc.id}`);
     ctx.reader = reader;
     history.pushState(null, "", `#/read/${reader.doc.id}`);
     const trackpad = previous.pages.trackpad;

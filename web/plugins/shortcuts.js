@@ -6,7 +6,10 @@ export function install(ctx) {
       if (ev.key === "Escape") {
         r.closePop();
         if (r.panelId) r.closePanel();
-        else if (document.body.classList.contains("immersive"))
+        else if (r.search) {
+          r.search = "";
+          r.pages.render();
+        } else if (document.body.classList.contains("immersive"))
           $("#tool-immersive")?.click();
         return;
       }

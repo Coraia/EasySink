@@ -49,6 +49,13 @@ export class Reader {
       });
     });
     this.pages = new ReadingPages(this);
+    if (!this.handoff) {
+      const searchHighlight = local.get(`search-highlight:${d.id}`);
+      if (searchHighlight) {
+        local.remove(`search-highlight:${d.id}`);
+        this.search = String(searchHighlight).slice(0, 120);
+      }
+    }
     await this.draw();
     const s = this.scope;
     s.on($(".density-control"), "click", (ev) => {
