@@ -24,8 +24,8 @@ from launch_policy import PROFILES
 ROOT = Path(__file__).resolve().parents[2]
 ICON = ROOT / "desktop/Assets/EasySink.icns"
 VERSION = "1.3.0"
-BUILD = "39"
-RELEASE_STATUS = "Step 0-4 cleanup complete; open-word-card horizontal swipe paging restored, double-spread spine-curl and reflow closePop races fixed, ReadingStorage simplified."
+BUILD = "40"
+RELEASE_STATUS = "Whole-book search, consecutive annotation-reflow gloss fix, and whole-word/phrase default usage-feedback scope with phrase independence."
 PDFJS_ROOT = ROOT / "web/vendor/pdfjs-6.4.299"
 PDFJS_MANIFEST = PDFJS_ROOT / "SOURCE.json"
 PDF_PINS = {
