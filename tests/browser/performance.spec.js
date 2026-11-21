@@ -188,13 +188,21 @@ test("late source restore survives reflow, bookmarks and reopen; leaving cancels
     "aria-pressed",
     "true",
   );
+  // The resume position is the first source of the page showing the hit, a
+  // collapsed anchor (empty quote), not the search hit itself.
   await expect
-    .poll(
-      async () =>
-        (await (await request.get(`/api/documents/${id}/progress`)).json())
-          .anchor?.quote,
-    )
-    .toContain("Destination marker");
+    .poll(async () => {
+      const { scroll_ratio, anchor } = await (
+        await request.get(`/api/documents/${id}/progress`)
+      ).json();
+      return (
+        scroll_ratio > 0.9 &&
+        (await page
+          .locator(`.page-leaf [data-block="${anchor.block_id}"]`)
+          .count()) > 0
+      );
+    })
+    .toBe(true);
   await page.evaluate(() => {
     window.__reflowSnapshots = [];
     window.__reflowObserver = new MutationObserver(() =>
@@ -282,7 +290,7 @@ test("content analysis optimization retains exact phrases and live personal feed
     "打破沉默",
   );
   await page.locator('.annotation[data-kind="phrase"]').click();
-  await page.locator("[data-understood]").click();
+  await page.locator('[data-usage-action="known"]').click();
   await expect(page.locator('.annotation[data-kind="phrase"]')).toHaveCount(0);
   await page.reload();
   await expect(page.locator(".reader")).toHaveAttribute("data-ready", "true");
