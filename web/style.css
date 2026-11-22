@@ -2904,17 +2904,15 @@ dialog.reader-ending {
   background: var(--accent-soft);
 }
 #more-view .density-control {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
   margin-top: 12px;
 }
 #more-view .density-control span {
-  grid-column: 1 / -1;
+  flex-basis: 100%;
 }
 #more-view .density-control button {
-  padding-inline: 2px;
-  white-space: nowrap;
+  padding-inline: 5px;
 }
 #more-view #density-hint {
   margin: 6px 0 0;

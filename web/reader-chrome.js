@@ -1,5 +1,5 @@
 import { openReadingAI } from "./ai-setup-guard.js";
-import { $, e, local, toast } from "./core.js";
+import { $, api, e, local, toast } from "./core.js";
 
 const icons = {
   outline: '<path d="M4 5h16M4 12h16M4 19h16"/>',
@@ -77,7 +77,7 @@ export function readerShell(d, progressEnabled) {
       <div class="reader-ending-page">
         <div class="reader-ending-emblem">${readerIcon("finish")}</div>
         <p class="reader-ending-kicker" id="reader-ending-kicker"></p>
-        <h2 id="reader-ending-title" tabindex="-1">结束这次阅读</h2>
+        <h2 id="reader-ending-title" tabindex="-1" autofocus>结束这次阅读</h2>
         <p class="reader-ending-document">${e(d.title)}</p>
         <p id="reader-ending-detail" class="muted">标记读完，把这次阅读保存到阅读记录。</p>
         <p id="reader-ending-error" role="alert" hidden></p>
@@ -422,6 +422,65 @@ export function installReaderChrome(r) {
     stopKeyboardPaging();
     stage.inert = false;
     document.body.classList.remove("paged-reading");
+  });
+}
+
+export function installReaderEnding(r) {
+  const { scope, doc } = r;
+  const dialog = $(".reader-ending");
+  const kicker = $("#reader-ending-kicker");
+  const title = $("#reader-ending-title");
+  const detail = $("#reader-ending-detail");
+  const error = $("#reader-ending-error");
+  const save = $("#reader-ending-save");
+  const home = $("#reader-ending-home");
+  const end = $("#reading-end");
+  const atEnd = doc.pdf
+    ? "读到本节末尾了"
+    : doc.chapter
+      ? "读到本章末尾了"
+      : "读到文末了";
+  const open = (ev) => {
+    r.closePop();
+    r.focus.close();
+    kicker.textContent = end.hidden ? "阅读小结" : "正文结束";
+    if (!save.hidden) title.textContent = end.hidden ? "结束这次阅读" : atEnd;
+    const opener = ev.currentTarget === end ? end : $("#show-tools");
+    opener.focus({ preventScroll: true });
+    dialog.showModal();
+  };
+  scope.on(end, "click", open);
+  scope.on($("#finish-reading"), "click", open);
+  scope.on($("#reader-ending-back"), "click", () => dialog.close());
+  scope.on(save, "click", async () => {
+    save.disabled = true;
+    save.setAttribute("aria-busy", "true");
+    error.hidden = true;
+    try {
+      await api(`/documents/${doc.id}/finish`, {
+        method: "POST",
+        signal: scope.signal,
+        body: {
+          annotation_count: doc.annotation_count,
+          manual_lookups: r.lookups,
+          felt_density: "读完",
+        },
+      });
+      if (scope.signal.aborted) return;
+      title.textContent = "阅读已记录";
+      detail.textContent = "这次阅读已保存，笔记和收藏仍在原处。";
+      save.hidden = true;
+      home.hidden = false;
+      if (dialog.open) title.focus();
+    } catch (err) {
+      if (scope.signal.aborted) return;
+      error.textContent = err.message;
+      error.hidden = false;
+      save.disabled = false;
+      if (dialog.open) save.focus();
+    } finally {
+      save.removeAttribute("aria-busy");
+    }
   });
 }
 

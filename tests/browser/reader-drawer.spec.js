@@ -115,18 +115,32 @@ test("the last page offers a finish screen without recording until confirmed", a
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
   await expect(end).toBeVisible();
+  const reader = page.locator(".reader");
+  const position = await reader.getAttribute("data-source-position");
   await end.click();
   const ending = page.getByRole("dialog", { name: "读到文末了" });
   await expect(ending).toContainText(doc.title);
   await ending.getByRole("button", { name: "回到正文" }).click();
   await expect(ending).toBeHidden();
+  await expect(end).toBeFocused();
+  await expect(reader).toHaveAttribute("data-source-position", position);
   const logs = async () =>
     (await (await request.get("/api/reading-log")).json()).filter(
       (log) => log.doc_id === doc.id,
     );
   expect(await logs()).toHaveLength(0);
+  await page.route(
+    `**/api/documents/${doc.id}/finish`,
+    (route) => route.fulfill({ status: 503, json: { detail: "暂时无法保存" } }),
+    { times: 1 },
+  );
   await end.click();
-  await ending.getByRole("button", { name: "标记读完" }).click();
+  const save = ending.getByRole("button", { name: "标记读完" });
+  await save.click();
+  await expect(ending.getByRole("alert")).toHaveText("暂时无法保存");
+  await expect(save).toBeEnabled();
+  expect(await logs()).toHaveLength(0);
+  await save.click();
   await expect(page.getByRole("dialog", { name: "阅读已记录" })).toBeVisible();
   expect(await logs()).toHaveLength(1);
   await page.getByRole("link", { name: "返回书架", exact: false }).click();
