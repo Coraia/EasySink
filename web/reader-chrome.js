@@ -435,7 +435,7 @@ export function installCoreReaderTools(r) {
     r.panel(
       "appearance",
       "阅读样式",
-      `<div id="appearance-assistance"></div><div class="chips">${[
+      `<div><div id="appearance-assistance"></div><div class="chips">${[
         ["paper", "自然纸色"],
         ["sepia", "暖色书页"],
         ["night", "夜间阅读"],
@@ -446,7 +446,7 @@ export function installCoreReaderTools(r) {
         )
         .join(
           "",
-        )}</div><label for="reader-layout">分页方式</label><select id="reader-layout">${[
+        )}</div></div><div><label for="reader-layout">分页方式</label><select id="reader-layout">${[
         ["auto", "自动 · 宽屏双页"],
         ["single", "始终单页"],
         ["double", "宽屏双页"],
@@ -457,7 +457,7 @@ export function installCoreReaderTools(r) {
         )
         .join(
           "",
-        )}</select><label for="reader-motion">翻页效果</label><select id="reader-motion"><option value="curl">仿真卷页</option><option value="off">无动画</option></select><label class="row"><input id="reader-light" type="checkbox">纸页光影</label><p class="save-state">调整后自动保存</p>`,
+        )}</select></div><div><label for="reader-motion">翻页效果</label><select id="reader-motion"><option value="curl">仿真卷页</option><option value="off">无动画</option></select><label class="row"><input id="reader-light" type="checkbox">纸页光影</label><p class="save-state">调整后自动保存</p></div>`,
       (el, scope) => {
         const assistance = $("#reader-density-actions");
         $("#appearance-assistance", el).append(assistance);

@@ -29,7 +29,7 @@ export function install(ctx) {
       r.panel(
         "typography",
         "舒服地读",
-        `<label for="type-font">正文字体</label><select id="type-font"><option value="serif">衬线 · 书籍</option><option value="sans">无衬线 · 清晰</option></select>${[
+        `<div><label for="type-font">正文字体</label><select id="type-font"><option value="serif">衬线 · 书籍</option><option value="sans">无衬线 · 清晰</option></select></div>${[
           ["size", "正文字号", 18, 30, 1, "px"],
           ["line", "行间距", 1.5, 2.6, 0.05, ""],
           ["width", "阅读栏宽", 560, 960, 20, "px"],
