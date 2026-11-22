@@ -2709,6 +2709,56 @@ body.paged-reading #app {
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
+.paged-reader .tool-panel.reading-drawer {
+  bottom: 64px;
+  width: min(1120px, 100vw);
+  max-height: 32dvh;
+  padding: 12px 24px 16px;
+  border-radius: 16px 16px 0 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: reading-drawer-up 180ms ease-out;
+}
+.reading-drawer .panel-header {
+  flex: 0 0 auto;
+  margin-bottom: 8px;
+}
+.reading-drawer .panel-content {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.reading-drawer[data-panel="typography"] .panel-content,
+.reading-drawer[data-panel="appearance"] .panel-content {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 24px;
+  align-items: center;
+}
+.reading-drawer[data-panel="typography"] .panel-content {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@media (max-width: 700px) {
+  .reading-drawer[data-panel="typography"] .panel-content,
+  .reading-drawer[data-panel="appearance"] .panel-content {
+    grid-template-columns: 1fr;
+  }
+}
+.reading-drawer[data-panel="typography"] .gap {
+  margin: 0;
+}
+.paged-reader:has(.reading-drawer:not([hidden])) .panel-backdrop,
+.paged-reader:has(.reading-drawer:not([hidden])) .panel-backdrop:is(:hover, :active, :focus-visible) {
+  background: transparent;
+}
+@keyframes reading-drawer-up {
+  from { translate: 0 calc(100% + 64px); }
+  to { translate: 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .paged-reader .tool-panel.reading-drawer { animation: none; }
+}
 .reader-secondary-tool {
   font-size: 13px;
   padding: 12px 6px;

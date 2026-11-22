@@ -240,6 +240,8 @@ export class Reader {
     this.panelClose = options.onClose;
     this.positionSelection?.();
     const el = $("#tool-panel");
+    el.classList.toggle("reading-drawer", ["appearance", "typography", "more"].includes(id));
+    el.dataset.panel = id;
     el.innerHTML = `<div class="panel-header"><h2>${e(title)}</h2><button class="icon-button" aria-label="关闭侧栏">×</button></div><div class="panel-content">${html}</div>`;
     el.hidden = false;
     $("#panel-dismiss").hidden = false;
