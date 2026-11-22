@@ -383,7 +383,7 @@ export function installReaderChrome(r) {
       if (document.fullscreenElement) await document.exitFullscreen();
       else await document.documentElement.requestFullscreen();
     } catch {
-      toast("当前窗口不支持全屏。");
+      toast(window.wiseReaderDesktop?.nativeTrackpad ? "当前窗口不支持全屏。" : "当前窗口不支持全屏，可使用浏览器全屏。");
     }
   });
   r.scope.on(document, "fullscreenchange", () => {
