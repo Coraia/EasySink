@@ -221,7 +221,7 @@ export function createReadingSpeech(scope, report) {
             : "local";
       if (engine === "browser") {
         if (!window.speechSynthesis || !window.SpeechSynthesisUtterance)
-          throw Error("当前浏览器无法发音，请在 AI 与语音里选择本地英文音色。");
+          throw Error("当前设备无法发音，请在 AI 与语音里选择本地英文音色。");
         utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = "en-US";
         utterance.rate = rate;

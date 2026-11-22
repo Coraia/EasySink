@@ -10,6 +10,7 @@ import {
   date,
   openDialog,
   busy,
+  storagePlace,
 } from "./core.js";
 import { PluginHost } from "./plugin-host.js?v=20261018-import-fixes";
 import { Reader } from "./reader.js?v=20261018-keyboard-paging-tuned";
@@ -265,7 +266,7 @@ function importText() {
   const draft = local.get("import-draft", { title: "", text: "" });
   const d = openDialog(
     "把内容放进来",
-    `<form id="paste-form" class="stack unified-import"><div id="import-entry" class="import-entry"><textarea id="paste-text" rows="7" required aria-label="粘贴网页链接或文字" placeholder="粘贴网页链接或文字，也可以把文件拖到这里">${e(draft.text)}</textarea><div class="import-entry-footer"><span id="import-supported">粘贴英文文字</span><span id="import-file-slot"></span></div></div><div id="import-detected" class="import-detected" role="status" aria-live="polite"><strong id="import-detected-title">等待内容</strong><span id="import-detected-copy">系统会自动识别链接、文字或文件；只有需要选择时才会继续询问。</span></div><div id="import-extension"></div><div id="import-text-options" hidden><label for="paste-title">标题（可选）</label><input id="paste-title" placeholder="给这篇阅读起个名字" value="${e(draft.title)}"></div><div class="import-actions"><button id="import-clear" type="button">清除</button><span class="save-state" id="paste-state">草稿保留在此浏览器</span><button id="import-continue" class="primary" type="submit" disabled>继续</button></div></form>`,
+    `<form id="paste-form" class="stack unified-import"><div id="import-entry" class="import-entry"><textarea id="paste-text" rows="7" required aria-label="粘贴网页链接或文字" placeholder="粘贴网页链接或文字，也可以把文件拖到这里">${e(draft.text)}</textarea><div class="import-entry-footer"><span id="import-supported">粘贴英文文字</span><span id="import-file-slot"></span></div></div><div id="import-detected" class="import-detected" role="status" aria-live="polite"><strong id="import-detected-title">等待内容</strong><span id="import-detected-copy">系统会自动识别链接、文字或文件；只有需要选择时才会继续询问。</span></div><div id="import-extension"></div><div id="import-text-options" hidden><label for="paste-title">标题（可选）</label><input id="paste-title" placeholder="给这篇阅读起个名字" value="${e(draft.title)}"></div><div class="import-actions"><button id="import-clear" type="button">清除</button><span class="save-state" id="paste-state">草稿保留在${storagePlace()}</span><button id="import-continue" class="primary" type="submit" disabled>继续</button></div></form>`,
   );
   d.classList.add("import-dialog");
   $(".dialog-head h2", d).innerHTML = '<span class="import-kicker">添加阅读</span>把内容放进来';
@@ -314,7 +315,7 @@ function importText() {
     title.value = "";
     form.dataset.importKind = "";
     local.remove("import-draft");
-    pasteState.textContent = "草稿保留在此浏览器";
+    pasteState.textContent = `草稿保留在${storagePlace()}`;
     form.dispatchEvent(new CustomEvent("wr:import-clear", { bubbles: true }));
     renderText();
     text.focus();
@@ -361,7 +362,7 @@ async function renderProfile(scope) {
     )
     .join(
       "",
-    )}${![3500, 4500, 6000, 8000, 12000].includes(p.vocab_size) ? `<option selected value="${p.vocab_size}">自定义 · ${p.vocab_size}</option>` : ""}</select></div><div class="setting-row"><div><strong>默认辅助密度</strong><p>每百词约显示多少处解释。要求保留的注释优先显示。</p></div><select id="default-density" aria-label="默认辅助密度">${[
+    )}${![3500, 4500, 6000, 8000, 12000].includes(p.vocab_size) ? `<option selected value="${p.vocab_size}">自定义 · ${p.vocab_size}</option>` : ""}</select></div><div class="setting-row"><div><strong>辅助密度</strong><p>每百词约显示多少处解释。要求保留的注释优先显示。</p></div><select id="default-density" aria-label="辅助密度">${[
     [0, "原文"],
     [2, "轻 · 2 处"],
     [4, "适中 · 4 处"],

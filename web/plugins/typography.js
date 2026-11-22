@@ -1,4 +1,4 @@
-import { $, local } from "../core.js";
+import { $, local, storagePlace } from "../core.js";
 export function install(ctx) {
   let prefs = local.get("typography", {
     size: 22,
@@ -40,7 +40,7 @@ export function install(ctx) {
           )
           .join(
             "",
-          )}<p class="save-state gap" id="type-state">调整后自动保存到此浏览器</p><button id="reset-type">恢复默认排版</button>`,
+          )}<p class="save-state gap" id="type-state">调整后自动保存到${storagePlace()}</p><button id="reset-type">恢复默认排版</button>`,
         (el, scope) => {
           $("#type-font", el).value = prefs.font || "serif";
           scope.on($("#type-font", el), "change", (ev) => {

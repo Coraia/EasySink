@@ -367,6 +367,9 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
           if (location.origin !== \(jsonOrigin)[0]) return;
           \(readingStorage.bootstrap())
           const emit = (kind) => window.webkit.messageHandlers.readerLifecycle.postMessage({kind, route: location.hash || '#/'});
+          const syncTheme = () => window.webkit.messageHandlers.readerLifecycle.postMessage({kind: 'theme', theme: document.documentElement?.dataset.theme || 'paper'});
+          new MutationObserver(syncTheme).observe(document, {subtree:true, attributes:true, attributeFilter:['data-theme']});
+          document.addEventListener('DOMContentLoaded', syncTheme);
           window.addEventListener('hashchange', () => emit('route'));
           let reported = '';
           const observer = new MutationObserver(() => {
@@ -399,6 +402,11 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         }
         if kind == "storage-error" {
             record("storage-bootstrap-error")
+            return
+        }
+        if kind == "theme", let theme = body["theme"] as? String,
+            ["paper", "sepia", "night"].contains(theme) {
+            window.appearance = NSAppearance(named: theme == "night" ? .darkAqua : .aqua)
             return
         }
         if let route = body["route"] as? String, route.hasPrefix("#/"), route.count < 500 {

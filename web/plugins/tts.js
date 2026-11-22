@@ -134,7 +134,7 @@ export function install(ctx) {
           if (ticket !== generation || r.scope.signal.aborted) return;
           if (engine === "browser") {
             if (!window.speechSynthesis || !window.SpeechSynthesisUtterance)
-              throw Error("浏览器没有本机语音，请在 AI 与语音中选择可用方式");
+              throw Error("当前设备没有可用的本机语音，请在 AI 与语音中选择可用方式");
             await new Promise((resolve, reject) => {
               cancelPlayback = resolve;
               const u = new SpeechSynthesisUtterance(text);

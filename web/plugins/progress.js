@@ -64,7 +64,7 @@ export function install(ctx) {
         .catch(() => {
           local.set(`position-pending:${id}`, anchor);
           if (!scope.signal.aborted)
-            $("#reader-save").textContent = "位置暂存于浏览器，连接恢复后重试";
+            $("#reader-save").textContent = "位置暂存于本地，连接恢复后重试";
         });
       return queue;
     };

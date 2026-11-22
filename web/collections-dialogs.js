@@ -704,7 +704,7 @@ export function manageCollections(
           clearScopedDrafts(selection);
         } catch {
           status.textContent +=
-            " 本机未保存输入暂未能清理，请恢复浏览器存储访问后重试。";
+            " 本机未保存输入暂未能清理，请恢复本地存储访问后重试。";
         }
         $("[data-confirm]", dialog).checked = false;
       }
