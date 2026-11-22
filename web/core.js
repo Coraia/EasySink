@@ -1,5 +1,6 @@
 export const $ = (q, root = document) => root.querySelector(q);
 export const $$ = (q, root = document) => [...root.querySelectorAll(q)];
+export const storagePlace = () => window.wiseReaderDesktop?.nativeTrackpad ? "本机" : "此浏览器";
 export const e = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -97,7 +98,7 @@ export const local = {
       window.wiseReaderDesktop?.persistLocal?.(key, JSON.stringify(value));
       return true;
     } catch {
-      toast("浏览器空间不足，草稿未能保存。请复制内容。");
+      toast("本地存储空间不足，草稿未能保存。请复制内容。");
       return false;
     }
   },

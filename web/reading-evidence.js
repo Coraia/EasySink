@@ -104,7 +104,7 @@ export class ReadingEvidence {
       const state = await api('/evidence/control', {method:'POST',body:{action,epoch,confirm:action !== 'disable'}});
       if (!vetoPersisted) {
         this.state = {...state,enabled:0,server_enabled:state.enabled};
-        this.error = `control-storage-unavailable / 服务端已确认${action === 'clear' ? '清除并关闭' : '关闭'}；本窗口已停采，本浏览器意图存储失败。旧标记不适用于新 epoch。`;
+        this.error = `control-storage-unavailable / 服务端已确认${action === 'clear' ? '清除并关闭' : '关闭'}；本窗口已停采，本地意图存储失败。旧标记不适用于新 epoch。`;
         this.channel?.postMessage('changed'); this.notice(); return state;
       }
       // An explicit later stop in any window wins over this late enable response.

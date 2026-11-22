@@ -32,7 +32,7 @@ export async function install(ctx) {
       <p>达到 256 MiB 或连续采集 90 天先到时暂停；已有证据保留至手动清除，不自动到期删除。占用计入 SQLite 文件、索引、WAL/共享内存和有界队列预留；按实际文件与保守记录计费的较大值提前暂停，不宣称可写满 256 MiB。</p>
       <p data-summary>${state.events} 条事件 · ${state.contexts} 份去重上下文 · ${((state.accounted_bytes ?? state.charged)/1048576).toFixed(2)} MiB 计入配额（含队列预留），实际文件 ${((state.disk_bytes || 0)/1048576).toFixed(2)} MiB。${state.unclosed_sessions} 个会话尾部未确认，可能缺失，不能补记成功。</p>
       <p>业务保存成功不等于采集已持久化。服务端排队不是持久确认；只有证据批次提交成功才成为已保存事件。异常退出前未确认的短尾为 unknown/gap，即使这里显示零个会话也不能排除缺失。关闭或清除会丢弃尚未确认的队列。</p>
-      <p>本浏览器只保存不含原文的采集意图标记。关闭意图在存储成功时跨窗口与重载保留；存储失败仍尝试服务端关闭。两侧均未确认时仅当前窗口暂时停采，其他窗口或重新加载可能恢复旧采集，须重试关闭，不能视为持久关闭。新浏览器或标记被清除后须重新明确开启。</p>
+      <p>本地只保存不含原文的采集意图标记。关闭意图在存储成功时跨窗口与重载保留；存储失败仍尝试服务端关闭。两侧均未确认时仅当前窗口暂时停采，其他窗口或重新加载可能恢复旧采集，须重试关闭，不能视为持久关闭。更换设备或标记被清除后须重新明确开启。</p>
       <p>清除会立即关闭采集并使旧 epoch 失效。若出现 capture-cleanup-incomplete，新增记录已逻辑清除，但进行中的导出或存储故障可能阻止空间回收；等待导出结束后重试清除。已开始的导出保持清除前的一致快照，已导出的文件不受清除影响。</p>
       <p role="status" data-evidence-control-status>${e(state.pause || capture.error || capture.controlNotice)}</p>
       <div class="row"><button data-enable ${state.enabled||state.pause?'disabled':''}>明确开启本机采集</button><button data-disable ${!state.enabled?'disabled':''}>关闭采集</button><button data-export>导出阅读证据</button><button data-clear>清除阅读证据</button></div></section>

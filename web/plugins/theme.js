@@ -1,4 +1,4 @@
-import { $, local } from "../core.js";
+import { $, local, storagePlace } from "../core.js";
 export function install(ctx) {
   const apply = (theme) => (document.documentElement.dataset.theme = theme);
   apply(local.get("theme", "paper"));
@@ -16,7 +16,7 @@ export function install(ctx) {
       )
       .join(
         "",
-      )}</div><div class="save-state" id="theme-state">在此浏览器自动保存</div>`;
+      )}</div><div class="save-state" id="theme-state">在${storagePlace()}自动保存</div>`;
     $("#profile-extensions").append(section);
     scope.on(section, "click", (ev) => {
       const b = ev.target.closest("[data-theme-choice]");

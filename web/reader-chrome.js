@@ -52,9 +52,9 @@ export function readerShell(d, progressEnabled) {
     <div id="reader-extra-tools" hidden></div>
     <div id="reader-book-actions" hidden><div id="reader-density-actions"><div class="density-control" role="group" aria-label="辅助密度"><span>辅助密度</span>${[
       [0, "原文"],
-      [2, "轻"],
-      [4, "适中"],
-      [8, "多"],
+      [2, "轻 · 2 处"],
+      [4, "适中 · 4 处"],
+      [8, "多 · 8 处"],
     ]
       .map(
         ([v, label]) =>
@@ -383,7 +383,7 @@ export function installReaderChrome(r) {
       if (document.fullscreenElement) await document.exitFullscreen();
       else await document.documentElement.requestFullscreen();
     } catch {
-      toast("当前窗口不支持全屏，可使用浏览器全屏。");
+      toast(window.wiseReaderDesktop?.nativeTrackpad ? "当前窗口不支持全屏。" : "当前窗口不支持全屏，可使用浏览器全屏。");
     }
   });
   r.scope.on(document, "fullscreenchange", () => {

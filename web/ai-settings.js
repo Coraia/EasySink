@@ -1,4 +1,4 @@
-import { e, api } from "./core.js";
+import { e, api, storagePlace } from "./core.js";
 import { aiReadingReturn, returnFromAI } from "./ai-setup-guard.js";
 import { renderIllustrationSettings } from "./picturebook-settings.js";
 export const voices = [
@@ -58,7 +58,7 @@ export async function renderAI(ctx, scope, options = {}) {
   if (!embedded) {
     $(".ai-grid").insertAdjacentHTML(
       "beforebegin",
-      `<section class="card gap"><h2>阅读发音</h2><p>默认优先使用电脑已安装的英文音色。发音在原入口播放与停止，不打开播放器。</p><label for="speech-preferred-mode">朗读方式</label><select id="speech-preferred-mode"><option value="local">电脑本地语音${native.local.available ? " · 已可用" : " · 不可用时使用浏览器本机语音"}</option><option value="browser">浏览器本机语音</option><option value="natural">自然语音服务 · 需要已配置的服务</option></select><label for="speech-local-voice">电脑英文音色</label><select id="speech-local-voice">${native.local.voices.map((v) => `<option value="${e(v.name)}">${e(v.name)} · ${e(v.lang)}</option>`).join("") || '<option value="Samantha">无可用音色</option>'}</select><button type="button" id="speech-preference-save" class="gap">保存发音偏好</button><p id="speech-preference-status" role="status" class="save-state gap">更换方式后点击保存；不会自动改用远程服务。</p></section>`,
+      `<section class="card gap"><h2>阅读发音</h2><p>默认优先使用电脑已安装的英文音色。发音在原入口播放与停止，不打开播放器。</p><label for="speech-preferred-mode">朗读方式</label><select id="speech-preferred-mode"><option value="local">电脑本地语音${native.local.available ? " · 已可用" : ` · 不可用时使用${storagePlace()}内置语音`}</option><option value="browser">${storagePlace()}内置语音</option><option value="natural">自然语音服务 · 需要已配置的服务</option></select><label for="speech-local-voice">电脑英文音色</label><select id="speech-local-voice">${native.local.voices.map((v) => `<option value="${e(v.name)}">${e(v.name)} · ${e(v.lang)}</option>`).join("") || '<option value="Samantha">无可用音色</option>'}</select><button type="button" id="speech-preference-save" class="gap">保存发音偏好</button><p id="speech-preference-status" role="status" class="save-state gap">更换方式后点击保存；不会自动改用远程服务。</p></section>`,
     );
     $("#speech-preferred-mode").value = config.speech.mode || "local";
     if (native.local.voices.some((v) => v.name === config.speech.local_voice))
