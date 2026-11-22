@@ -51,6 +51,32 @@ test("reading settings stay in a shallow bottom drawer and apply live", async ({
       ).toBe("28px");
       await expect(panel).toBeVisible();
     }
+    if (id === "more") {
+      await expect(page.locator("#reader-actions button")).toHaveText([
+        "目录",
+        "笔记",
+        "收藏",
+        "进度",
+        "样式",
+        "字体",
+        "更多",
+      ]);
+      await expect(
+        panel
+          .getByRole("region", { name: "阅读操作" })
+          .getByRole("button", { name: "搜索", exact: true }),
+      ).toBeVisible();
+      await expect(
+        panel
+          .getByRole("region", { name: "阅读视图" })
+          .getByRole("button", { name: "回到专注" }),
+      ).toBeVisible();
+      await expect(
+        panel
+          .getByRole("region", { name: "设置" })
+          .getByRole("link", { name: "阅读偏好" }),
+      ).toBeVisible();
+    }
   }
   await page.keyboard.press("Escape");
   await expect(panel).toBeHidden();
@@ -62,4 +88,47 @@ test("reading settings stay in a shallow bottom drawer and apply live", async ({
   await expect(panel).toBeHidden();
   await tools(page, "outline");
   await expect(panel).not.toHaveClass(/reading-drawer/);
+});
+
+test("the last page offers a finish screen without recording until confirmed", async ({
+  request,
+  page,
+}) => {
+  await enableAll(request);
+  const doc = await (
+    await request.post("/api/documents", {
+      data: {
+        title: "A small ending",
+        text: Array(60)
+          .fill("The last light bounced off the water.")
+          .join("\n\n"),
+      },
+    })
+  ).json();
+  await read(page, doc.id);
+  const end = page.locator("#reading-end");
+  await expect(end).toBeHidden();
+  await tools(page, "progress");
+  const seek = page.locator("#reading-seek");
+  await seek.fill("1000");
+  await seek.dispatchEvent("change");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(end).toBeVisible();
+  await end.click();
+  const ending = page.getByRole("dialog", { name: "读到文末了" });
+  await expect(ending).toContainText(doc.title);
+  await ending.getByRole("button", { name: "回到正文" }).click();
+  await expect(ending).toBeHidden();
+  const logs = async () =>
+    (await (await request.get("/api/reading-log")).json()).filter(
+      (log) => log.doc_id === doc.id,
+    );
+  expect(await logs()).toHaveLength(0);
+  await end.click();
+  await ending.getByRole("button", { name: "标记读完" }).click();
+  await expect(page.getByRole("dialog", { name: "阅读已记录" })).toBeVisible();
+  expect(await logs()).toHaveLength(1);
+  await page.getByRole("link", { name: "返回书架", exact: false }).click();
+  await expect(page).toHaveURL(/#\/$/);
 });

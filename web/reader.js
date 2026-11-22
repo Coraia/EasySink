@@ -13,6 +13,7 @@ import {
   installReaderChrome,
   installCoreReaderTools,
   readerIcon,
+  readerToolLabels,
 } from "./reader-chrome.js?v=20261018-keyboard-paging-tuned";
 export class Reader {
   constructor(ctx, scope, doc, handoff = null) {
@@ -108,23 +109,7 @@ export class Reader {
       },
       { passive: true },
     );
-    s.on($("#finish-reading"), "click", async (ev) => {
-      try {
-        await api(`/documents/${d.id}/finish`, {
-          method: "POST",
-          body: {
-            annotation_count: this.doc.annotation_count,
-            manual_lookups: this.lookups,
-            felt_density: "读完",
-          },
-        });
-        ev.target.textContent = "已记录 ✓";
-        toast("阅读已记录，原始痕迹已保留。");
-        this.showTraces?.();
-      } catch (err) {
-        toast(err.message);
-      }
-    });
+    this.installEnding();
     s.on($("#archive-reading"), "click", async (ev) => {
       try {
         await api(
@@ -199,22 +184,74 @@ export class Reader {
     local.set("last-document", d.id);
     if (d.chapter) local.set(`book-chapter:${d.chapter.book_id}`, d.id);
   }
+  installEnding() {
+    const s = this.scope;
+    const dialog = $(".reader-ending");
+    const kicker = $("#reader-ending-kicker");
+    const title = $("#reader-ending-title");
+    const detail = $("#reader-ending-detail");
+    const error = $("#reader-ending-error");
+    const save = $("#reader-ending-save");
+    const home = $("#reader-ending-home");
+    const end = $("#reading-end");
+    const atEnd = this.doc.pdf
+      ? "读到本节末尾了"
+      : this.doc.chapter
+        ? "读到本章末尾了"
+        : "读到文末了";
+    const open = (ev) => {
+      this.closePop();
+      this.focus.close();
+      kicker.textContent = end.hidden ? "阅读小结" : "正文结束";
+      if (!save.hidden) title.textContent = end.hidden ? "结束这次阅读" : atEnd;
+      if (ev.currentTarget !== end) $("#show-tools").focus({ preventScroll: true });
+      dialog.showModal();
+      title.focus();
+    };
+    s.on(end, "click", open);
+    s.on($("#finish-reading"), "click", open);
+    s.on($("#reader-ending-back"), "click", () => dialog.close());
+    s.on(save, "click", async () => {
+      save.disabled = true;
+      save.setAttribute("aria-busy", "true");
+      error.hidden = true;
+      try {
+        await api(`/documents/${this.doc.id}/finish`, {
+          method: "POST",
+          signal: s.signal,
+          body: {
+            annotation_count: this.doc.annotation_count,
+            manual_lookups: this.lookups,
+            felt_density: "读完",
+          },
+        });
+        if (s.signal.aborted) return;
+        title.textContent = "阅读已记录";
+        detail.textContent = "这次阅读已保存，笔记和收藏仍在原处。";
+        save.hidden = true;
+        home.hidden = false;
+        if (dialog.open) title.focus();
+      } catch (err) {
+        if (s.signal.aborted) return;
+        error.textContent = err.message;
+        error.hidden = false;
+        save.disabled = false;
+        if (dialog.open) save.focus();
+      } finally {
+        save.removeAttribute("aria-busy");
+      }
+    });
+  }
   tool(id, label, fn) {
     const button = document.createElement("button");
     button.id = `tool-${id}`;
-    const primary = [
-      "outline",
-      "notes",
-      "collections",
-      "progress",
-      "appearance",
-      "typography",
-      "more",
-    ].includes(id);
+    const primary = Object.hasOwn(readerToolLabels, id);
     button.setAttribute("aria-label", label);
     button.title = label;
     button.className = primary ? "reader-icon" : "reader-secondary-tool";
-    button.innerHTML = primary ? readerIcon(id) : e(label);
+    button.innerHTML = primary
+      ? `${readerIcon(id)}<span aria-hidden="true">${readerToolLabels[id]}</span>`
+      : e(label);
     button.dataset.tool = id;
     button.setAttribute("aria-pressed", "false");
     if (primary) {

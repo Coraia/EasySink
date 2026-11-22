@@ -12,6 +12,16 @@ const icons = {
   typography: '<path d="M4 20L12 4l8 16M7 14h10"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   fullscreen: '<path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/>',
+  finish: '<path d="M6 3h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM8 12l3 3 5-6"/>',
+};
+export const readerToolLabels = {
+  outline: "目录",
+  notes: "笔记",
+  collections: "收藏",
+  progress: "进度",
+  appearance: "样式",
+  typography: "字体",
+  more: "更多",
 };
 export const readerIcon = (id) =>
   `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icons[id] || icons.more}</svg>`;
@@ -45,7 +55,7 @@ export function readerShell(d, progressEnabled) {
       <button id="reading-edge-prev" class="reading-edge-grip" aria-label="抓住左侧纸页" title="按住向右拖动 · 上一页"></button><button id="reading-edge-next" class="reading-edge-grip" aria-label="抓住右侧纸页" title="按住向左拖动 · 下一页"></button>
       <div id="page-curl-layer" aria-hidden="true" hidden></div>
       <div id="reading-selection" class="reading-selection" hidden></div>
-      <div class="reader-page-caption" aria-live="off"><span class="caption-title" ${d.pdf ? 'data-pdf-reading-edition title="当前为可重排阅读版；来源页码用于核对 PDF 原件"' : ""}>${e(caption)}${source}</span><span id="reading-page-total"></span></div>
+      <div class="reader-page-caption" aria-live="off"><span class="caption-title" ${d.pdf ? 'data-pdf-reading-edition title="当前为可重排阅读版；来源页码用于核对 PDF 原件"' : ""}>${e(caption)}${source}</span><div class="caption-end"><span id="reading-page-total"></span><button id="reading-end" type="button" hidden>结束阅读 →</button></div></div>
     </section>
     <button id="panel-dismiss" class="panel-backdrop" aria-label="关闭阅读面板" hidden></button>
     <aside class="tool-panel" id="tool-panel" hidden></aside>
@@ -62,7 +72,22 @@ export function readerShell(d, progressEnabled) {
       )
       .join(
         "",
-      )}</div><p id="density-hint" class="muted"></p></div><div class="row wrap"><button id="archive-reading" class="text-button">${d.archived ? "移回书架" : "归档"}</button><button id="finish-reading" class="text-button">读完了 ✓</button></div><div id="chapter-nav"></div></div>
+      )}</div><p id="density-hint" class="muted"></p></div><div id="reader-book-buttons"><button id="archive-reading" class="reader-secondary-tool">${d.archived ? "移回书架" : "归档"}</button><button id="finish-reading" class="reader-secondary-tool">结束阅读</button></div><div id="chapter-nav"></div></div>
+    <dialog class="reader-ending" aria-labelledby="reader-ending-title">
+      <div class="reader-ending-page">
+        <div class="reader-ending-emblem">${readerIcon("finish")}</div>
+        <p class="reader-ending-kicker" id="reader-ending-kicker"></p>
+        <h2 id="reader-ending-title" tabindex="-1">结束这次阅读</h2>
+        <p class="reader-ending-document">${e(d.title)}</p>
+        <p id="reader-ending-detail" class="muted">标记读完，把这次阅读保存到阅读记录。</p>
+        <p id="reader-ending-error" role="alert" hidden></p>
+        <div class="reader-ending-actions">
+          <button id="reader-ending-back" type="button">回到正文</button>
+          <button id="reader-ending-save" class="primary" type="button">标记读完</button>
+          <a id="reader-ending-home" class="button primary" href="#/" hidden>返回书架 →</a>
+        </div>
+      </div>
+    </dialog>
     <div class="read-progress" hidden><div></div></div>
   </div>`;
 }
@@ -493,33 +518,42 @@ export function installCoreReaderTools(r) {
   r.tool("more", "更多阅读功能", () =>
     r.panel(
       "more",
-      "阅读工具",
-      `<div id="more-plugin-tools" class="more-plugin-tools"></div><div id="more-book-actions"></div><nav class="more-links"><button type="button" data-reading-ai>文本 AI 设置</button><a href="#/ai">语音设置 ↗</a><a href="#/profile">阅读偏好 ↗</a><a href="#/labs">功能管理 ↗</a></nav>`,
+      "更多",
+      `<div class="more-groups">
+        <section aria-labelledby="more-reading-title"><h3 id="more-reading-title">阅读操作</h3><div id="more-reading" class="more-reading-tools"></div><div id="more-chapters"></div></section>
+        <section aria-labelledby="more-view-title"><h3 id="more-view-title">阅读视图</h3><div id="more-view"></div></section>
+        <section aria-labelledby="more-settings-title"><h3 id="more-settings-title">设置</h3><nav class="more-links" aria-label="设置"><button type="button" class="reader-secondary-tool" data-reading-ai>文本 AI 设置</button><a class="button reader-secondary-tool" href="#/ai">语音设置 ↗</a><a class="button reader-secondary-tool" href="#/profile">阅读偏好 ↗</a><a class="button reader-secondary-tool" href="#/labs">功能管理 ↗</a></nav></section>
+      </div>`,
       (el, scope) => {
         scope.on($("[data-reading-ai]", el), "click", () => openReadingAI(r));
         const extra = $("#reader-extra-tools"),
-          book = $("#reader-book-actions");
-        $("#more-plugin-tools", el).append(...extra.childNodes);
-        $("#more-book-actions", el).append(book);
-        book.hidden = false;
+          book = $("#reader-book-actions"),
+          tools = [...extra.children],
+          reading = $("#more-reading", el),
+          view = $("#more-view", el),
+          density = $("#reader-density-actions"),
+          buttons = $("#reader-book-buttons"),
+          chapters = $("#chapter-nav");
+        for (const tool of tools) {
+          (tool.dataset.tool === "immersive" ? view : reading).append(tool);
+        }
+        reading.prepend(
+          ...["search", "bookmarks", "tts", "translate", "traces", "annotation-learning"]
+            .map((id) => $("#tool-" + id, reading))
+            .filter(Boolean),
+        );
+        reading.append(buttons);
+        view.append(density);
+        $("#more-chapters", el).append(chapters);
         scope.cleanup(() => {
-          extra.append(...$("#more-plugin-tools", el).childNodes);
-          book.hidden = true;
-          $(".reader").append(book);
+          extra.append(...tools);
+          book.append(density, buttons, chapters);
         });
       },
     ),
   );
   // Stable semantic order, independent of asynchronous plugin installation.
-  for (const id of [
-    "outline",
-    "notes",
-    "collections",
-    "progress",
-    "appearance",
-    "typography",
-    "more",
-  ]) {
+  for (const id of Object.keys(readerToolLabels)) {
     const button = $("#tool-" + id);
     if (button) $("#reader-actions").append(button);
   }
