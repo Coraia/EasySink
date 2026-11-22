@@ -71,13 +71,7 @@ export function install(ctx) {
             ? "取消朗读"
             : "停止朗读"
           : idle;
-        if (button.closest("#reading-selection"))
-          setReadingAction(
-            button,
-            own ? "stop" : "sound",
-            own ? "停止" : "朗读",
-            label,
-          );
+        if (button.closest("#reading-selection")) setReadingAction(button, own ? "stop" : "sound", own ? "停止" : "朗读", label);
         else button.textContent = label;
         button.setAttribute("aria-pressed", String(own));
       };
@@ -95,12 +89,7 @@ export function install(ctx) {
             ? "取消发音"
             : "停止发音"
           : "听发音";
-        setReadingAction(
-          word,
-          own ? "stop" : "sound",
-          own ? "停止" : "发音",
-          label,
-        );
+        setReadingAction(word, own ? "stop" : "sound", own ? "停止" : "发音", label);
         word.setAttribute("aria-pressed", String(own));
       }
     };
@@ -145,9 +134,7 @@ export function install(ctx) {
           if (ticket !== generation || r.scope.signal.aborted) return;
           if (engine === "browser") {
             if (!window.speechSynthesis || !window.SpeechSynthesisUtterance)
-              throw Error(
-                "当前设备没有可用的本机语音，请在 AI 与语音中选择可用方式",
-              );
+              throw Error("当前设备没有可用的本机语音，请在 AI 与语音中选择可用方式");
             await new Promise((resolve, reject) => {
               cancelPlayback = resolve;
               const u = new SpeechSynthesisUtterance(text);

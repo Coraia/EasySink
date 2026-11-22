@@ -1,7 +1,6 @@
 export const $ = (q, root = document) => root.querySelector(q);
 export const $$ = (q, root = document) => [...root.querySelectorAll(q)];
-export const storagePlace = () =>
-  window.wiseReaderDesktop?.nativeTrackpad ? "本机" : "此浏览器";
+export const storagePlace = () => window.wiseReaderDesktop?.nativeTrackpad ? "本机" : "此浏览器";
 export const e = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -13,9 +12,7 @@ export const e = (value) =>
 let evidenceObserver = null;
 export function setEvidenceObserver(observer) {
   evidenceObserver = observer;
-  return () => {
-    if (evidenceObserver === observer) evidenceObserver = null;
-  };
+  return () => { if (evidenceObserver === observer) evidenceObserver = null; };
 }
 export async function api(
   path,
@@ -23,43 +20,23 @@ export async function api(
 ) {
   const observer = evidenceObserver;
   let capture = null;
-  try {
-    capture = observer?.begin(path, method, body);
-  } catch {
-    /* optional */
-  }
+  try { capture = observer?.begin(path, method, body); } catch { /* optional */ }
   const options = { method, signal, credentials: "same-origin", keepalive };
   if (body !== undefined) {
     options.body = body instanceof FormData ? body : JSON.stringify(body);
     if (!(body instanceof FormData))
       options.headers = { "Content-Type": "application/json" };
   }
-  if (capture)
-    options.headers = {
-      ...options.headers,
-      "X-WR-Evidence-Epoch": capture.epoch,
-      "X-WR-Operation": capture.op,
-      "X-WR-Session": capture.session,
-    };
-  const finish = (payload, error) => {
-    try {
-      observer?.end(capture, payload, error);
-    } catch {
-      /* optional */
-    }
-  };
+  if (capture) options.headers = {...options.headers,
+    "X-WR-Evidence-Epoch": capture.epoch, "X-WR-Operation": capture.op, "X-WR-Session": capture.session};
+  const finish = (payload, error) => { try { observer?.end(capture, payload, error); } catch { /* optional */ } };
   let r;
-  try {
-    r = await fetch("/api" + path, options);
-  } catch (error) {
-    finish(null, error);
-    throw error;
-  }
+  try { r = await fetch("/api" + path, options); }
+  catch (error) { finish(null, error); throw error; }
   let parseFailed = false;
-  const payload = await r.json().catch(() => {
-    parseFailed = true;
-    return { detail: "服务返回了无法识别的数据" };
-  });
+  const payload = await r
+    .json()
+    .catch(() => { parseFailed = true; return { detail: "服务返回了无法识别的数据" }; });
   if (!r.ok) {
     const err = new Error(
       typeof payload.detail === "string"
@@ -69,8 +46,7 @@ export async function api(
           : "输入格式不正确，请检查后重试",
     );
     err.status = r.status;
-    err.code =
-      typeof payload.detail?.code === "string" ? payload.detail.code : null;
+    err.code = typeof payload.detail?.code === "string" ? payload.detail.code : null;
     finish(null, err);
     throw err;
   }

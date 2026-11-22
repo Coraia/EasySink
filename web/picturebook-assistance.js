@@ -144,10 +144,8 @@ export function learningMarkup(text, vocabulary, dictionary, chapter, more) {
   for (const match of text.matchAll(pattern)) {
     const word = match[0].toLowerCase(),
       entry = dictionary[word];
-    const authored =
-      word === "old" && /\byears?\s+$/i.test(text.slice(0, match.index))
-        ? "岁（年龄）"
-        : authoredNotes[word.replace(/’/g, "'")];
+    const authored = word === "old" && /\byears?\s+$/i.test(text.slice(0, match.index))
+      ? "岁（年龄）" : authoredNotes[word.replace(/’/g, "'")];
     const note = authored || vocabulary[word]?.[0] || entry?.note || "";
     const marked =
       !!note &&
