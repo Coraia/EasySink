@@ -5,7 +5,12 @@ import { anchorFromDOMRange } from "./selection-range.js";
 import { ReaderInteraction } from "./reader-state.js";
 import { $, $$, e, api, Scope, local, toast, errorBox } from "./core.js";
 import { ReadingPages } from "./pagination.js?v=20261018-keyboard-paging-tuned";
-import { captureAnnotationLayout, updateAnnotationLayout, captureRetainedWordLayout, reconcileRetainedWordLayout } from "./annotation-layout.js";
+import {
+  captureAnnotationLayout,
+  updateAnnotationLayout,
+  captureRetainedWordLayout,
+  reconcileRetainedWordLayout,
+} from "./annotation-layout.js";
 import { setupReadingInteractions } from "./reading-interactions.js?v=20261006-grab1";
 import { installReadingTraces } from "./reading-traces.js";
 import {
@@ -43,8 +48,8 @@ export class Reader {
     this.on("annotations-change", () => {
       // Reapply occurrence feedback to the unchanged source. No server request,
       // global mastery change or whole-book reload is needed.
-      this.annotationDrawPromise = this.draw({preserveLayout: true});
-      this.annotationDrawPromise.catch(error => {
+      this.annotationDrawPromise = this.draw({ preserveLayout: true });
+      this.annotationDrawPromise.catch((error) => {
         if (error.name !== "AbortError") this.status(error.message);
       });
     });
@@ -63,7 +68,13 @@ export class Reader {
       if (b) this.density(+b.dataset.density);
     });
     s.on($("#article"), "click", (ev) => {
-      if (this.suppressWordClick || this.selecting || ev.detail > 1 || window.getSelection()?.toString()) return;
+      if (
+        this.suppressWordClick ||
+        this.selecting ||
+        ev.detail > 1 ||
+        window.getSelection()?.toString()
+      )
+        return;
       const el = ev.target.closest("[data-annotation]");
       if (el) this.pop(el);
       else {
@@ -139,7 +150,7 @@ export class Reader {
       }
     });
     if (d.chapters.length) {
-      const currentChapter = d.chapters.findIndex(ch => ch.doc_id === d.id);
+      const currentChapter = d.chapters.findIndex((ch) => ch.doc_id === d.id);
       $("#chapter-nav").innerHTML = d.chapters
         .map((ch, i) =>
           Math.abs(i - currentChapter) === 1
@@ -172,9 +183,15 @@ export class Reader {
     const selector = this.handoff ? null : local.get(`jump:${d.id}`);
     if (selector) {
       local.remove(`jump:${d.id}`);
-      await this.restore(selector, { automatic: selector.resume_position === true, mark: !selector.resume_position, alignStart: selector.resume_position === true });
+      await this.restore(selector, {
+        automatic: selector.resume_position === true,
+        mark: !selector.resume_position,
+        alignStart: selector.resume_position === true,
+      });
     }
-    const translationJump = this.handoff ? null : local.get(`translation-jump:${d.id}`);
+    const translationJump = this.handoff
+      ? null
+      : local.get(`translation-jump:${d.id}`);
     if (translationJump) {
       local.remove(`translation-jump:${d.id}`);
       const saved = this.assists.find((a) => a.id === translationJump);
@@ -187,7 +204,8 @@ export class Reader {
         this.pages.markStable();
         // Explicit directory/note jumps are a new reading position, not merely
         // resuming the old one. Persist after the initial restore guard lifts.
-        if (selector || this.handoff || this.resumePositionMapped) this.emit("position");
+        if (selector || this.handoff || this.resumePositionMapped)
+          this.emit("position");
         this.resumePositionMapped = false;
         this.handoff = null;
         $(".reader")?.setAttribute("data-ready", "true");
@@ -240,7 +258,10 @@ export class Reader {
     this.panelClose = options.onClose;
     this.positionSelection?.();
     const el = $("#tool-panel");
-    el.classList.toggle("reading-drawer", ["appearance", "typography", "more"].includes(id));
+    el.classList.toggle(
+      "reading-drawer",
+      ["appearance", "typography", "more"].includes(id),
+    );
     el.dataset.panel = id;
     el.innerHTML = `<div class="panel-header"><h2>${e(title)}</h2><button class="icon-button" aria-label="关闭侧栏">×</button></div><div class="panel-content">${html}</div>`;
     el.hidden = false;
@@ -291,20 +312,21 @@ export class Reader {
     this.panel(
       "outline",
       "阅读目录",
-      bookHeader + (this.doc.chapters.length
-        ? this.doc.chapters
-            .map(
-              (ch) =>
-                `<a class="toc-link ${ch.doc_id === this.doc.id ? "active" : ""}" href="#/read/${ch.doc_id}">${ch.idx + 1}. ${e(ch.title)}</a>`,
-            )
-            .join("")
-        : this.doc.blocks
-            .filter((b) => b.type === "heading")
-            .map(
-              (b) =>
-                `<button class="toc-link" data-jump="${b.id}">${e(b.text)}</button>`,
-            )
-            .join("") ||
+      bookHeader +
+        (this.doc.chapters.length
+          ? this.doc.chapters
+              .map(
+                (ch) =>
+                  `<a class="toc-link ${ch.doc_id === this.doc.id ? "active" : ""}" href="#/read/${ch.doc_id}">${ch.idx + 1}. ${e(ch.title)}</a>`,
+              )
+              .join("")
+          : this.doc.blocks
+              .filter((b) => b.type === "heading")
+              .map(
+                (b) =>
+                  `<button class="toc-link" data-jump="${b.id}">${e(b.text)}</button>`,
+              )
+              .join("") ||
             '<p class="muted">这是一篇短文，可以直接从头阅读。</p>'),
       (el, s) =>
         s.on(el, "click", (ev) => {
@@ -324,24 +346,41 @@ export class Reader {
       .map((s, i) => (i % 2 ? `<mark class="search-hit">${e(s)}</mark>` : e(s)))
       .join("");
   }
-  draw({preserveLayout = false, signal = null} = {}) {
+  draw({ preserveLayout = false, signal = null } = {}) {
     const liveReflow = preserveLayout && this.pages.wordReflow.eligible();
-    const retained = preserveLayout && !liveReflow ? captureRetainedWordLayout(this.pages) : null;
-    const layout = preserveLayout && !liveReflow && !retained
-      ? captureAnnotationLayout(this.pages) || this.pages.annotationLayout
-      : null;
-    this.doc.blocks = this.collectionsController?.applyAnnotations(this.sourceBlocks) || this.sourceBlocks;
-    this.pages.indexSource({preserveAnnotations: liveReflow || Boolean(retained)});
-    if (!liveReflow && !retained) this.pages.annotationLayout = layout
-      ? updateAnnotationLayout(layout, this.annotations)
-      : null;
+    const retained =
+      preserveLayout && !liveReflow
+        ? captureRetainedWordLayout(this.pages)
+        : null;
+    const layout =
+      preserveLayout && !liveReflow && !retained
+        ? captureAnnotationLayout(this.pages) || this.pages.annotationLayout
+        : null;
+    this.doc.blocks =
+      this.collectionsController?.applyAnnotations(this.sourceBlocks) ||
+      this.sourceBlocks;
+    this.pages.indexSource({
+      preserveAnnotations: liveReflow || Boolean(retained),
+    });
+    if (!liveReflow && !retained)
+      this.pages.annotationLayout = layout
+        ? updateAnnotationLayout(layout, this.annotations)
+        : null;
     const prepared = this.handoff?.pages;
-    const ready = retained ? reconcileRetainedWordLayout(this.pages, retained) : liveReflow ? this.pages.wordReflow.update().then(updated => {
-      if (!updated && !signal?.aborted && !this.scope.signal.aborted)
-        return this.pages.reflow(this.pages.position(), {reason: "annotation"});
-    }) : prepared && !this.handoff.adopted
-      ? (this.handoff.adopted = true, this.pages.adopt(prepared))
-      : this.pages.reflow(this.pages.position(), {reason: preserveLayout ? "annotation" : "source"});
+    const ready = retained
+      ? reconcileRetainedWordLayout(this.pages, retained)
+      : liveReflow
+        ? this.pages.wordReflow.update().then((updated) => {
+            if (!updated && !signal?.aborted && !this.scope.signal.aborted)
+              return this.pages.reflow(this.pages.position(), {
+                reason: "annotation",
+              });
+          })
+        : prepared && !this.handoff.adopted
+          ? ((this.handoff.adopted = true), this.pages.adopt(prepared))
+          : this.pages.reflow(this.pages.position(), {
+              reason: preserveLayout ? "annotation" : "source",
+            });
     $("#annotation-meta").textContent =
       `${this.doc.annotation_count} 处辅助理解`;
     $("#density-hint").textContent = this.doc.forced_count
@@ -357,31 +396,48 @@ export class Reader {
     });
     return ready;
   }
-  async refresh(density, {pdfBackground = false, nextDocument = null, preserveLayout = false} = {}) {
+  async refresh(
+    density,
+    { pdfBackground = false, nextDocument = null, preserveLayout = false } = {},
+  ) {
     if (this.scope.signal.aborted) return;
-    if (pdfBackground && (this.restoring || !this.pdfCanRefresh?.())) return false;
+    if (pdfBackground && (this.restoring || !this.pdfCanRefresh?.()))
+      return false;
     const refresh = this.interaction.beginRefresh();
     let anchor = this.position();
     let restoredPosition = false;
     try {
-      const doc = nextDocument || await api(
-        `/documents/${this.doc.id}?compact=true${density !== undefined ? "&density=" + density : ""}`,
-        { signal: refresh.signal },
-      );
+      const doc =
+        nextDocument ||
+        (await api(
+          `/documents/${this.doc.id}?compact=true${density !== undefined ? "&density=" + density : ""}`,
+          { signal: refresh.signal },
+        ));
       if (refresh.signal.aborted) return false;
-      if (doc.id !== this.doc.id || (pdfBackground && !this.pdfCanRefresh?.())) return false;
+      if (doc.id !== this.doc.id || (pdfBackground && !this.pdfCanRefresh?.()))
+        return false;
       if (pdfBackground && doc.density !== this.doc.density) return false;
-      if (pdfBackground && doc.pdf && anchor.pdf_source && doc.version !== this.doc.version) {
+      if (
+        pdfBackground &&
+        doc.pdf &&
+        anchor.pdf_source &&
+        doc.version !== this.doc.version
+      ) {
         // A live position is not a stored quotation. Stamp only a proven mapping
         // so leaving immediately after refresh cannot persist the old revision.
         anchor = this.pdfTools?.normalizedPosition(anchor, doc) || anchor;
       }
       if (doc.pdf && anchor.pdf_source && !this.pdfAnchorBlock(anchor, doc)) {
-        const position = pdfBackground && this.pdfTools?.normalizedPosition(anchor, doc);
+        const position =
+          pdfBackground && this.pdfTools?.normalizedPosition(anchor, doc);
         if (!position) return false;
         anchor = position;
       }
-      if (pdfBackground && doc.version === this.doc.version && doc.density === this.doc.density) {
+      if (
+        pdfBackground &&
+        doc.version === this.doc.version &&
+        doc.density === this.doc.density
+      ) {
         this.doc.pdf = doc.pdf;
         this.doc.chapters = doc.chapters;
         return true;
@@ -390,10 +446,12 @@ export class Reader {
       this.doc = doc;
       this.sourceBlocks = doc.blocks;
       const anchored = preserveLayout && this.pages.wordReflow.eligible();
-      await this.draw({preserveLayout, signal: refresh.signal});
-      if (anchored && !this.popElement) await this.pages.wordReflow.flush({reconcile:true});
+      await this.draw({ preserveLayout, signal: refresh.signal });
+      if (anchored && !this.popElement)
+        await this.pages.wordReflow.flush({ reconcile: true });
       if (refresh.signal.aborted) return false;
-      if (!anchored) await this.restore(anchor, {automatic: true, signal: refresh.signal});
+      if (!anchored)
+        await this.restore(anchor, { automatic: true, signal: refresh.signal });
       if (refresh.signal.aborted) return false;
       restoredPosition = pdfBackground;
       return true;
@@ -436,92 +494,176 @@ export class Reader {
     return this.pages?.position() || { ratio: 0 };
   }
   sourceParts(anchor) {
-    if (!anchor || (anchor.version !== undefined && anchor.version !== this.doc.version)) return null;
+    if (
+      !anchor ||
+      (anchor.version !== undefined && anchor.version !== this.doc.version)
+    )
+      return null;
     const parts = anchor.segments?.length ? anchor.segments : [anchor];
-    const valid = parts.every(part => {
-      const block = this.doc.blocks.find(b => b.id === part.block_id);
+    const valid = parts.every((part) => {
+      const block = this.doc.blocks.find((b) => b.id === part.block_id);
       const pdf = part.pdf_source || anchor.pdf_source;
-      if (pdf && (!this.doc.pdf ||
-          (pdf.source_sha256 && pdf.source_sha256 !== this.doc.pdf.source_sha256) ||
-          (pdf.book_id != null && String(pdf.book_id) !== String(this.doc.pdf.book_id)))) return false;
-      return block && Number.isInteger(part.start) && Number.isInteger(part.end) &&
-        part.start >= 0 && part.end >= part.start && part.end <= block.text.length &&
+      if (
+        pdf &&
+        (!this.doc.pdf ||
+          (pdf.source_sha256 &&
+            pdf.source_sha256 !== this.doc.pdf.source_sha256) ||
+          (pdf.book_id != null &&
+            String(pdf.book_id) !== String(this.doc.pdf.book_id)))
+      )
+        return false;
+      return (
+        block &&
+        Number.isInteger(part.start) &&
+        Number.isInteger(part.end) &&
+        part.start >= 0 &&
+        part.end >= part.start &&
+        part.end <= block.text.length &&
         (part.version === undefined || part.version === this.doc.version) &&
-        (!part.quote || part.quote === block.text.slice(part.start, part.end));
+        (!part.quote || part.quote === block.text.slice(part.start, part.end))
+      );
     });
     return valid ? parts : null;
   }
   visibleSource(within = null) {
-    const article = $("#article"), parts = within ? this.sourceParts(within) : null;
+    const article = $("#article"),
+      parts = within ? this.sourceParts(within) : null;
     if (!article || (within && !parts)) return null;
     let fallback = null;
     for (const node of article.querySelectorAll(".page-leaf [data-block]")) {
       if (node.closest(".reflow-moving,[aria-hidden='true']")) continue;
-      const id = node.dataset.block, start = +node.dataset.start, end = +node.dataset.end;
-      if (!id || !Number.isInteger(start) || !Number.isInteger(end) || !this.pages?.blocks?.get(id)) continue;
+      const id = node.dataset.block,
+        start = +node.dataset.start,
+        end = +node.dataset.end;
+      if (
+        !id ||
+        !Number.isInteger(start) ||
+        !Number.isInteger(end) ||
+        !this.pages?.blocks?.get(id)
+      )
+        continue;
       if (parts) {
-        const match = parts.find(p => p.block_id === id && (start === end
-          ? p.start === start && p.end === end
-          : p.start === p.end ? p.start >= start && p.start < end : p.start < end && p.end > start));
+        const match = parts.find(
+          (p) =>
+            p.block_id === id &&
+            (start === end
+              ? p.start === start && p.end === end
+              : p.start === p.end
+                ? p.start >= start && p.start < end
+                : p.start < end && p.end > start),
+        );
         if (!match) continue;
-        return this.anchorFor(id, Math.max(start, match.start), Math.max(start, match.start));
+        return this.anchorFor(
+          id,
+          Math.max(start, match.start),
+          Math.max(start, match.start),
+        );
       }
       if (start < end) return this.anchorFor(id, start, start);
       fallback ??= this.anchorFor(id, start, start);
     }
     return fallback;
   }
-  captureView({within} = {}) {
-    const copy = value => value ? structuredClone(value) : null;
+  captureView({ within } = {}) {
+    const copy = (value) => (value ? structuredClone(value) : null);
     return {
-      documentId: this.doc.id, sourceVersion: this.doc.version,
+      documentId: this.doc.id,
+      sourceVersion: this.doc.version,
       layoutEpoch: this.pages?.layoutEpoch,
       visibleAnchor: this.visibleSource(within),
-      readingAnchor: copy(this.position()), selectionAnchor: copy(this.selection),
+      readingAnchor: copy(this.position()),
+      selectionAnchor: copy(this.selection),
       // Mounted source ranges can extend beyond the clipped paper. Callers
       // must use visibleAnchor/isAnchorVisible for physical visibility.
-      fragments: [...($("#article")?.querySelectorAll("[data-block]") || [])].map(node =>
-        ({block_id: node.dataset.block, start: +node.dataset.start, end: +node.dataset.end})),
+      fragments: [
+        ...($("#article")?.querySelectorAll("[data-block]") || []),
+      ].map((node) => ({
+        block_id: node.dataset.block,
+        start: +node.dataset.start,
+        end: +node.dataset.end,
+      })),
     };
   }
   isAnchorVisible(anchor) {
     return Boolean(anchor && this.visibleSource(anchor));
   }
   pdfAnchorBlock(anchor, doc = this.doc) {
-    if (!doc.pdf || !anchor?.pdf_source) return doc.blocks.find(b => b.id === anchor?.block_id);
-    if (anchor.segments?.length) anchor = { ...anchor, ...anchor.segments[0], segments: [] };
+    if (!doc.pdf || !anchor?.pdf_source)
+      return doc.blocks.find((b) => b.id === anchor?.block_id);
+    if (anchor.segments?.length)
+      anchor = { ...anchor, ...anchor.segments[0], segments: [] };
     const source = anchor.pdf_source;
-    if (source.source_sha256 && source.source_sha256 !== doc.pdf.source_sha256) return null;
-    const matches = doc.blocks.filter(b => b.source?.page_number === source.page_number &&
-      Array.isArray(source.bbox) && Array.isArray(b.source.bbox) &&
-      source.bbox.every((n, i) => Math.abs(n - b.source.bbox[i]) <= .1) &&
-      (anchor.version === doc.version || anchor.kind === "image" || !anchor.quote ||
-        (b.text.includes(anchor.quote) && b.text.indexOf(anchor.quote) === b.text.lastIndexOf(anchor.quote))));
-    return matches.find(b => b.id === anchor.block_id) || (matches.length === 1 ? matches[0] : null);
+    if (source.source_sha256 && source.source_sha256 !== doc.pdf.source_sha256)
+      return null;
+    const matches = doc.blocks.filter(
+      (b) =>
+        b.source?.page_number === source.page_number &&
+        Array.isArray(source.bbox) &&
+        Array.isArray(b.source.bbox) &&
+        source.bbox.every((n, i) => Math.abs(n - b.source.bbox[i]) <= 0.1) &&
+        (anchor.version === doc.version ||
+          anchor.kind === "image" ||
+          !anchor.quote ||
+          (b.text.includes(anchor.quote) &&
+            b.text.indexOf(anchor.quote) === b.text.lastIndexOf(anchor.quote))),
+    );
+    return (
+      matches.find((b) => b.id === anchor.block_id) ||
+      (matches.length === 1 ? matches[0] : null)
+    );
   }
-  async restore(anchor, {automatic = false, mark = true, signal, alignStart = false} = {}) {
+  async restore(
+    anchor,
+    { automatic = false, mark = true, signal, alignStart = false } = {},
+  ) {
     if (signal?.aborted || this.scope.signal.aborted) return false;
     if (automatic && this.handoff) return false;
     let unprovenPosition = false;
-    if (automatic && this.doc.pdf && anchor?.pdf_source &&
-        anchor.version !== this.doc.version && anchor.kind !== "image") {
+    if (
+      automatic &&
+      this.doc.pdf &&
+      anchor?.pdf_source &&
+      anchor.version !== this.doc.version &&
+      anchor.kind !== "image"
+    ) {
       const position = await this.pdfTools?.retainedPosition(anchor);
-      if (position === false || signal?.aborted || this.scope.signal.aborted) return false;
+      if (position === false || signal?.aborted || this.scope.signal.aborted)
+        return false;
       if (position) {
         anchor = position;
         this.resumePositionMapped = true;
       } else unprovenPosition = true;
     }
-    if (anchor?.segments?.length) anchor = { ...anchor, ...anchor.segments[0], segments: [] };
-    if (this.doc.pdf && anchor?.pdf_source && (unprovenPosition || anchor.pdf_historical || !this.pdfAnchorBlock(anchor))) {
+    if (anchor?.segments?.length)
+      anchor = { ...anchor, ...anchor.segments[0], segments: [] };
+    if (
+      this.doc.pdf &&
+      anchor?.pdf_source &&
+      (unprovenPosition ||
+        anchor.pdf_historical ||
+        !this.pdfAnchorBlock(anchor))
+    ) {
       if (automatic) {
         // OCR may replace regions while keeping the source page. Resume there
         // without treating an approximate position as a relocated quotation.
         const source = anchor.pdf_source;
-        const sameSource = (!source.source_sha256 || source.source_sha256 === this.doc.pdf.source_sha256) &&
-          (source.book_id == null || String(source.book_id) === String(this.doc.pdf.book_id));
-        const block = sameSource && this.doc.blocks.find(b => b.source?.page_number === source.page_number);
-        return this.pages.restore(block ? { block_id: block.id, start: 0 } : { ratio: anchor.ratio || 0 }, false, {signal});
+        const sameSource =
+          (!source.source_sha256 ||
+            source.source_sha256 === this.doc.pdf.source_sha256) &&
+          (source.book_id == null ||
+            String(source.book_id) === String(this.doc.pdf.book_id));
+        const block =
+          sameSource &&
+          this.doc.blocks.find(
+            (b) => b.source?.page_number === source.page_number,
+          );
+        return this.pages.restore(
+          block
+            ? { block_id: block.id, start: 0 }
+            : { ratio: anchor.ratio || 0 },
+          false,
+          { signal },
+        );
       }
       if (!automatic && this.pdfTools) {
         this.pdfTools.openOriginal(anchor.pdf_source);
@@ -531,31 +673,58 @@ export class Reader {
     }
     if (this.doc.pdf && anchor?.pdf_source) {
       const block = this.pdfAnchorBlock(anchor);
-      const start = anchor.version !== this.doc.version && anchor.kind !== "image" && anchor.quote
-        ? block.text.indexOf(anchor.quote) : anchor.start;
-      anchor = {...anchor, block_id: block.id, start,
-        end: typeof start === "number" && anchor.quote && anchor.kind !== "image"
-          ? start + anchor.quote.length : anchor.end};
+      const start =
+        anchor.version !== this.doc.version &&
+        anchor.kind !== "image" &&
+        anchor.quote
+          ? block.text.indexOf(anchor.quote)
+          : anchor.start;
+      anchor = {
+        ...anchor,
+        block_id: block.id,
+        start,
+        end:
+          typeof start === "number" && anchor.quote && anchor.kind !== "image"
+            ? start + anchor.quote.length
+            : anchor.end,
+      };
     }
-    return this.pages.restore(anchor || { ratio: 0 }, mark, {signal, alignStart: alignStart && Boolean(this.pages.validAnchor(anchor))});
+    return this.pages.restore(anchor || { ratio: 0 }, mark, {
+      signal,
+      alignStart: alignStart && Boolean(this.pages.validAnchor(anchor)),
+    });
   }
   captureSelection() {
     if (this.selecting || this.adjustingSelection || this.aiSetupOpen) return;
     const selection = window.getSelection();
     if (!selection?.rangeCount || selection.isCollapsed) return;
     const range = selection.getRangeAt(0);
-    const element = node => node.nodeType === 1 ? node : node.parentElement;
-    const image = element(range.startContainer)?.closest("#article [data-pdf-object]");
-    if (image && image === element(range.endContainer)?.closest("[data-pdf-object]")) {
-      const block = this.doc.blocks.find(b => b.id === image.dataset.block);
-      if (block) this.choose(this.anchorFor(block.id, 0, block.text.length), image);
+    const element = (node) => (node.nodeType === 1 ? node : node.parentElement);
+    const image = element(range.startContainer)?.closest(
+      "#article [data-pdf-object]",
+    );
+    if (
+      image &&
+      image === element(range.endContainer)?.closest("[data-pdf-object]")
+    ) {
+      const block = this.doc.blocks.find((b) => b.id === image.dataset.block);
+      if (block)
+        this.choose(this.anchorFor(block.id, 0, block.text.length), image);
       return;
     }
     let anchor;
-    try { anchor = anchorFromDOMRange(this, range); }
-    catch (error) { this.clearSelection({native: false}); this.status(error.message); return; }
+    try {
+      anchor = anchorFromDOMRange(this, range);
+    } catch (error) {
+      this.clearSelection({ native: false });
+      this.status(error.message);
+      return;
+    }
     if (!anchor?.quote.trim()) return;
-    if (sameSelection(this.selection, anchor)) { this.positionSelection(); return; }
+    if (sameSelection(this.selection, anchor)) {
+      this.positionSelection();
+      return;
+    }
     this.choose(anchor);
   }
   closePop() {
@@ -569,7 +738,10 @@ export class Reader {
     if (wasOpen) this.emit?.("reading-uncovered");
   }
   renderDictionary(pop, item) {
-    renderDictionaryCard(pop, {...item, anchor: item.anchor || this.popAnchor});
+    renderDictionaryCard(pop, {
+      ...item,
+      anchor: item.anchor || this.popAnchor,
+    });
   }
   pop(el, custom) {
     this.closePop();
@@ -692,7 +864,7 @@ export class Reader {
           body: { target: item.target, verdict: btn.dataset.verdict },
         });
         this.closePop();
-        await this.refresh(undefined, {preserveLayout: true});
+        await this.refresh(undefined, { preserveLayout: true });
         toast(
           btn.dataset.verdict === "known"
             ? "已记住：减少这项注释"
@@ -707,7 +879,8 @@ export class Reader {
                   verdict: feedback.previous || "reset",
                 },
               });
-              if (!this.scope.signal.aborted) await this.refresh(undefined, {preserveLayout: true});
+              if (!this.scope.signal.aborted)
+                await this.refresh(undefined, { preserveLayout: true });
             },
           },
         );
@@ -730,7 +903,8 @@ export class Reader {
         body: { word, mark_unknown: false },
         signal: lookup.signal,
       });
-      if (lookup.signal.aborted || this.selecting || this.suppressWordClick) return;
+      if (lookup.signal.aborted || this.selecting || this.suppressWordClick)
+        return;
       this.lookups++;
       this.pop(el, {
         text: word,

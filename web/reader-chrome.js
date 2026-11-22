@@ -17,20 +17,35 @@ export const readerIcon = (id) =>
   `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icons[id] || icons.more}</svg>`;
 
 export function readerShell(d, progressEnabled) {
-  const sourceRange = d.pdf ? `来源 PDF 第 ${d.pdf.start_page}–${d.pdf.end_page} 页` : "";
+  const sourceRange = d.pdf
+    ? `来源 PDF 第 ${d.pdf.start_page}–${d.pdf.end_page} 页`
+    : "";
   const caption = d.pdf ? `阅读版 · ${sourceRange}` : d.title;
   let source = "";
   if (!d.pdf && d.availability === "ready" && d.source) {
     const value = d.source.final_url;
     try {
       const url = new URL(value);
-      if (typeof value === "string" && ["https:", "http:"].includes(url.protocol) &&
-          !url.username && !url.password && !/[\u0000-\u0020\u007f\\]/.test(value)) {
-        const details = [["作者", d.source.author], ["发布", d.source.published_at], ["抓取", d.source.fetched_at]]
-          .filter(([, v]) => typeof v === "string" && v.length).map(([label, v]) => `${label}：${e(v)}`).join(" · ");
+      if (
+        typeof value === "string" &&
+        ["https:", "http:"].includes(url.protocol) &&
+        !url.username &&
+        !url.password &&
+        !/[\u0000-\u0020\u007f\\]/.test(value)
+      ) {
+        const details = [
+          ["作者", d.source.author],
+          ["发布", d.source.published_at],
+          ["抓取", d.source.fetched_at],
+        ]
+          .filter(([, v]) => typeof v === "string" && v.length)
+          .map(([label, v]) => `${label}：${e(v)}`)
+          .join(" · ");
         source = `<span class="reading-url-source" style="display:block;white-space:normal;overflow-wrap:anywhere">来源：<a href="${e(value)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">${e(value)}</a>${details ? `<span style="display:block">${details}</span>` : ""}</span>`;
       }
-    } catch { /* Invalid source metadata must never become a navigation target. */ }
+    } catch {
+      /* Invalid source metadata must never become a navigation target. */
+    }
   }
   return `<div class="reader paged-reader" data-document-id="${d.id}" data-chrome="closed">
     <button id="show-tools" class="reader-top-zone" aria-label="显示阅读工具" aria-expanded="false"></button>
@@ -127,7 +142,8 @@ export function installReaderChrome(r) {
     if (!heldContinuous || !heldKey || !heldDirection || r.scope.signal.aborted)
       return;
     if (r.pages.animating) r.pages.accelerateTurn(heldDirection);
-    else if (r.pages.canGrab()) r.pages.adjacent(heldDirection, "keyboard-held");
+    else if (r.pages.canGrab())
+      r.pages.adjacent(heldDirection, "keyboard-held");
     heldFrame = requestAnimationFrame(continueHeldPaging);
   };
   const startHeldPaging = (key, direction) => {
@@ -267,8 +283,11 @@ export function installReaderChrome(r) {
         consume(ev);
         return;
       }
-      if (dismissedSelection && !target.closest("button,a,input,textarea,select") &&
-          !onInk(target, ev.clientX, ev.clientY)) {
+      if (
+        dismissedSelection &&
+        !target.closest("button,a,input,textarea,select") &&
+        !onInk(target, ev.clientX, ev.clientY)
+      ) {
         consume(ev);
         return;
       }
@@ -370,9 +389,14 @@ export function installReaderChrome(r) {
     },
     { capture: true },
   );
-  r.scope.on(document, "keyup", (ev) => {
-    if (ev.key === heldKey) stopHeldPaging();
-  }, { capture: true });
+  r.scope.on(
+    document,
+    "keyup",
+    (ev) => {
+      if (ev.key === heldKey) stopHeldPaging();
+    },
+    { capture: true },
+  );
   r.scope.on(window, "blur", stopKeyboardPaging);
   r.scope.on(document, "visibilitychange", () => {
     if (document.hidden) stopKeyboardPaging();
@@ -481,7 +505,7 @@ export function installCoreReaderTools(r) {
         scope.on($("#reader-layout", el), "change", (ev) => {
           const anchor = r.captureView().visibleAnchor || r.position();
           local.set("page-layout", ev.target.value);
-          r.pages.reflow(anchor, {reason: "columns"});
+          r.pages.reflow(anchor, { reason: "columns" });
         });
         scope.on($("#reader-motion", el), "change", (ev) => {
           local.set("page-motion", ev.target.value);

@@ -48,7 +48,7 @@ export function install(ctx) {
             prefs.font = ev.target.value;
             apply();
             local.set("typography", prefs);
-            r.pages.reflow(anchor, {reason: "font"});
+            r.pages.reflow(anchor, { reason: "font" });
             $("#type-state", el).textContent = "已自动保存 ✓";
           });
           scope.on(el, "input", (ev) => {
@@ -60,7 +60,7 @@ export function install(ctx) {
             local.set("typography", prefs);
             $("#type-value-" + input.dataset.type, el).textContent =
               input.value;
-            r.pages.reflow(anchor, {reason: input.dataset.type});
+            r.pages.reflow(anchor, { reason: input.dataset.type });
             $("#type-state", el).textContent = "已自动保存 ✓";
           });
           scope.on($("#reset-type", el), "click", () => {
@@ -69,7 +69,7 @@ export function install(ctx) {
             apply();
             local.set("typography", prefs);
             r.closePanel();
-            r.pages.reflow(anchor, {reason: "typography-reset"});
+            r.pages.reflow(anchor, { reason: "typography-reset" });
           });
         },
       ),
