@@ -237,7 +237,7 @@ def require_consumers(flight):
         raise HTTPException(499, "已取消请求")
 
 
-async def shared(app, identity, state, request, produce):
+async def shared(app, identity, state, request, produce, *, retain_disconnected=False):
     flights = app.state.assist_flights
     flight = flights.get(identity)
     debug = getattr(app.state, "assist_debug", None)
@@ -318,11 +318,21 @@ async def shared(app, identity, state, request, produce):
         if debug is not None:
             debug.append({"event": "leave", "identity": identity, "state": owner,
                           "cancelled": state["cancelled"], "counts": dict(flight["counts"])})
-        if not flight["counts"][owner]:
+        def release_owner(task=None):
+            if flight["counts"].get(owner):
+                return
             flight["owners"].pop(owner, None)
             flight["counts"].pop(owner, None)
             if state.get("flight") is flight:
                 state.pop("flight", None)
+            if not flight["owners"] and flights.get(identity) is flight:
+                flights.pop(identity, None)
+
+        if not flight["counts"][owner]:
+            if retain_disconnected and not state["cancelled"] and not flight["task"].done():
+                flight["task"].add_done_callback(release_owner)
+            else:
+                release_owner()
         if not any(not o["cancelled"] for o in flight["owners"].values()):
             flight["cancelled"] = True
             if not flight["task"].done():
@@ -560,7 +570,8 @@ async def context_assist(app, ctx, request, doc_id, body):
         attempt = {"id": attempt_id}
     return await shared(app, "context:" + attempt["id"], state, request,
                         lambda flight: produce_context(app, ctx, doc_id, target, text, context, identity,
-                                                       p, attempt["id"], request_id, flight, request))
+                                                       p, attempt["id"], request_id, flight, request),
+                        retain_disconnected=True)
 
 
 async def produce_context(app, ctx, doc_id, target, text, context, identity, p, attempt_id, request_id, flight, evidence_request=None):
@@ -604,15 +615,9 @@ async def produce_context(app, ctx, doc_id, target, text, context, identity, p, 
         diagnostic.stage = previous
 
     async def active_stage():
-        if not flight["cancelled"]:
-            # Check a live HTTP connection at the send boundary, rather than
-            # relying on flags updated by the 50ms disconnect poll.
-            for connection in list(flight["connections"].values()):
-                probe = connection.get("probe")
-                if probe and await probe():
-                    if not flight["cancelled"] and not connection["owner"]["cancelled"] and not connection["closed"]:
-                        return
-        raise asyncio.CancelledError()
+        if flight["cancelled"]:
+            raise asyncio.CancelledError()
+        require_consumers(flight)
 
     async def stage(name, system, user):
         await active_stage()

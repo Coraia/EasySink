@@ -9,14 +9,15 @@ const defaultContext = Object.freeze({ context_previous: false, context_next: fa
 
 function attemptMessage(attempt) {
   if (attempt.state === "pending") return "正在解释，可稍后查看结果。";
-  if (attempt.state === "unknown") return "暂时无法确认解释结果，不会自动重试。可稍后查看结果。";
+  if (attempt.state === "unknown") return attempt.error || "暂时无法确认解释结果，不会自动重试；可重新解释，可能再次计费。";
   return attempt.http_status === 429 ? "解释服务额度不足或繁忙，不会自动重试。" :
     "这次未能取得可用解释，不会自动重试。";
 }
 
 function failureMessage(error) {
   if (error.code === "context_pending") return attemptMessage({ state: "pending" });
-  if (!error.status || error.code === "context_unknown") return attemptMessage({ state: "unknown" });
+  if (error.code === "context_unknown") return error.message;
+  if (!error.status) return "连接中断，尚未取得解释结果。请重新查看已保存结果，不会自动重新解释。";
   if ([400, 404, 410, 422].includes(error.status)) return "这处原文暂不可用，请重新打开词卡。";
   return attemptMessage({ state: "failed", http_status: error.status });
 }
@@ -87,7 +88,7 @@ export function installContextPopup(r, pop, anchor, scope) {
     adopt.disabled = adopting || adopted;
     setReadingAction(adopt, "check", adopted ? "已采用" : adopting ? "正在采用…" : "用于此处", adopted ? "已用于此处释义" : "用于此处释义");
     const busy = Boolean(controller);
-    const guarded = plan?.attempt && plan.attempt.state !== "succeeded";
+    const guarded = plan?.attempt && !["succeeded", "pending"].includes(plan.attempt.state);
     generate.hidden = !busy && Boolean(selectedRecord || guarded);
     generate.disabled = !busy && !plan;
     setReadingAction(generate, busy ? "stop" : "explain", busy ? "取消" : "解释", busy ? "取消解释" : "解释这里的意思");
@@ -191,7 +192,7 @@ export function installContextPopup(r, pop, anchor, scope) {
   scope.on($("[data-context-refresh]", section), "click", () => preview());
   scope.cleanup(() => {
     previewSequence++;
-    controller?.cancel();
+    controller?.abort();
     pop.contextRecord = null;
     if (r.contextRecordAnchor === anchor) {
       r.contextRecord = null;
