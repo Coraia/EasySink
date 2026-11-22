@@ -1237,6 +1237,7 @@ export class ReadingPages {
       last = Math.min(total, this.index + this.count);
     $("#reading-page-total").textContent =
       `${this.r.doc.chapter && !this.r.doc.pdf ? "本章 " : ""}${this.index + 1}${last > this.index + 1 ? "–" + last : ""} / ${total}${this.complete ? "" : "+"}`;
+    $("#reading-end").hidden = !this.complete || !total || last < total;
     const root = $(".reader");
     if (geometry) this.updateEdges();
     root.dataset.pageIndex = String(this.index);

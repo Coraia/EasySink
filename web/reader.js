@@ -11,8 +11,10 @@ import { installReadingTraces } from "./reading-traces.js";
 import {
   readerShell,
   installReaderChrome,
+  installReaderEnding,
   installCoreReaderTools,
   readerIcon,
+  readerToolLabels,
 } from "./reader-chrome.js?v=20261018-keyboard-paging-tuned";
 export class Reader {
   constructor(ctx, scope, doc, handoff = null) {
@@ -108,23 +110,7 @@ export class Reader {
       },
       { passive: true },
     );
-    s.on($("#finish-reading"), "click", async (ev) => {
-      try {
-        await api(`/documents/${d.id}/finish`, {
-          method: "POST",
-          body: {
-            annotation_count: this.doc.annotation_count,
-            manual_lookups: this.lookups,
-            felt_density: "读完",
-          },
-        });
-        ev.target.textContent = "已记录 ✓";
-        toast("阅读已记录，原始痕迹已保留。");
-        this.showTraces?.();
-      } catch (err) {
-        toast(err.message);
-      }
-    });
+    installReaderEnding(this);
     s.on($("#archive-reading"), "click", async (ev) => {
       try {
         await api(
@@ -202,19 +188,13 @@ export class Reader {
   tool(id, label, fn) {
     const button = document.createElement("button");
     button.id = `tool-${id}`;
-    const primary = [
-      "outline",
-      "notes",
-      "collections",
-      "progress",
-      "appearance",
-      "typography",
-      "more",
-    ].includes(id);
+    const primary = Object.hasOwn(readerToolLabels, id);
     button.setAttribute("aria-label", label);
     button.title = label;
     button.className = primary ? "reader-icon" : "reader-secondary-tool";
-    button.innerHTML = primary ? readerIcon(id) : e(label);
+    button.innerHTML = primary
+      ? `${readerIcon(id)}<span aria-hidden="true">${readerToolLabels[id]}</span>`
+      : e(label);
     button.dataset.tool = id;
     button.setAttribute("aria-pressed", "false");
     if (primary) {

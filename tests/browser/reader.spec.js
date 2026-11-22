@@ -349,7 +349,10 @@ test("speech consumes only English and is stopped on leaving; finish/archive rem
   await read(page, d.id);
   await tools(page, "more");
   await page.locator("#finish-reading").click();
-  await expect(page.locator("#finish-reading")).toHaveText("已记录 ✓");
+  await page.locator("#reader-ending-save").click();
+  await expect(page.locator("#reader-ending-title")).toHaveText("阅读已记录");
+  await page.locator("#reader-ending-back").click();
+  await tools(page, "traces");
   await expect(page.locator(".trace-entries")).toHaveCount(1);
   await tools(page, "more");
   await page.locator("#archive-reading").click();
