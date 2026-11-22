@@ -399,7 +399,16 @@ export function setupReadingInteractions(r) {
   });
   r.scope.on($("#article"), "pointermove", (ev) => {
     if (r.pages?.animating || ev.pointerType === "touch") return;
-    const fragment = ev.target.closest(".source-fragment");
+    const fragment = ev.target.closest(".source-unit,.paragraph-actions")?.closest(".source-fragment") ||
+      $$("#article .actions-visible").find((el) => {
+        const source = (el.querySelector(".reflow-source-block") || el).getBoundingClientRect();
+        const actions = el.querySelector(".paragraph-actions")?.getBoundingClientRect();
+        if (!actions) return false;
+        return ev.clientX >= Math.min(source.left, actions.left) &&
+          ev.clientX <= Math.max(source.right, actions.right) &&
+          ev.clientY >= Math.min(source.top, actions.top) &&
+          ev.clientY <= Math.max(source.bottom, actions.bottom);
+      }) || ev.target.closest(".source-fragment");
     $$("#article .actions-visible").forEach((el) => {
       if (el !== fragment) el.classList.remove("actions-visible");
     });
