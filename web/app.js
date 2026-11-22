@@ -61,7 +61,8 @@ const ctx = {
     ctx.navigate(`#/read/${doc_id}`);
   },
   commitReadingRange(previous, pages) {
-    if (ctx.reader !== previous || previous.scope.signal.aborted || !pages) return;
+    if (ctx.reader !== previous || previous.scope.signal.aborted || !pages)
+      return;
     // Everything required to draw the destination was prepared before landing.
     // Replace only after commit; never enter route()'s loading screen.
     const painter = previous.pages.painter;
@@ -70,7 +71,7 @@ const ctx = {
     previous.scope.dispose();
     const scope = (ctx.scope = new Scope());
     ctx.readStarted = performance.now();
-    const reader = new Reader(ctx, scope, pages.r.doc, {pages, painter});
+    const reader = new Reader(ctx, scope, pages.r.doc, { pages, painter });
     // This committed page turn supersedes an older interrupted jump. Handoff
     // skips normal jump restoration, so leaving it queued would move a later reopen.
     local.remove(`jump:${reader.doc.id}`);
@@ -78,15 +79,20 @@ const ctx = {
     ctx.reader = reader;
     history.pushState(null, "", `#/read/${reader.doc.id}`);
     const trackpad = previous.pages.trackpad;
-    reader.mount().then(() => {
-      // Reader.mount() creates the destination ReadingPages. Moving an active
-      // native-input owner before that point leaves queued gestures pointing
-      // at undefined instead of the new chapter.
-      if (!scope.signal.aborted) trackpad?.handoff?.(reader);
-    }).catch(error => {
-      if (error.name !== "AbortError" && !scope.signal.aborted)
-        reader.status("阅读工具暂未完成加载，正文已保留。请稍后重新打开。", {notice: true});
-    });
+    reader
+      .mount()
+      .then(() => {
+        // Reader.mount() creates the destination ReadingPages. Moving an active
+        // native-input owner before that point leaves queued gestures pointing
+        // at undefined instead of the new chapter.
+        if (!scope.signal.aborted) trackpad?.handoff?.(reader);
+      })
+      .catch((error) => {
+        if (error.name !== "AbortError" && !scope.signal.aborted)
+          reader.status("阅读工具暂未完成加载，正文已保留。请稍后重新打开。", {
+            notice: true,
+          });
+      });
     const root = $(".reader");
     if (root) root.dataset.rangeTurns = JSON.stringify(ctx.rangeTurns || []);
   },
@@ -107,7 +113,8 @@ const palette = [
 function cards(items) {
   return items
     .map((d, i) => {
-      if (d.cardKey) return `<article class="book-card" data-card-key="${e(d.cardKey)}"><div class="book-cover" style="--cover:${palette[i % palette.length]}"><small>${e(d.coverLabel)}</small><div class="cover-title">${e(d.title)}</div></div><div class="book-info"><h3>${e(d.title)}</h3><div class="row"><span data-card-subtitle>${e(d.subtitle)}</span><span>·</span><span>${date(d.created_at)}</span></div><div data-card-status>${d.statusHTML || ""}</div><footer><a class="book-card-open" data-card-open href="${e(d.href)}" aria-label="${e(d.title)} · 打开"><span data-card-action>${e(d.action)}</span><span aria-hidden="true"> ↗</span></a><a class="book-card-status-link" href="${e(d.statusHref)}">处理详情</a></footer></div></article>`;
+      if (d.cardKey)
+        return `<article class="book-card" data-card-key="${e(d.cardKey)}"><div class="book-cover" style="--cover:${palette[i % palette.length]}"><small>${e(d.coverLabel)}</small><div class="cover-title">${e(d.title)}</div></div><div class="book-info"><h3>${e(d.title)}</h3><div class="row"><span data-card-subtitle>${e(d.subtitle)}</span><span>·</span><span>${date(d.created_at)}</span></div><div data-card-status>${d.statusHTML || ""}</div><footer><a class="book-card-open" data-card-open href="${e(d.href)}" aria-label="${e(d.title)} · 打开"><span data-card-action>${e(d.action)}</span><span aria-hidden="true"> ↗</span></a><a class="book-card-status-link" href="${e(d.statusHref)}">处理详情</a></footer></div></article>`;
       return `<a class="book-card" href="${d.href || "#/read/" + d.id}"><div class="book-cover" style="--cover:${palette[i % palette.length]}"><small>${e(d.coverLabel || "EASYSINK / ARTICLE")}</small><div class="cover-title">${e(d.title)}</div></div><div class="book-info"><h3>${e(d.title)}</h3><div class="row"><span>${e(d.subtitle || `${d.word_count?.toLocaleString() || 0} 词`)}</span><span>·</span><span>${date(d.created_at)}</span></div>${d.readingChapter ? `<p class="meta">${e(d.readingChapter)}</p>` : ""}<footer><span>${e(d.action || "打开阅读")}</span><span>↗</span></footer></div></a>`;
     })
     .join("");
@@ -120,7 +127,13 @@ async function route() {
   const hash = location.hash.replace(/^#\/?/, "");
   const [requestedName, id] = hash.split("/");
   const name = requestedName === "picturebook" ? "read" : requestedName;
-  document.body.classList.remove("reading", "immersive", "paged-reading", "picturebook-reading", "children-space");
+  document.body.classList.remove(
+    "reading",
+    "immersive",
+    "paged-reading",
+    "picturebook-reading",
+    "children-space",
+  );
   if (name === "read" && /^\d+$/.test(id))
     document.body.classList.add("paged-reading");
   $("#header-context").textContent = "你的英文阅读空间";
@@ -148,7 +161,9 @@ async function route() {
     ctx.profile = profile;
     if (reading) {
       if (doc.reading_space === "children")
-        ctx.navigate(doc.children_book_id ? `#/living-book/${doc.id}` : "#/children");
+        ctx.navigate(
+          doc.children_book_id ? `#/living-book/${doc.id}` : "#/children",
+        );
       else {
         ctx.reader = new Reader(ctx, scope, doc);
         ctx.reader.preparation = preparation;
@@ -178,8 +193,9 @@ async function route() {
   }
 }
 async function renderHome(scope) {
-  const documents = (await api("/documents", { signal: scope.signal }))
-    .filter((doc) => doc.reading_space !== "children");
+  const documents = (await api("/documents", { signal: scope.signal })).filter(
+    (doc) => doc.reading_space !== "children",
+  );
   if (scope.signal.aborted) return;
   ctx.root.innerHTML = `<div class="page"><div class="page-head"><div><div class="eyebrow">YOUR READING SPACE</div><h1>留在故事里。</h1><p>从一篇文章开始，让语言不再打断思考。</p></div><div class="row" id="home-actions"><button class="primary" id="new-reading">＋ 添加阅读</button></div></div><section class="welcome ${documents.length ? "compact" : ""}"><div class="welcome-copy"><div class="eyebrow">READ WITH UNDERSTANDING</div><h2>好的阅读体验，<br>是忘记自己在读英文。</h2><p>只解释你需要的词、表达与背景。无需先做测试，开始阅读后，辅助会随你的反馈调整。</p><div class="row wrap"><button id="try-sample">体验一篇示例 <span>→</span></button><button id="try-grammar-sample" class="text-button">体验长难句</button><a class="text-button" href="#/profile">调整我的阅读辅助</a></div></div><div class="reading-sample"><p>Curiosity is a quiet form of <span>courage <small>勇气</small></span>.</p><div class="caption">英文在前，理解就在旁边。</div></div></section><div id="home-continue"></div><div id="book-collections"></div><div class="section-heading"><h2>我的阅读</h2><span id="shelf-count" role="status">正在整理书架…</span></div><div class="shelf-tools"><div class="filters" role="group" aria-label="内容筛选"><button class="filter active" data-filter="all">全部</button><button class="filter" data-filter="recent">最近添加</button><button class="filter" data-filter="archived">已归档</button></div><input type="search" id="shelf-search" placeholder="搜索标题…" aria-label="搜索书架"></div><div class="book-grid" id="article-grid"></div></div>`;
   mountShelfTabs(ctx, scope, "standard", $(".page", ctx.root));
@@ -196,8 +212,13 @@ async function renderHome(scope) {
     $("#shelf-count").textContent =
       `${bookCount} 本书 · ${items.length - bookCount} 篇内容`;
     const search = $("#shelf-search").value.trim().toLowerCase();
-    items = items.filter((d) => d.title.toLowerCase().includes(search) ||
-      d.chapters?.some(chapter => chapter.title.toLowerCase().includes(search)));
+    items = items.filter(
+      (d) =>
+        d.title.toLowerCase().includes(search) ||
+        d.chapters?.some((chapter) =>
+          chapter.title.toLowerCase().includes(search),
+        ),
+    );
     if (filter === "recent") items = items.slice(0, 6);
     $("#article-grid").innerHTML =
       cards(items) ||
@@ -269,8 +290,11 @@ function importText() {
     `<form id="paste-form" class="stack unified-import"><div id="import-entry" class="import-entry"><textarea id="paste-text" rows="7" required aria-label="粘贴网页链接或文字" placeholder="粘贴网页链接或文字，也可以把文件拖到这里">${e(draft.text)}</textarea><div class="import-entry-footer"><span id="import-supported">粘贴英文文字</span><span id="import-file-slot"></span></div></div><div id="import-detected" class="import-detected" role="status" aria-live="polite"><strong id="import-detected-title">等待内容</strong><span id="import-detected-copy">系统会自动识别链接、文字或文件；只有需要选择时才会继续询问。</span></div><div id="import-extension"></div><div id="import-text-options" hidden><label for="paste-title">标题（可选）</label><input id="paste-title" placeholder="给这篇阅读起个名字" value="${e(draft.title)}"></div><div class="import-actions"><button id="import-clear" type="button">清除</button><span class="save-state" id="paste-state">草稿保留在${storagePlace()}</span><button id="import-continue" class="primary" type="submit" disabled>继续</button></div></form>`,
   );
   d.classList.add("import-dialog");
-  $(".dialog-head h2", d).innerHTML = '<span class="import-kicker">添加阅读</span>把内容放进来';
-  d.addEventListener("close", () => d.classList.remove("import-dialog"), { once: true });
+  $(".dialog-head h2", d).innerHTML =
+    '<span class="import-kicker">添加阅读</span>把内容放进来';
+  d.addEventListener("close", () => d.classList.remove("import-dialog"), {
+    once: true,
+  });
   const form = $("#paste-form", d);
   const text = $("#paste-text", d);
   const title = $("#paste-title", d);
@@ -300,7 +324,8 @@ function importText() {
       pasteState.textContent = "网页链接不会保存为文字草稿";
       return;
     }
-    if (!form.dataset.importKind || form.dataset.importKind === "text") renderText();
+    if (!form.dataset.importKind || form.dataset.importKind === "text")
+      renderText();
     if (form.dataset.importKind && form.dataset.importKind !== "text") return;
     const saved = local.set("import-draft", {
       title: title.value,
@@ -348,7 +373,8 @@ async function renderProfile(scope) {
   let queue = Promise.resolve();
   let latest = 0;
   let pending = {};
-  const domainSummary = (count) => count ? `已选择 ${count} 个领域` : "未选择 · 使用默认辅助";
+  const domainSummary = (count) =>
+    count ? `已选择 ${count} 个领域` : "未选择 · 使用默认辅助";
   ctx.root.innerHTML = `<div class="settings-layout"><div class="page-head"><div><div class="eyebrow">MAKE IT YOURS</div><h1>刚刚好的帮助。</h1><p>所有选择都会自动保存。读得越多，越懂你的需要。</p></div><span class="save-state" id="profile-save" role="status">已同步</span></div><section class="card"><h2>阅读辅助</h2><div class="setting-row"><div><strong>从熟悉的程度开始</strong><p>这是词频门槛的起点，可以随时调整，不需要先做测试。</p></div><select id="vocab-level" aria-label="英语熟悉程度">${[
     [3500, "基础阅读"],
     [4500, "大学四级左右"],
@@ -403,7 +429,8 @@ async function renderProfile(scope) {
       })
       .catch((err) => {
         if (!scope.signal.aborted && version === latest) {
-          $("#domain-state").textContent = `${domainSummary(focusDomains.size)} · 保存失败，等待重试`;
+          $("#domain-state").textContent =
+            `${domainSummary(focusDomains.size)} · 保存失败，等待重试`;
           $("#profile-save").innerHTML =
             '<button class="text-button" id="retry-save">保存失败 · 重试</button>';
           $("#retry-save").onclick = () => save({});
@@ -426,7 +453,8 @@ async function renderProfile(scope) {
       btn.setAttribute("aria-pressed", focusDomains.has(btn.dataset.domain)),
     );
     $("#clear-focus-domains").disabled = focusDomains.size === 0;
-    $("#domain-state").textContent = `${domainSummary(focusDomains.size)} · 保存中…`;
+    $("#domain-state").textContent =
+      `${domainSummary(focusDomains.size)} · 保存中…`;
     save({ focus_domains: [...focusDomains] });
   };
   scope.on($("#clear-focus-domains"), "click", () => {

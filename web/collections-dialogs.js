@@ -16,7 +16,9 @@ export function collectionDialog(store, owner, title, html, host = null) {
     dialog = document.createElement(host ? "section" : "dialog");
   const returnFocus = document.activeElement;
   dialog.className = `collections-dialog${host ? " collections-inline-panel" : ""}`;
-  const siblings = host?.classList.contains("collections-view") ? [...host.children].map(node => [node, node.hidden]) : [];
+  const siblings = host?.classList.contains("collections-view")
+    ? [...host.children].map((node) => [node, node.hidden])
+    : [];
   for (const [node] of siblings) node.hidden = true;
   dialog.setAttribute("aria-label", title);
   dialog.innerHTML = `<header><h2>${e(title)}</h2><button type="button" data-close aria-label="关闭">×</button></header>${html}`;
@@ -94,15 +96,27 @@ export function collectionDialog(store, owner, title, html, host = null) {
   });
   // Run before the reader's document-capture shortcuts. Escape belongs to
   // the innermost visible inspection/editor, including its guarded save.
-  if (host) scope.on(window, "keydown", event => {
-    const panels = [...document.querySelectorAll(".collections-inline-panel")];
-    const modal = document.querySelector("dialog[open]");
-    if (event.key !== "Escape" || panels.at(-1) !== dialog ||
-        (modal && !modal.contains(dialog))) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    void close();
-  }, { capture: true });
+  if (host)
+    scope.on(
+      window,
+      "keydown",
+      (event) => {
+        const panels = [
+          ...document.querySelectorAll(".collections-inline-panel"),
+        ];
+        const modal = document.querySelector("dialog[open]");
+        if (
+          event.key !== "Escape" ||
+          panels.at(-1) !== dialog ||
+          (modal && !modal.contains(dialog))
+        )
+          return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void close();
+      },
+      { capture: true },
+    );
   if (!scope.signal.aborted) dialog.showModal?.();
   else scope.dispose();
   return {
@@ -465,13 +479,13 @@ export function editCollection(
         return;
       }
       inspection?.scope.dispose();
-      const review = inspection = collectionDialog(
+      const review = (inspection = collectionDialog(
         store,
         scope,
         "核对我的释义",
         `<p class="collections-help">已核对来源、原文版本和完整范围一致。</p><blockquote class="collections-quote">${e(sourceExcerpt(latest.quote))}</blockquote><h3>当前保存</h3><p class="collections-text">${e(latest.my_meaning || "（空）")}</p><h3>你的输入</h3><p class="collections-text">${e(input.value)}</p><button type="button" data-save-current>用我的输入保存</button><button type="button" data-use-current>使用当前保存</button>`,
         inspectionHost,
-      );
+      ));
       review.scope.on(
         $("[data-save-current]", review.dialog),
         "click",
@@ -518,12 +532,14 @@ export function editCollection(
   const candidates = $("[data-candidates]", dialog);
   let values = [];
   const showCandidates = (list) => {
-    values = list.filter(
-      (value) =>
-        value.kind === "context" &&
-        !value.historical &&
-        sameSelection(value.anchor, item.anchor),
-    ).sort((a, b) => Number(b.id) - Number(a.id));
+    values = list
+      .filter(
+        (value) =>
+          value.kind === "context" &&
+          !value.historical &&
+          sameSelection(value.anchor, item.anchor),
+      )
+      .sort((a, b) => Number(b.id) - Number(a.id));
     candidates.innerHTML = values.length
       ? `<h3>先查看，再采用</h3>${values.map((value, i) => `<section class="collections-history-entry">${renderExplanation(value)}${Number(item.explanation?.assist_id) === Number(value.id) ? '<span class="collections-help">当前已采用</span>' : `<button type="button" data-adopt="${i}">采用这条解释</button>`}</section>`).join("")}`
       : '<p class="collections-help">这处原文还没有可采用的解释。可回到原文主动解释后再查看。</p>';
