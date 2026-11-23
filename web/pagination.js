@@ -362,7 +362,8 @@ export class ReadingPages {
     const current=from?{identity:this.presentationIdentity(),end:from,outgoingCarry:[]}:this.currentPresentation();
     if(!current)return null;
     const historyIndex=this.viewTrailIndex+direction,prior=from?null:this.viewTrail?.[historyIndex];
-    if(prior?.identity===current.identity)return this.presentationPacket(prior,{historyIndex});
+    const history=prior?.identity===current.identity?prior:null;
+    if(history?.snapshots)return this.presentationPacket(history,{historyIndex});
     const prefetchKey=from?null:`${this.presentationTextureGeneration(current)}:${direction}`;
     const prefetched=prefetchKey&&this.presentationPrefetch?.get(prefetchKey);
     if(prefetched?.packet)return prefetched.packet;
@@ -373,12 +374,14 @@ export class ReadingPages {
     const preparing=(async()=>{
       const packet=Object.create(ReadingPages.prototype),measure=this.measure.cloneNode(false);
       this.measure.parentElement.append(measure);
+      const forward=direction>0 || Boolean(history);
       Object.assign(packet,{r:this.r,blocks:this.blocks,fragments:this.fragments,urlRanges:this.urlRanges,
         inlineStyles:this.inlineStyles,inlineObjects:this.inlineObjects,urlImages:this.urlImages,
         measure,width:this.width,height:this.height,count:this.count,pages:[],index:0,complete:false,
-        viewStart:direction>0?current.end:null,incomingCarry:direction>0?current.outgoingCarry:[],
-        excludedCarry:direction<0?current.incomingCarry:[]});
-      const builder=direction>0?packet.buildPages():packet.reversePages(current.start);
+        viewStart:history?history.start:direction>0?current.end:null,
+        incomingCarry:history?history.incomingCarry:direction>0?current.outgoingCarry:[],
+        excludedCarry:forward?[]:current.incomingCarry});
+      const builder=forward?packet.buildPages():packet.reversePages(current.start);
       try {
         let done=false;
         while(!done && packet.pages.length<this.count) {
@@ -392,7 +395,7 @@ export class ReadingPages {
           if(!done && packet.pages.length<this.count)await new Promise(resolve=>setTimeout(resolve,0));
         }
         if(!valid())return null;
-        if(direction<0)packet.pages.reverse();
+        if(!forward)packet.pages.reverse();
         if(!packet.pages.length)return null;
         while(packet.pages.length<this.count)packet.pages.push([]);
         const snapshots=packet.pages.map((fragments,i)=>{
@@ -403,7 +406,7 @@ export class ReadingPages {
         if(!points.start || !points.end)return null;
         const view={snapshots,...points,identity,canonicalIndex:this.pageFor(points.start),
           incomingCarry:packet.incomingCarry,outgoingCarry:[]};
-        return this.presentationPacket(view,{direction});
+        return this.presentationPacket(view,history?{historyIndex}:{direction});
       }finally{builder.return?.();measure.remove();}
     })();
     if(!prefetchKey)return preparing;
@@ -469,7 +472,13 @@ export class ReadingPages {
     // textures for an actual history return instead of forcing every turn cold.
     if(stale())return false;
     // No history or view mutation may precede a callback that can supersede it.
-    if(intent.historyIndex!==undefined)this.viewTrailIndex=intent.historyIndex;
+    if(intent.historyIndex!==undefined) {
+      this.viewTrailIndex=intent.historyIndex;
+      if(this.viewTrail[this.viewTrailIndex]!==view) {
+        this.viewTrail=this.viewTrail.slice(0,this.viewTrailIndex+1);
+        this.viewTrail[this.viewTrailIndex]=view;
+      }
+    }
     else if(intent.direction>0) {
       this.viewTrail=this.viewTrail.slice(0,this.viewTrailIndex+1);this.viewTrail.push(view);++this.viewTrailIndex;
     }else{this.viewTrail.unshift(view);this.viewTrailIndex=0;}
