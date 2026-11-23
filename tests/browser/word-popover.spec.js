@@ -58,6 +58,66 @@ test.beforeEach(async ({ page, request }) => {
   });
 });
 test.afterEach(async ({ page }) => expect(page.__errors).toEqual([]));
+test("closing an explaining word card detaches without cancelling; reopening joins and reuses the saved result", async ({
+  page, request,
+}) => {
+  const provider = `http://127.0.0.1:${process.env.WR_E2E_PROVIDER_PORT || "18768"}`;
+  await request.put("/api/ai/config", { data: { text: {
+    enabled: true, base_url: provider + "/v1", model: "slow-assist", api_key: "e2e-no-secret",
+  } } });
+  const calls = async () => (await (await request.get(provider + "/observed")).json()).chat.length;
+  const before = await calls(), deletes = [];
+  page.on("request", req => {
+    if (req.method() === "DELETE" && req.url().includes("/assist-requests/")) deletes.push(req.url());
+  });
+  const pop = await openWord(page, request);
+  await expect(pop.locator(".context-result")).toBeEmpty();
+  await pop.locator("[data-context-generate]").click();
+  await expect.poll(calls).toBe(before + 1);
+  await page.keyboard.press("Escape");
+  await expect(pop).toHaveCount(0);
+  await page.locator('.source-unit[data-word="prominent"]').first().click();
+  await expect(pop.locator("[data-context-status]")).toContainText("正在解释");
+  await pop.getByRole("button", { name: "解释这里的意思", exact: true }).click();
+  await expect(pop.locator(".context-result")).toContainText("令人信服");
+  expect(await calls()).toBe(before + 2);
+  await page.keyboard.press("Escape");
+  await page.locator('.source-unit[data-word="prominent"]').first().click();
+  await expect(pop.locator(".context-result")).toContainText("令人信服");
+  expect(await calls()).toBe(before + 2);
+  expect(deletes).toEqual([]);
+});
+
+for (const kind of ["unknown", "connection"]) {
+  test(`word explanation ${kind} failure has honest recovery copy`, async ({ page, request }) => {
+    const message = "服务结果未知；可明确重新解释，可能再次计费。";
+    let failed = false;
+    await page.route("**/context/preview", async route => {
+      const response = await route.fetch();
+      const plan = await response.json();
+      if (failed && kind === "unknown") plan.attempt = { state: "unknown", error: message, http_status: 409 };
+      await route.fulfill({ response, json: plan });
+    });
+    await page.route("**/context", async route => {
+      failed = true;
+      if (kind === "connection") await route.abort("failed");
+      else await route.fulfill({ status: 409, json: { detail: { code: "context_unknown", message } } });
+    });
+    const pop = await openWord(page, request);
+    await pop.locator("[data-context-generate]").click();
+    await expect(pop.locator("[data-context-status]")).toHaveText(kind === "unknown" ? message :
+      "连接中断，尚未取得解释结果。请重新查看已保存结果，不会自动重新解释。");
+    await expect(pop.locator("[data-context-status]")).not.toContainText("可稍后查看结果");
+    if (kind === "unknown") {
+      await expect(pop.getByRole("button", { name: "重新解释", exact: true })).toBeEnabled();
+      await page.keyboard.press("Escape");
+      await page.locator('.source-unit[data-word="prominent"]').first().click();
+      await expect(pop.locator("[data-context-status]")).toHaveText(message);
+      await expect(pop.getByRole("button", { name: "重新解释", exact: true })).toBeEnabled();
+    }
+  });
+}
+
 test("short word card consumes trackpad wheel without moving the background; closing restores pagination", async ({
   page,
   request,
