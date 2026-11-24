@@ -246,7 +246,9 @@ export function setupReadingInteractions(r) {
       getComputedStyle(range.startContainer.parentElement).visibility !== "hidden");
     if (ranges.length) {
       const first = ranges[0], last = ranges.at(-1);
-      getSelection().setBaseAndExtent(first.startContainer, first.startOffset, last.endContainer, last.endOffset);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.setBaseAndExtent(first.startContainer, first.startOffset, last.endContainer, last.endOffset);
     }
     r.ctx.run("selection", r).catch(console.error);
   };
