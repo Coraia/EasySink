@@ -84,7 +84,6 @@ export function installSelectionHandles(r) {
     drag = { id: ev.pointerId, button, fixed: {block_id: fixed.block_id, offset: edge === 'start' ? fixed.end : fixed.start},
       dx: ev.clientX - rect.x, dy: ev.clientY - (rect.top + rect.height / 2) };
     r.adjustingSelection = true;
-    getSelection()?.removeAllRanges();
     r.emit('before-selection');
     for (const controller of r.pending.values()) controller.cancel();
     r.pending.clear();
@@ -123,7 +122,7 @@ export function installSelectionHandles(r) {
     try {
       const anchor = rangeAnchorFromPoints(r, {block_id: fixed.block_id, offset: edge === 'start' ? fixed.end : fixed.start}, {block_id: part.block_id, offset});
       if (anchor?.quote.trim()) {
-        getSelection()?.removeAllRanges(); r.choose(anchor);
+        r.choose(anchor);
         r.selectionPlacement = {block_id: part.block_id, offset, trigger: 'range'};
         r.positionSelection();
       }

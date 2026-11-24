@@ -51,6 +51,19 @@ export function setupReadingInteractions(r) {
   r.paragraphAnchor = (id) => paragraphAnchor(r, id);
   r.paintSelection = () => {
     const anchor = r.selection;
+    const precise = Boolean(globalThis.CSS?.highlights && globalThis.Highlight);
+    $(".reader").classList.toggle("precise-selection", precise);
+    $("#article").classList.toggle("has-reader-selection", Boolean(anchor && anchor.kind !== "image"));
+    globalThis.CSS?.highlights?.delete("reader-selection");
+    if (r.selecting && precise) {
+      const selection = getSelection();
+      if (selection.rangeCount && !selection.isCollapsed) {
+        const range = selection.getRangeAt(0);
+        if (range.intersectsNode($("#article")))
+          CSS.highlights.set("reader-selection", new Highlight(range.cloneRange()));
+      }
+      return;
+    }
     const parts = anchorSegments(anchor);
     r.selectedTextRanges = [];
     $$("#article .source-unit").forEach((el) =>
@@ -62,7 +75,6 @@ export function setupReadingInteractions(r) {
         ),
       ),
     );
-    globalThis.CSS?.highlights?.delete("reader-selection");
     $$("#article [data-pdf-object]").forEach((el) =>
       el.classList.toggle("is-selected", Boolean(anchor?.kind === "image" && el.dataset.pdfObject === anchor.block_id)),
     );
@@ -91,8 +103,6 @@ export function setupReadingInteractions(r) {
         offset = end;
       }
     });
-    const precise = Boolean(globalThis.CSS?.highlights && globalThis.Highlight);
-    $(".reader").classList.toggle("precise-selection", precise);
     if (precise) CSS.highlights.set("reader-selection", new Highlight(...ranges));
   };
   r.positionSelection = () => {
@@ -242,6 +252,12 @@ export function setupReadingInteractions(r) {
     };
     r.closePop();
     r.renderSelection();
+    const ranges = r.selectedTextRanges.map(run => run.range).filter(range =>
+      getComputedStyle(range.startContainer.parentElement).visibility !== "hidden");
+    if (ranges.length) {
+      const first = ranges[0], last = ranges.at(-1);
+      getSelection().setBaseAndExtent(first.startContainer, first.startOffset, last.endContainer, last.endOffset);
+    }
     r.ctx.run("selection", r).catch(console.error);
   };
   r.clearSelection = ({ native = true } = {}) => {

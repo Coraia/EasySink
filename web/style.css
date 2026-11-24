@@ -2527,6 +2527,13 @@ body.paged-reading #app {
   background: var(--accent-soft);
   box-shadow: inset 0 -2px var(--accent);
 }
+.precise-selection #article::selection,
+.precise-selection #article ::selection,
+#article.has-reader-selection::selection,
+#article.has-reader-selection ::selection {
+  background-color: transparent;
+  color: inherit;
+}
 .source-unit.linked-translation {
   background: var(--linked-bg);
   color: var(--linked-ink);
