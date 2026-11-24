@@ -2527,8 +2527,10 @@ body.paged-reading #app {
   background: var(--accent-soft);
   box-shadow: inset 0 -2px var(--accent);
 }
-#article:has(.source-unit.is-selected)::selection,
-#article:has(.source-unit.is-selected) ::selection {
+.precise-selection #article::selection,
+.precise-selection #article ::selection,
+#article.has-reader-selection::selection,
+#article.has-reader-selection ::selection {
   background-color: transparent;
   color: inherit;
 }

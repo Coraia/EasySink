@@ -520,7 +520,8 @@ export class Reader {
     return this.pages.restore(anchor || { ratio: 0 }, mark, {signal, alignStart: alignStart && Boolean(this.pages.validAnchor(anchor))});
   }
   captureSelection() {
-    if (this.selecting || this.adjustingSelection || this.aiSetupOpen) return;
+    if (this.selecting) { this.paintSelection(); return; }
+    if (this.adjustingSelection || this.aiSetupOpen) return;
     const selection = window.getSelection();
     if (!selection?.rangeCount || selection.isCollapsed) return;
     const range = selection.getRangeAt(0);

@@ -36,7 +36,16 @@ for (const reflow of [false, true]) for (const precise of [true, false]) {
     const start = await endpoint('second', false), end = await endpoint('while', true);
     await page.mouse.move(start.x, start.y);
     await page.mouse.down();
+    if (precise) expect(await page.evaluate(() => CSS.highlights.has('reader-selection'))).toBe(false);
     await page.mouse.move(end.x, end.y, { steps: 20 });
+    const nativeColor = await page.locator('#article [data-word="second"]').evaluate(node => getComputedStyle(node, '::selection').backgroundColor);
+    if (precise) {
+      expect(nativeColor).toBe('rgba(0, 0, 0, 0)');
+      await expect.poll(() => page.evaluate(() => [...(CSS.highlights.get('reader-selection') || [])].map(range => range.toString()).join(''))).toBe(quote);
+    } else {
+      expect(nativeColor).not.toBe('rgba(0, 0, 0, 0)');
+    }
+    await expect(page.locator('#reading-selection')).toBeHidden();
     await page.mouse.up();
     await expect(page.locator('#reading-selection .selection-quote')).toHaveText(`已选原文 · ${quote}`);
     expect(await page.evaluate(() => getSelection().toString())).toBe(quote);
@@ -77,6 +86,7 @@ for (const reflow of [false, true]) for (const precise of [true, false]) {
     await page.locator('[data-selection-clear]').click();
     await expect(page.locator('#reading-selection')).toBeHidden();
     await expect(page.locator('#article .is-selected')).toHaveCount(0);
+    await expect(page.locator('#article')).not.toHaveClass(/has-reader-selection/);
     if (precise) expect(await page.evaluate(() => CSS.highlights.has('reader-selection'))).toBe(false);
   });
 }
