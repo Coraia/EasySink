@@ -48,8 +48,6 @@ for (const reflow of [false, true]) for (const precise of [true, false]) {
       expect(await page.locator('#article .source-unit.is-selected:visible').allTextContents()).toEqual(quote.split(' '));
       await expect(page.locator('#article .source-unit.is-selected:visible').first()).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
     }
-    expect(await page.locator('#article [data-word="second"]').evaluate(node => getComputedStyle(node, '::selection').backgroundColor))
-      .toBe('rgba(0, 0, 0, 0)');
     await expect(page.locator('[data-selection-edge="start"]')).toBeVisible();
     await expect(page.locator('[data-selection-edge="end"]')).toBeVisible();
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -57,6 +55,22 @@ for (const reflow of [false, true]) for (const precise of [true, false]) {
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(quote);
     await page.locator('[data-selection-edge="end"]').press('ArrowLeft');
     await expect(page.locator('#reading-selection .selection-quote')).toHaveText(`已选原文 · ${quote.slice(0, -1)}`);
+    await page.keyboard.press('ControlOrMeta+c');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(quote.slice(0, -1));
+    const handle = await page.locator('[data-selection-edge="end"]').boundingBox();
+    const shorterEnd = await endpoint('for', true);
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(shorterEnd.x, shorterEnd.y, { steps: 12 });
+    await page.mouse.up();
+    const adjusted = quote.slice(0, quote.lastIndexOf(' for') + 4);
+    await expect(page.locator('#reading-selection .selection-quote')).toHaveText(`已选原文 · ${adjusted}`);
+    await page.keyboard.press('ControlOrMeta+c');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(adjusted);
+    await page.locator('[data-selection-edge="end"]').click();
+    expect(await page.evaluate(() => getSelection().toString())).toBe(adjusted);
+    expect(await page.locator('#article [data-word="second"]').evaluate(node => getComputedStyle(node, '::selection').backgroundColor))
+      .toBe('rgba(0, 0, 0, 0)');
     await page.locator('[data-selection-action="lookup"]').click();
     await expect(page.locator('.annotation-pop')).toBeVisible();
     await page.getByRole('button', { name: '关闭注释', exact: true }).click();

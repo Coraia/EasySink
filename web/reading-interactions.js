@@ -242,6 +242,12 @@ export function setupReadingInteractions(r) {
     };
     r.closePop();
     r.renderSelection();
+    const ranges = r.selectedTextRanges.map(run => run.range).filter(range =>
+      getComputedStyle(range.startContainer.parentElement).visibility !== "hidden");
+    if (ranges.length) {
+      const first = ranges[0], last = ranges.at(-1);
+      getSelection().setBaseAndExtent(first.startContainer, first.startOffset, last.endContainer, last.endOffset);
+    }
     r.ctx.run("selection", r).catch(console.error);
   };
   r.clearSelection = ({ native = true } = {}) => {
