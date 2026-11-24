@@ -230,8 +230,9 @@ export class AnnotationReflow {
   retireDeferredPrefixHistory({reflow=false}={}) {
     if(reflow || !this.deferredPrefixPresentation) return;
     // This event belongs to a committed page turn. A cancelled preview never
-    // retires the current spread; return must use latest canonical fragments.
-    this.pages.viewIdentity=null;
+    // retires the current spread. Keep source starts, but rebuild retired faces
+    // with current annotations instead of reverse-packing from the next spread.
+    for(const view of this.pages.viewTrail || [])view.snapshots=null;
     this.deferredPrefixLeaf=document.querySelector('#article .page-leaf');
   }
   interruptPreparation() {
