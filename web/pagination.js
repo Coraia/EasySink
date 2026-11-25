@@ -289,6 +289,9 @@ export class ReadingPages {
       this.width,this.height,this.count,this.measure.style.width,css.font,css.lineHeight,css.letterSpacing,
       $("#translation-pane").hidden,this.activeAnnotations.map(a=>[a.block.id,a.start,a.end,a.note,a.kind,a.source])]);
   }
+  presentationBoundaryIdentity() {
+    return JSON.stringify([this.sourceIdentity,this.geometrySignature()]);
+  }
   presentationTextureGeneration(view) {
     return view.textureGeneration ||= `${this.generation}:view:${this.viewSerial=(this.viewSerial||0)+1}`;
   }
@@ -338,13 +341,19 @@ export class ReadingPages {
       ? (items||[]).filter(item=>this.activeAnnotations.some(a=>a.block.id===item.block_id && a.start===item.start && a.end===item.end && a.note===item.note)) : [];
     const state=this.wordReflow.canonicalState,owner=state?.context?.anchor,focus=this.wordReflow.anchor;
     const ownsState=focus && owner?.block_id===focus.block_id && owner.start===focus.start && owner.end===focus.end;
-    const current={snapshots,...points,identity,canonicalIndex:this.index,
+    const boundaryIdentity=this.presentationBoundaryIdentity();
+    const current={snapshots,...points,identity,boundaryIdentity,canonicalIndex:this.index,
       incomingCarry:validCarry(this.presentedView?.incomingCarry),
       outgoingCarry:ownsState?this.carryAfter(state,points.end):validCarry(this.presentedView?.outgoingCarry)};
     this.presentationTextureGeneration(current);
     this.presentationRevision++;
     this.presentationPrefetch=new Map();
-    this.viewIdentity=identity;this.viewTrail=[current];this.viewTrailIndex=0;
+    if(this.viewTrail?.[this.viewTrailIndex]?.boundaryIdentity===boundaryIdentity) {
+      this.viewTrail=this.viewTrail.slice(0,this.viewTrailIndex+1).map(view=>({...view,identity,snapshots:null,
+        incomingCarry:validCarry(view.incomingCarry),outgoingCarry:validCarry(view.outgoingCarry)}));
+      this.viewTrail[this.viewTrailIndex]=current;
+    }else{this.viewTrail=[current];this.viewTrailIndex=0;}
+    this.viewIdentity=identity;
     return current;
   }
   presentationOutside(direction) {
@@ -404,7 +413,7 @@ export class ReadingPages {
         });
         const points=this.presentationPoints(snapshots);
         if(!points.start || !points.end)return null;
-        const view={snapshots,...points,identity,canonicalIndex:this.pageFor(points.start),
+        const view={snapshots,...points,identity,boundaryIdentity:this.presentationBoundaryIdentity(),canonicalIndex:this.pageFor(points.start),
           incomingCarry:packet.incomingCarry,outgoingCarry:[]};
         return this.presentationPacket(view,history?{historyIndex}:{direction});
       }finally{builder.return?.();measure.remove();}
