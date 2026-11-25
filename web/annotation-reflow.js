@@ -20,6 +20,7 @@ export class AnnotationReflow {
       if(this.deferredPrefixLeaf && !this.deferredPrefixLeaf.isConnected) {
         this.deferredPrefixPresentation=false;this.deferredPrefixLeaf=null;
       }
+      if(pages.r.popElement && pages.r.popAnchor && !this.eligible()) this.focus(pages.r.popAnchor);
     });
     pages.r.on('reading-uncovered',()=>{
       this.resumeAfterTurn();
@@ -38,6 +39,8 @@ export class AnnotationReflow {
     this.dispose();
     this.pages.painter.pauseWarm();
     if(this.pages.r.search || this.pages.r.focus.isOpen() || document.querySelector('#article .inline-grammar:not([hidden])'))return;
+    if(this.pages.activeAnnotations.some(item=>item.block.id===anchor.block_id &&
+      item.start<=anchor.start && item.end>=anchor.end && (item.start<anchor.start || item.end>anchor.end))) return;
     const node=[...document.querySelectorAll('#article [data-word]')].find(n=>
       n.dataset.sourceBlock===anchor.block_id && +n.dataset.sourceStart===anchor.start);
     if (!node || anchor.end!==+node.dataset.sourceEnd || anchor.segments?.length || this.pages.displayPending) return;
