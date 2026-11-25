@@ -452,7 +452,6 @@ test("late-page note and bookmark keep source offsets after density, font, viewp
   await expect(page.locator("#note-state")).toContainText("已保存");
   await page.getByRole("button", { name: "关闭侧栏" }).click();
   await chooseRange(page, chosen.word, chosen.word);
-  await page.locator("[data-selection-more]").click();
   await page.locator('[data-selection-action="bookmarks"]').click();
   await expect(page.locator(".bookmark-marker")).toHaveCount(1);
   const notes = await (await request.get("/api/notes?doc_id=" + d.id)).json(),
@@ -488,6 +487,79 @@ test("late-page note and bookmark keep source offsets after density, font, viewp
     contentType: "image/png",
   });
 });
+
+for (const { name, width, height, layout, columns } of [
+  { name: "two-page", width: 1440, height: 900, layout: "double" },
+  { name: "single-page", width: 1024, height: 800, layout: "single" },
+  { name: "phone", width: 390, height: 844, layout: "single", columns: 5 },
+  {
+    name: "small phone",
+    width: 320,
+    height: 640,
+    layout: "single",
+    columns: 4,
+  },
+]) {
+  test(`selection toolbar stays on one line in ${name}`, async ({
+    page,
+    request,
+  }) => {
+    await page.setViewportSize({ width, height });
+    await page.addInitScript(
+      (layout) => localStorage.setItem("wr2:page-layout", JSON.stringify(layout)),
+      layout,
+    );
+    const doc = await create(request, (sentence + "\n\n").repeat(40));
+    await read(page, doc.id);
+    await expect(page.locator(".reader")).toHaveAttribute(
+      "data-page-layout",
+      layout,
+    );
+    await chooseRange(page, "the", "the");
+
+    const menu = page.locator("#reading-selection");
+    const highlight = menu.getByRole("button", { name: "划线", exact: true });
+    await expect(highlight).toHaveAttribute("aria-pressed", "false");
+    await highlight.click();
+    await expect(highlight).toHaveAttribute("aria-pressed", "true");
+    await expect(highlight).toHaveText("划线");
+
+    const toolbar = menu.getByRole("toolbar");
+    const buttons = toolbar.getByRole("button");
+    await expect(buttons).toHaveCount(8);
+    const metrics = await toolbar.evaluate((el) => {
+      const end = el.getBoundingClientRect().right;
+      const boxes = Array.from(el.querySelectorAll("button"), (button) =>
+        button.getBoundingClientRect(),
+      );
+      return {
+        rowCount: new Set(boxes.map(({ top }) => top)).size,
+        visibleCount: boxes.filter(({ right }) => right <= end).length,
+        smallestTarget: Math.min(
+          ...boxes.map((b) => Math.min(b.width, b.height)),
+        ),
+      };
+    });
+    expect(metrics.rowCount).toBe(1);
+    expect(metrics.visibleCount).toBe(columns || 8);
+    const box = await menu.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(12);
+    expect(box.x + box.width).toBeLessThanOrEqual(width - 12);
+    if (columns) {
+      expect(box.width).toBe(width - 24);
+      expect(metrics.smallestTarget).toBeGreaterThanOrEqual(44);
+      await toolbar.hover();
+      await page.mouse.wheel(600, 0);
+      const close = toolbar.getByRole("button", { name: "取消选择" });
+      await expect(close).toBeInViewport();
+      await expect
+        .poll(() => toolbar.evaluate((el) => el.scrollLeft))
+        .toBeGreaterThan(0);
+      await page.mouse.wheel(-600, 0);
+      await expect.poll(() => toolbar.evaluate((el) => el.scrollLeft)).toBe(0);
+    }
+  });
+}
 
 test("whole-book traces include earlier chapters; confirmed AI review never changes original notes", async ({
   page,

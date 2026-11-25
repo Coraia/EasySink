@@ -1,5 +1,4 @@
 import { installReadingLearning } from "../reading-learning.js";
-import { setReadingAction } from "../reading-action-icons.js";
 import { $, toast } from "../core.js";
 import { sameSelection, containsSelection } from "../source-selection.js";
 import { childScope, createCollectionsStore } from "../collections-store.js";
@@ -395,14 +394,11 @@ export function install(ctx) {
       );
     const updateAction = () => {
       if (scope.signal.aborted) return;
-      const saved = matching(reader.selection),
-        action = reader.selectionActions.get(id);
-      const label = saved ? "删除划线" : "划线";
-      if (action) action.label = label;
+      const saved = matching(reader.selection);
       const button = document.querySelector(`[data-selection-action="${id}"]`);
       if (button) {
-        setReadingAction(button, "highlight", writing ? "保存中…" : label);
         button.disabled = writing || !controller.loaded;
+        button.setAttribute("aria-busy", String(writing));
         button.setAttribute("aria-pressed", String(Boolean(saved)));
         button.title = controller.error
           ? "收藏记录暂未加载，请从收藏面板重试"
