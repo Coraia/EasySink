@@ -390,7 +390,16 @@ export class ReadingPages {
         viewStart:history?history.start:direction>0?current.end:null,
         incomingCarry:history?history.incomingCarry:direction>0?current.outgoingCarry:[],
         excludedCarry:forward?[]:current.incomingCarry});
-      const builder=forward?packet.buildPages():packet.reversePages(current.start);
+      const cursor=history?history.start:direction>0?current.end:current.start;
+      const order=this.r.doc.blocks.findIndex(block=>block.id===cursor.block_id),block=this.blocks.get(cursor.block_id);
+      const boundary=this.pages.findIndex(parts=>parts[0] && (
+        !cursor.afterObject && parts[0].id===cursor.block_id && parts[0].start===cursor.start ||
+        cursor.start===block.text.length && (!this.visualBlock(block) || cursor.afterObject) &&
+        parts[0].start===0 && parts[0].id===this.r.doc.blocks[order+1]?.id));
+      const canonical=this.count>1 && this.complete && !this.canonicalDirty && !history &&
+        !packet.incomingCarry.length && !packet.excludedCarry?.length && boundary>=0 && boundary%this.count===0
+        ? this.pages.slice(forward?boundary:Math.max(0,boundary-this.count),forward?boundary+this.count:boundary) : null;
+      const builder=canonical?(forward?canonical:canonical.reverse()).values():forward?packet.buildPages():packet.reversePages(current.start);
       try {
         let done=false;
         while(!done && packet.pages.length<this.count) {
@@ -413,7 +422,8 @@ export class ReadingPages {
         });
         const points=this.presentationPoints(snapshots);
         if(!points.start || !points.end)return null;
-        const view={snapshots,...points,identity,boundaryIdentity:this.presentationBoundaryIdentity(),canonicalIndex:this.pageFor(points.start),
+        const index=history?history.canonicalIndex:from?this.spreadFor(points.start):Math.max(0,current.canonicalIndex+direction*this.count);
+        const view={snapshots,...points,identity,boundaryIdentity:this.presentationBoundaryIdentity(),canonicalIndex:index,
           incomingCarry:packet.incomingCarry,outgoingCarry:[]};
         return this.presentationPacket(view,history?{historyIndex}:{direction});
       }finally{builder.return?.();measure.remove();}
@@ -1012,7 +1022,6 @@ export class ReadingPages {
           this.complete = true;
           if (!this.pages.length) this.pages = [[]];
           if (keepDOM && retainedNavigation === this.navigation) {
-            this.index = this.pageFor(anchor);
             this.anchor = this.validAnchor(anchor) || this.firstAnchor();
           }
           this.canonicalDirty = false;
@@ -1048,7 +1057,7 @@ export class ReadingPages {
       if (retainedNavigation === this.navigation) this.anchor = anchor;
       landing = Promise.resolve(true);
     } else {
-      landing = this.restore(anchor, false, {reflow: true, alignStart:Boolean(geometryIntent)});
+      landing = this.restore(anchor, false, {reflow: true, alignment:geometryIntent?'source':null});
       if(geometryIntent && this.geometryRestore===geometryIntent) geometryIntent.navigation=this.navigation;
     }
     Promise.all([this.flowReady, landing]).then(([complete, landed]) => {
@@ -1238,6 +1247,9 @@ export class ReadingPages {
   firstAnchor() {
     const f = this.pages[this.index]?.[0];
     return f ? this.r.anchorFor(f.id, f.start, f.start) : { ratio: 0 };
+  }
+  spreadFor(anchor) {
+    return Math.floor(this.pageFor(anchor) / this.count) * this.count;
   }
   position() {
     const a = this.anchor || this.firstAnchor();
@@ -1806,7 +1818,7 @@ export class ReadingPages {
       }else this.commitPage(index);
     }
   }
-  async restore(anchor, mark = true, {reflow = false, alignStart = false, signal} = {}) {
+  async restore(anchor, mark = true, {reflow = false, alignment = null, signal} = {}) {
     if (signal?.aborted || this.r.scope.signal.aborted) return false;
     if (mark && anchor?.block_id) {
       const visible = [
@@ -1857,17 +1869,21 @@ export class ReadingPages {
       if (stale()) return false;
     }
     if (stale()) return false;
+    const index = this.spreadFor(anchor);
     let view=null;
-    if(alignStart) {
-      const from=this.validAnchor(anchor);
+    if(alignment) {
+      let from=this.validAnchor(anchor);
       if(!from) return false;
+      if(alignment==='spread') {
+        const first=this.pages[index][0];
+        from=this.r.anchorFor(first.id,first.start,first.start);
+      }
       const packet=await this.preparePresentation(1,{from});
       if(stale() || !packet) return false;
       view=packet.view;
     }
-    const index = this.pageFor(anchor);
     const visibleStart=this.annotationLayout && this.presentationPoints(this.annotationLayout).start;
-    const sameWindow=!alignStart && visibleStart?.block_id===anchor?.block_id && visibleStart?.start===anchor?.start;
+    const sameWindow=!alignment && visibleStart?.block_id===anchor?.block_id && visibleStart?.start===anchor?.start;
     this.displayPending = false;
     if (index !== this.index) this.r.emit("before-page", {reflow});
     if (stale()) return false;

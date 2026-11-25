@@ -517,7 +517,8 @@ export class Reader {
         end: typeof start === "number" && anchor.quote && anchor.kind !== "image"
           ? start + anchor.quote.length : anchor.end};
     }
-    return this.pages.restore(anchor || { ratio: 0 }, mark, {signal, alignStart: alignStart && Boolean(this.pages.validAnchor(anchor))});
+    return this.pages.restore(anchor || { ratio: 0 }, mark, {signal,
+      alignment: alignStart && this.pages.validAnchor(anchor) ? automatic && this.pages.count > 1 ? 'spread' : 'source' : null});
   }
   captureSelection() {
     if (this.selecting) { this.paintSelection(); return; }
