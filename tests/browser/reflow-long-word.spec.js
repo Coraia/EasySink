@@ -32,6 +32,90 @@ for (const word of ["un-Scriptural", "unScriptural"]) {
         })
       ).json();
       await read(page, doc.id);
+      await page.evaluate(() => {
+        window.nativeReflowLayouts = [];
+        window.caretAffinities = 0;
+        const getClientRects = Range.prototype.getClientRects;
+        Range.prototype.getClientRects = function () {
+          const rects = getClientRects.call(this);
+          if (
+            this.toString() === "S" &&
+            this.startContainer === this.endContainer &&
+            this.startOffset > 0 &&
+            this.startContainer.parentElement.closest(
+              ".annotation-reflow-measure",
+            ) &&
+            rects.length === 1 &&
+            rects[0].width > 0
+          ) {
+            const previous = this.cloneRange();
+            previous.setStart(this.startContainer, this.startOffset - 1);
+            previous.setEnd(this.startContainer, this.startOffset);
+            const r = getClientRects.call(previous)[0];
+            if (r && r.y < rects[0].y) {
+              // System WKWebView includes the previous line's caret before the visible glyph.
+              window.caretAffinities++;
+              return [new DOMRect(r.right, r.y, 0, r.height), ...rects];
+            }
+          }
+          return rects;
+        };
+        const remove = Element.prototype.remove;
+        Element.prototype.remove = function () {
+          if (this.matches(".annotation-reflow-measure") && this.isConnected) {
+            const range = document.createRange(),
+              glyphs = [],
+              words = [];
+            const walker = document.createTreeWalker(
+              this,
+              NodeFilter.SHOW_TEXT,
+            );
+            let node,
+              source = "",
+              notes = "";
+            while ((node = walker.nextNode())) {
+              const note = Boolean(node.parentElement.closest(".gloss"));
+              if (note) notes += node.textContent;
+              else source += node.textContent;
+              for (const { segment, index } of new Intl.Segmenter(undefined, {
+                granularity: "grapheme",
+              }).segment(node.textContent)) {
+                range.setStart(node, index);
+                range.setEnd(node, index + segment.length);
+                const rects = [...range.getClientRects()];
+                const r = rects.find((r) => r.width > 0) || rects[0];
+                if (r?.width) glyphs.push({ text: segment, x: r.x, y: r.y });
+                if (
+                  node.parentElement
+                    .closest("[data-word]")
+                    ?.textContent.includes("Scriptural")
+                )
+                  words.push({
+                    text: segment,
+                    rects: rects.map((r) => ({
+                      x: r.x,
+                      y: r.y,
+                      width: r.width,
+                    })),
+                  });
+              }
+            }
+            const css = getComputedStyle(this);
+            window.nativeReflowLayouts.push({
+              source,
+              notes,
+              glyphs,
+              words,
+              top: this.getBoundingClientRect().top,
+              lineHeight: parseFloat(css.lineHeight),
+              width: this.getBoundingClientRect().width,
+              wordBreak: css.wordBreak,
+              overflowWrap: css.overflowWrap,
+            });
+          }
+          return remove.call(this);
+        };
+      });
       const native = await page
         .locator("#article [data-block]")
         .first()
@@ -92,6 +176,13 @@ for (const word of ["un-Scriptural", "unScriptural"]) {
                 leaf = n.closest(".page-leaf").getBoundingClientRect();
               return {
                 text: n.textContent,
+                wordKey: n.dataset.word
+                  ? [
+                      n.dataset.sourceBlock,
+                      n.dataset.sourceStart,
+                      n.dataset.sourceEnd,
+                    ].join(":")
+                  : null,
                 key: n.classList.contains("gloss") ? null : n.dataset.reflowKey,
                 left: r.left,
                 right: r.right,
@@ -119,13 +210,100 @@ for (const word of ["un-Scriptural", "unScriptural"]) {
               )
                 source += node.textContent;
             }
-            return { rects, source };
+            const notes = pieces
+              .filter((n) => n.classList.contains("gloss"))
+              .map((n) => n.textContent)
+              .join("");
+            const suffix = pieces
+              .filter((n) => !n.classList.contains("gloss"))
+              .map((n) => n.textContent)
+              .join("");
+            const native = window.nativeReflowLayouts.findLast(
+              (layout) => layout.source === suffix && layout.notes === notes,
+            );
+            const lines = (glyphs) => {
+              const rows = new Map();
+              for (const glyph of glyphs) {
+                const row = Math.round(
+                  (glyph.y - native.top) / native.lineHeight,
+                );
+                if (!rows.has(row)) rows.set(row, []);
+                rows.get(row).push(glyph);
+              }
+              return [...rows]
+                .sort((a, b) => a[0] - b[0])
+                .map(([row, glyphs]) => ({
+                  row,
+                  text: glyphs
+                    .sort((a, b) => a.x - b.x)
+                    .map((g) => g.text)
+                    .join(""),
+                }));
+            };
+            const range = document.createRange(),
+              glyphs = [];
+            for (const piece of pieces) {
+              const node = piece.firstChild;
+              for (const { segment, index } of new Intl.Segmenter(undefined, {
+                granularity: "grapheme",
+              }).segment(node.textContent)) {
+                range.setStart(node, index);
+                range.setEnd(node, index + segment.length);
+                const r = [...range.getClientRects()].find((r) => r.width > 0);
+                if (r) glyphs.push({ text: segment, x: r.x, y: r.y });
+              }
+            }
+            const canvas = document.createElement("canvas"),
+              context = canvas.getContext("2d");
+            context.font = getComputedStyle(
+              article.querySelector("[data-word]"),
+            ).font;
+            return {
+              rects,
+              source,
+              native,
+              lines: lines(glyphs),
+              nativeLines: lines(native.glyphs),
+              space: context.measureText(" ").width,
+            };
           });
           await testInfo.attach(`${target}-${action}-layout`, {
             body: JSON.stringify(actual, null, 2),
             contentType: "application/json",
           });
           expect.soft(actual.source, `${action}: source text`).toBe(text);
+          expect
+            .soft(actual.lines, `${target} ${action}: native visible lines`)
+            .toEqual(actual.nativeLines);
+          const words = Map.groupBy(
+            actual.rects.filter((r) => r.wordKey),
+            (r) => r.wordKey,
+          );
+          for (const fragments of words.values())
+            for (let i = 0; i < fragments.length - 1; i++)
+              expect
+                .soft(
+                  fragments[i].text.endsWith("-"),
+                  `${action}: split after ${fragments[i].text}`,
+                )
+                .toBe(true);
+          const rows = Map.groupBy(
+            actual.rects.filter((r) => r.right > r.left && r.text.trim()),
+            (r) =>
+              Math.round(
+                (r.top - actual.native.top) / actual.native.lineHeight,
+              ),
+          );
+          for (const pieces of rows.values()) {
+            pieces.sort((a, b) => a.left - b.left);
+            for (let i = 1; i < pieces.length; i++)
+              expect
+                .soft(
+                  pieces[i].left - pieces[i - 1].right,
+                  `${action}: gap ${pieces[i - 1].text}|${pieces[i].text}`,
+                )
+                .toBeLessThanOrEqual(actual.space + 1);
+          }
           for (const r of actual.rects) {
             if (r.key) {
               const [block, start, end] = r.key.split(":");
@@ -158,6 +336,10 @@ for (const word of ["un-Scriptural", "unScriptural"]) {
           }
         }
       }
+      if (word === "un-Scriptural" && filler === 9)
+        expect(
+          await page.evaluate(() => window.caretAffinities),
+        ).toBeGreaterThan(0);
       expect(errors).toEqual([]);
     });
   }

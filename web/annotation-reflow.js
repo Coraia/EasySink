@@ -7,7 +7,7 @@ const cssText = css => ({font:css.font, color:css.color, letterSpacing:css.lette
   fontKerning:css.fontKerning, fontFeatureSettings:css.fontFeatureSettings, fontVariantLigatures:css.fontVariantLigatures});
 
 function* sourceRects(node, range) {
-  for(const match of node.textContent.matchAll(/\S+\s*|\s+/g)) {
+  for(const match of node.textContent.matchAll(/\S+|\s+/g)) {
     const start=match.index,end=start+match[0].length;
     range.setStart(node,start);range.setEnd(node,end);
     const rects=[...range.getClientRects()];
@@ -15,8 +15,8 @@ function* sourceRects(node, range) {
     let first=start,previous=null;
     for(const {segment,index} of new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(match[0])) {
       range.setStart(node,start+index);range.setEnd(node,start+index+segment.length);
-      const glyph=range.getClientRects()[0];
-      const rect=rects.find(r=>Math.abs(r.y-glyph.y)<.5 && glyph.x>=r.x-.5 && glyph.right<=r.right+.5);
+      const glyphs=[...range.getClientRects()],glyph=glyphs.find(r=>r.width>0)||glyphs[0];
+      const rect=rects.find(r=>Math.abs(r.y-glyph.y)<.5 && glyph.x+glyph.width/2>=r.x-.5 && glyph.x+glyph.width/2<=r.right+.5);
       if(previous && rect!==previous) {
         yield {index:first,text:node.textContent.slice(first,start+index),rect:previous};
         first=start+index;
@@ -122,7 +122,7 @@ export class AnnotationReflow {
     for(const run of sourceRuns()) {
       for(const m of sourceRects(run.node,range)) {
         const previous=pieces.at(-1)?.r;
-        const r=m.rect || (previous?{...previous,x:previous.x+previous.width,width:0}:run.node.parentElement.getBoundingClientRect());
+        const r=m.rect || (previous?{...previous,x:previous.x+previous.width,width:0}:{...rectOf(run.node.parentElement.getBoundingClientRect()),width:0});
         const parent=run.node.parentElement, word=parent.closest('[data-word]');
         pieces.push({key:inkKey(run.block.dataset.block,run.start+m.index,run.start+m.index+m.text.length),
           block:run.block.dataset.block,start:run.start+m.index,end:run.start+m.index+m.text.length,
@@ -450,7 +450,7 @@ export class AnnotationReflow {
         if(node.parentElement.closest('.gloss')) continue;
         for(const m of sourceRects(node,tokenRange)) {
           const previous=lastRect;
-          const r=m.rect || (previous?{...previous,x:previous.x+previous.width,width:0}:node.parentElement.getBoundingClientRect());
+          const r=m.rect || (previous?{...previous,x:previous.x+previous.width,width:0}:{...rectOf(node.parentElement.getBoundingClientRect()),width:0});
           lastRect=rectOf(r);
           const page=pageFor(r),word=node.parentElement.closest('[data-word]');
           if(page<this.count+1) result.push({key:inkKey(block.dataset.block,offset+m.index,offset+m.index+m.text.length),block:block.dataset.block,
