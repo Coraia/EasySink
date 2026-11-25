@@ -6,6 +6,27 @@ const pause = () => new Promise(resolve => setTimeout(resolve, 0));
 const cssText = css => ({font:css.font, color:css.color, letterSpacing:css.letterSpacing,
   fontKerning:css.fontKerning, fontFeatureSettings:css.fontFeatureSettings, fontVariantLigatures:css.fontVariantLigatures});
 
+function* sourceRects(node, range) {
+  for(const match of node.textContent.matchAll(/\S+\s*|\s+/g)) {
+    const start=match.index,end=start+match[0].length;
+    range.setStart(node,start);range.setEnd(node,end);
+    const rects=[...range.getClientRects()];
+    if(rects.length<=1) {yield {index:start,text:match[0],rect:rects[0]};continue;}
+    let first=start,previous=null;
+    for(const {segment,index} of new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(match[0])) {
+      range.setStart(node,start+index);range.setEnd(node,start+index+segment.length);
+      const glyph=range.getClientRects()[0];
+      const rect=rects.find(r=>Math.abs(r.y-glyph.y)<.5 && glyph.x>=r.x-.5 && glyph.right<=r.right+.5);
+      if(previous && rect!==previous) {
+        yield {index:first,text:node.textContent.slice(first,start+index),rect:previous};
+        first=start+index;
+      }
+      previous=rect;
+    }
+    yield {index:first,text:node.textContent.slice(first,end),rect:previous};
+  }
+}
+
 // A spread-local native layout. Source UTF-16 coordinates, not page numbers,
 // own the text. The focused occurrence stays fixed while changed notes flow
 // toward the following source frontier; already-read presentation waits for a turn.
@@ -59,7 +80,7 @@ export class AnnotationReflow {
     this.defaultFont=cssText(getComputedStyle(node.closest('.reading-prose')));
     this.lineHeight=parseFloat(getComputedStyle(node.closest('[data-block]')).lineHeight);
     this.bodyLineHeight=parseFloat(getComputedStyle(node.closest('.reading-prose')).lineHeight);
-    this.units=new Map([...document.querySelectorAll("#article [data-word]")].map(node=>[inkKey(node.dataset.sourceBlock,+node.dataset.sourceStart,+node.dataset.sourceEnd),{node,template:null}]));
+    this.units=new Map([...document.querySelectorAll("#article [data-word]")].map(node=>[node.dataset.reflowKey || inkKey(node.dataset.sourceBlock,+node.dataset.sourceStart,+node.dataset.sourceEnd),{node,template:null}]));
     this.inkColor=getComputedStyle(document.querySelector("#article")).color;
     this.base=this.capture();
     const order=this.pages.r.doc.blocks.findIndex(b=>b.id===anchor.block_id);
@@ -99,14 +120,13 @@ export class AnnotationReflow {
   capture() {
     const pieces=[]; const range=document.createRange();const order=new Map(this.pages.r.doc.blocks.map((b,i)=>[b.id,i]));
     for(const run of sourceRuns()) {
-      for(const m of run.node.textContent.matchAll(/\S+\s*|\s+/g)) {
-        range.setStart(run.node,m.index);range.setEnd(run.node,m.index+m[0].length);
+      for(const m of sourceRects(run.node,range)) {
         const previous=pieces.at(-1)?.r;
-        const r=range.getClientRects()[0] || (previous?{...previous,x:previous.x+previous.width,width:0}:run.node.parentElement.getBoundingClientRect());
+        const r=m.rect || (previous?{...previous,x:previous.x+previous.width,width:0}:run.node.parentElement.getBoundingClientRect());
         const parent=run.node.parentElement, word=parent.closest('[data-word]');
-        pieces.push({key:inkKey(run.block.dataset.block,run.start+m.index,run.start+m.index+m[0].length),
-          block:run.block.dataset.block,start:run.start+m.index,end:run.start+m.index+m[0].length,
-          order:order.get(run.block.dataset.block),text:m[0],r:rectOf(r),style:cssText(getComputedStyle(parent)),
+        pieces.push({key:inkKey(run.block.dataset.block,run.start+m.index,run.start+m.index+m.text.length),
+          block:run.block.dataset.block,start:run.start+m.index,end:run.start+m.index+m.text.length,
+          order:order.get(run.block.dataset.block),text:m.text,r:rectOf(r),style:cssText(getComputedStyle(parent)),
           word:word?.dataset.word,wordStart:word?+word.dataset.sourceStart:null,wordEnd:word?+word.dataset.sourceEnd:null,
           page:this.leaves.indexOf(run.block.closest('.page-leaf'))});
       }
@@ -428,14 +448,13 @@ export class AnnotationReflow {
       const walker=document.createTreeWalker(block,NodeFilter.SHOW_TEXT); let node,offset=+block.dataset.start,lastRect=null;
       while((node=walker.nextNode())) {
         if(node.parentElement.closest('.gloss')) continue;
-        for(const m of node.textContent.matchAll(/\S+\s*|\s+/g)) {
-          const range=tokenRange;range.setStart(node,m.index);range.setEnd(node,m.index+m[0].length);
+        for(const m of sourceRects(node,tokenRange)) {
           const previous=lastRect;
-          const r=range.getClientRects()[0] || (previous?{...previous,x:previous.x+previous.width,width:0}:node.parentElement.getBoundingClientRect());
+          const r=m.rect || (previous?{...previous,x:previous.x+previous.width,width:0}:node.parentElement.getBoundingClientRect());
           lastRect=rectOf(r);
           const page=pageFor(r),word=node.parentElement.closest('[data-word]');
-          if(page<this.count+1) result.push({key:inkKey(block.dataset.block,offset+m.index,offset+m.index+m[0].length),block:block.dataset.block,
-            start:offset+m.index,end:offset+m.index+m[0].length,order:order.get(block.dataset.block),text:m[0],r:place(r),
+          if(page<this.count+1) result.push({key:inkKey(block.dataset.block,offset+m.index,offset+m.index+m.text.length),block:block.dataset.block,
+            start:offset+m.index,end:offset+m.index+m.text.length,order:order.get(block.dataset.block),text:m.text,r:place(r),
             style:cssText(getComputedStyle(node.parentElement)),word:word?.dataset.word,
             wordStart:word?+word.dataset.sourceStart:null,wordEnd:word?+word.dataset.sourceEnd:null,page});
         }
@@ -532,6 +551,8 @@ export class AnnotationReflow {
           }
           node.textContent=item.text;
           Object.assign(node.style,{...item.style,left:'0px',top:'0px'});
+          // Collapsed spaces still own source offsets, but no painted width.
+          if(!item.r.width && /^\s+$/.test(item.text)) node.style.fontSize='0';
           line.append(node);item.node=node;item.template=node;pagePieces.push(item);
           if(item.gloss)node.style.color='var(--gloss)';else if(item.style.color===this.inkColor)node.style.color='var(--ink)';
           if(performance.now()-slice>4) {await pause();slice=performance.now();if(signal.aborted || !this.eligible())return;}
