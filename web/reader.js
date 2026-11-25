@@ -341,7 +341,6 @@ export class Reader {
     if (this.scope.signal.aborted) return;
     if (pdfBackground && (this.restoring || !this.pdfCanRefresh?.())) return false;
     const refresh = this.interaction.beginRefresh();
-    let anchor = this.position();
     let restoredPosition = false;
     try {
       const doc = nextDocument || await api(
@@ -351,6 +350,7 @@ export class Reader {
       if (refresh.signal.aborted) return false;
       if (doc.id !== this.doc.id || (pdfBackground && !this.pdfCanRefresh?.())) return false;
       if (pdfBackground && doc.density !== this.doc.density) return false;
+      let anchor = this.captureView().visibleAnchor || this.position();
       if (pdfBackground && doc.pdf && anchor.pdf_source && doc.version !== this.doc.version) {
         // A live position is not a stored quotation. Stamp only a proven mapping
         // so leaving immediately after refresh cannot persist the old revision.
