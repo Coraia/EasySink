@@ -506,30 +506,30 @@ export class ReadingPages {
     return true;
   }
   *reversePages(cursor) {
-    let order=this.r.doc.blocks.findIndex(b=>b.id===cursor.block_id),end=cursor.start,page=[],used=0,slice=performance.now();
+    let order=this.r.doc.blocks.findIndex(b=>b.id===cursor.block_id),end=cursor.start,page=[],slice=performance.now();
     const height=this.height;
     const measure=function*(part){
-      this.measure.innerHTML=this.markup(part,true);
-      const node=this.measure.firstElementChild,css=getComputedStyle(node),value=node.getBoundingClientRect().height+parseFloat(css.marginTop)+parseFloat(css.marginBottom)+2;
+      this.measure.innerHTML=[part,...page].map(item=>this.markup(item,true)).join('');
+      const value=this.measure.lastElementChild.getBoundingClientRect().bottom-this.measure.getBoundingClientRect().top+2;
       if(performance.now()-slice>=4){yield null;slice=performance.now();}return value;
     }.bind(this);
     while(order>=0) {
       const block=this.r.doc.blocks[order],object=this.visualBlock(block);
       if(object && (block.id!==cursor.block_id || cursor.afterObject)) {
         const part={id:block.id,start:0,end:block.text.length,object:true},h=yield*measure(part);
-        if(page.length && used+h>height){yield page;page=[];used=0;continue;}
-        page.unshift(part);used+=Math.min(height,h);--order;end=this.r.doc.blocks[order]?.text.length||0;continue;
+        if(page.length && h>height){yield page;page=[];continue;}
+        page.unshift(part);--order;end=this.r.doc.blocks[order]?.text.length||0;continue;
       }
       if(!end || object){--order;end=this.r.doc.blocks[order]?.text.length||0;continue;}
       const starts=[...block.text.slice(0,end).matchAll(/\S+\s*|\s+/g)].map(m=>m.index);
       if(!starts.length){--order;end=this.r.doc.blocks[order]?.text.length||0;continue;}
-      let lo=0,hi=starts.length-1,best=-1,bestHeight=0;
+      let lo=0,hi=starts.length-1,best=-1;
       while(lo<=hi){const mid=(lo+hi)>>1,h=yield*measure({id:block.id,start:starts[mid],end});
-        if(h<=height-used){best=mid;bestHeight=h;hi=mid-1;}else lo=mid+1;}
-      if(best<0 && page.length){yield page;page=[];used=0;continue;}
-      if(best<0){best=starts.length-1;bestHeight=height;}
-      const start=starts[best];page.unshift({id:block.id,start,end});used+=bestHeight;end=start;
-      if(start>0){yield page;page=[];used=0;}
+        if(h<=height){best=mid;hi=mid-1;}else lo=mid+1;}
+      if(best<0 && page.length){yield page;page=[];continue;}
+      if(best<0)best=starts.length-1;
+      const start=starts[best];page.unshift({id:block.id,start,end});end=start;
+      if(start>0){yield page;page=[];}
       else{--order;end=this.r.doc.blocks[order]?.text.length||0;}
     }
     if(page.length)yield page;
