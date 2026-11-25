@@ -2125,7 +2125,6 @@ dialog::backdrop {
 }
 .selection-actions {
   display: flex;
-  flex-wrap: wrap;
   gap: 5px;
   margin-top: 7px;
 }
@@ -2952,19 +2951,71 @@ dialog.reader-ending {
   transform: none;
   z-index: 70;
   width: max-content;
-  max-width: min(480px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
   max-height: calc(100dvh - 24px);
   overflow: auto;
   overscroll-behavior: contain;
   margin: 0;
   box-shadow: var(--shadow);
-  padding: 7px 10px;
+  padding: 7px;
+  background: var(--ink);
+  color: var(--paper);
+  border: 0;
+  border-radius: 12px;
 }
 .paged-reader .selection-quote {
   display: none;
 }
 .paged-reader .selection-actions {
   margin: 0;
+  gap: 2px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.paged-reader .selection-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  gap: 5px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 6px;
+  font-size: 12px;
+  min-height: 44px;
+  white-space: nowrap;
+}
+.paged-reader[data-page-layout="double"] .selection-actions button {
+  flex-direction: column;
+  min-width: 58px;
+  min-height: 58px;
+}
+.paged-reader .selection-actions button:hover,
+.paged-reader .selection-actions button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--paper) 17%, transparent);
+  color: inherit;
+}
+@media (max-width: 600px) {
+  .paged-reader .reading-selection {
+    width: calc(100vw - 24px);
+  }
+  .paged-reader .selection-actions::-webkit-scrollbar {
+    height: 4px;
+  }
+  .paged-reader .selection-actions::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--paper) 45%, transparent);
+    border-radius: 4px;
+  }
+  .paged-reader .selection-actions button {
+    flex-basis: max(44px, calc((100% - 28px) / 5));
+    flex-direction: column;
+  }
+}
+@media (max-width: 359px) {
+  .paged-reader .selection-actions button {
+    flex-basis: max(44px, calc((100% - 26px) / 4));
+  }
 }
 .paged-reader .selection-scope {
   display: none;
@@ -3771,18 +3822,12 @@ dialog.ai-reading-dialog[open] {
 .annotation-pop [data-context-generate],.annotation-pop [data-context-regenerate] { grid-area:1/2;padding:6px 8px;font-size:12px; }
 .annotation-pop .word-context > :not(h4):not([data-context-generate]):not([data-context-regenerate]) { grid-column:1/-1; }
 .annotation-pop [data-context-status]:empty { display:none; }
-.paged-reader .reading-selection { padding:7px;background:var(--ink);color:var(--paper);border:0;border-radius:12px;max-width:min(568px,calc(100vw - 24px)); }
-.paged-reader .selection-actions { display:flex;flex-wrap:wrap;gap:2px; }
-.paged-reader .selection-actions button { display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1 0 54px;gap:6px;color:inherit;background:transparent;border:0;padding:8px 5px;font-size:12px;min-height:58px; }
-.paged-reader .selection-actions button:hover,.paged-reader .selection-actions button[aria-pressed="true"] { background:color-mix(in srgb,var(--paper) 17%,transparent);color:inherit; }
-.paged-reader .selection-actions[hidden] { display:none; }
 @media (pointer:coarse) { .annotation-pop button { min-height:44px; } }
 .annotation-pop .word-card-title h3 { line-height:1.2; }
 .annotation-pop[data-annotation-source="dictionary"] > .meta { display:none; }
 .annotation-pop .dictionary-candidates { margin:6px 0; }
 .annotation-pop .word-context > [data-context-result]:empty,.annotation-pop .word-context > [data-context-history]:empty { display:none; }
 .annotation-pop .word-gloss-detail { font-size:11px;margin:5px 0; }
-@media (max-width:600px) { .paged-reader .selection-actions { display:grid;grid-template-columns:repeat(4,minmax(0,1fr)); } }
 
 /* Native word-action flow: real source once; inert compositor copies only while moving. */
 .annotation-reflow-measure { position:fixed;visibility:hidden;pointer-events:none;column-fill:auto;z-index:-1; }

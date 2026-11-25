@@ -184,18 +184,19 @@ export function setupReadingInteractions(r) {
     }
     const { rect, leaf } = target;
     menu.hidden = false;
-    menu.style.maxWidth =
-      Math.max(120, Math.min(568, innerWidth - 24, leaf.width - 24)) + "px";
     const box = menu.getBoundingClientRect();
     const lower = Math.min(innerHeight - 12, leaf.bottom - 8);
     const gap = 20; // Leave the endpoint knob accessible beside the menu.
     const above = rect.bottom + gap + box.height > lower;
+    const left = Math.max(12, leaf.left + 12);
+    const right = Math.min(innerWidth - 12, leaf.right - 12);
+    const fitsLeaf = box.width <= right - left;
     menu.style.left =
       Math.max(
-        Math.max(12, leaf.left + 12),
+        fitsLeaf ? left : 12,
         Math.min(
           rect.left + rect.width / 2 - box.width / 2,
-          Math.min(innerWidth - 12, leaf.right - 12) - box.width,
+          (fitsLeaf ? right : innerWidth - 12) - box.width,
         ),
       ) + "px";
     menu.style.top =
@@ -208,30 +209,31 @@ export function setupReadingInteractions(r) {
       ) + "px";
     menu.dataset.placement = above ? "above" : "below";
   };
-  r.renderSelection = () => {
+  r.renderSelection = ({ resetScroll = false } = {}) => {
     r.paintSelection();
     const el = $("#reading-selection");
     if (!el) return;
     el.hidden = !r.selection;
     if (r.selection) {
+      const scroll = resetScroll ? 0 : ($(".selection-actions", el)?.scrollLeft ?? 0);
       const image = r.selection.kind === "image";
       const actions = [...r.selectionActions].filter(([id]) => !image || ["notes", "bookmarks", "pdf-source"].includes(id));
       const primaryIds = ["lookup", "collections-highlight", "notes", "translation", "speech", "grammar"];
-      const primary = image ? actions : primaryIds.flatMap(id => actions.filter(([key]) => key === id));
-      const secondary = image ? [] : actions.filter(([id]) => !primaryIds.includes(id));
+      const ordered = [
+        ...primaryIds.flatMap(id => actions.filter(([key]) => key === id)),
+        ...actions.filter(([id]) => !primaryIds.includes(id)),
+      ];
       const button = ([id, { label }]) => {
         const name = { lookup: "查词", notes: "笔记", translation: "翻译", speech: "朗读", grammar: "语法", "collections-highlight": "划线", bookmarks: "书签", "pdf-source": "原版" }[id] || label;
         const glyph = { lookup: "lookup", "collections-highlight": "highlight", speech: "sound", bookmarks: "bookmark", "pdf-source": "source" }[id] || id;
         const pending = r.pending.has(id);
         return `<button type="button" data-selection-action="${e(id)}" aria-label="${e(pending ? "取消" + label : label)}" title="${e(label)}">${actionIcon(pending ? "stop" : glyph)}<span class="reading-action-label">${e(pending ? "取消" : name)}</span></button>`;
       };
-      const extraPending = secondary.some(([id]) => r.pending.has(id));
       el.innerHTML = `<div class="selection-quote">${image ? "已选原图" : "已选原文"} · ${e(r.selection.quote.length > 110 ? r.selection.quote.slice(0, 110) + "…" : r.selection.quote)}</div>
-        <div class="selection-actions" role="toolbar" aria-label="所选原文操作">${primary.map(action => button(action, !image)).join("")}
-          ${secondary.length ? `<button type="button" data-selection-more aria-controls="selection-more-actions" aria-expanded="${Boolean(r.selectionMoreOpen)}" aria-label="更多选区操作">${actionIcon("more")}<span class="reading-action-label">更多${extraPending ? " ·" : ""}</span></button>` : ""}
+        <div class="selection-actions" role="toolbar" aria-label="所选原文操作">${ordered.map(button).join("")}
           <button type="button" data-selection-clear aria-label="取消选择" title="取消选择">${actionIcon("close")}<span class="reading-action-label">收起</span></button></div>
-        ${secondary.length ? `<div id="selection-more-actions" class="selection-actions" role="toolbar" aria-label="更多原文操作" ${r.selectionMoreOpen ? "" : "hidden"}>${secondary.map(action => button(action)).join("")}</div>` : ""}
         ${!image && r.ctx.enabled("grammar") ? '<div class="selection-scope">语法分析按完整句子处理；翻译、朗读和笔记仍按当前选区。</div>' : ""}`;
+      $(".selection-actions", el).scrollLeft = scroll;
     }
     r.emit("selection-render");
     r.positionSelection();
@@ -241,7 +243,6 @@ export function setupReadingInteractions(r) {
     for (const controller of r.pending.values()) controller.cancel();
     r.pending.clear();
     r.selection = { ...anchor };
-    r.selectionMoreOpen = false;
     const last = anchorSegments(anchor).at(-1);
     r.selectionPlacement = {
       block_id: last.block_id,
@@ -251,7 +252,7 @@ export function setupReadingInteractions(r) {
       trigger: origin ? "paragraph" : "range",
     };
     r.closePop();
-    r.renderSelection();
+    r.renderSelection({ resetScroll: true });
     const ranges = r.selectedTextRanges.map(run => run.range).filter(range =>
       getComputedStyle(range.startContainer.parentElement).visibility !== "hidden");
     if (ranges.length) {
@@ -265,7 +266,6 @@ export function setupReadingInteractions(r) {
     for (const controller of r.pending.values()) controller.cancel();
     r.pending.clear();
     r.selection = null;
-    r.selectionMoreOpen = false;
     r.selectionPlacement = null;
     if (native) getSelection()?.removeAllRanges();
     r.renderSelection();
@@ -386,12 +386,6 @@ export function setupReadingInteractions(r) {
     r.emit("assist-change");
   });
   r.scope.on($("#reading-selection"), "click", (ev) => {
-    if (ev.target.closest("[data-selection-more]")) {
-      r.selectionMoreOpen = !r.selectionMoreOpen;
-      r.renderSelection();
-      $("[data-selection-more]", $("#reading-selection"))?.focus({ preventScroll: true });
-      return;
-    }
     const action = ev.target.closest("[data-selection-action]");
     if (action && r.selection)
       Promise.resolve(
