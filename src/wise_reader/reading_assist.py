@@ -19,6 +19,7 @@ from wise_reader.ai import AssistFailureDiagnostic, provider_error
 from wise_reader.content import Anchor, AnchorSegment, get_content, with_anchor
 from wise_reader.l1 import _parse_json
 from wise_reader.store import _now
+from wise_reader.tokenize import parse
 
 PROMPT_VERSION = "reading-v3-2"
 
