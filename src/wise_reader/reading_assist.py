@@ -19,7 +19,6 @@ from wise_reader.ai import AssistFailureDiagnostic, provider_error
 from wise_reader.content import Anchor, AnchorSegment, get_content, with_anchor
 from wise_reader.l1 import _parse_json
 from wise_reader.store import _now
-from wise_reader.tokenize import parse
 
 PROMPT_VERSION = "reading-v3-2"
 
@@ -115,13 +114,6 @@ def selected(ctx, doc_id, anchor, sentence=False):
         if part.quote and text[start:end] != part.quote:
             raise HTTPException(409, "选区与原文不一致，请重新选择")
         selected_quotes.append(text[start:end])
-        if sentence:
-            spans = parse(text).sentences
-            containing = [m for m in spans if m.start < end and m.end > start]
-            if containing:
-                start, end = containing[0].start, containing[-1].end
-                while start < end and text[start].isspace():
-                    start += 1
         resolved.append(AnchorSegment(**{**part.model_dump(),
             "start": utf16(text[:start]), "end": utf16(text[:end]),
             "quote": text[start:end], "prefix": text[max(0, start - 40):start],
@@ -129,9 +121,26 @@ def selected(ctx, doc_id, anchor, sentence=False):
         context_blocks.append(block)
     if anchor.quote and anchor.quote != "\n\n".join(selected_quotes):
         raise HTTPException(409, "选区与原文不一致，请重新选择")
-    source = "\n\n".join(p.quote for p in resolved)
+    if sentence:
+        ranges = assist_context.sentence_ranges(blocks, indexes, resolved)
+        texts = [blocks[i]["text"][start:end] for i, start, end in ranges]
+        if len(ranges) > 256:
+            raise HTTPException(400, "本次选区超过处理范围，请缩短后重试")
+        source = "\n\n".join(texts)
+    else:
+        source = "\n\n".join(p.quote for p in resolved)
     if utf16(source) > 8000:
         raise HTTPException(400, "本次选区超过 8000 个字符，请缩短后重试")
+    if sentence:
+        original = {part.block_id: part for part in resolved}
+        resolved = []
+        for (i, start, end), quote in zip(ranges, texts):
+            block = blocks[i]
+            text = block["text"]
+            part = original.get(block["id"])
+            resolved.append(AnchorSegment(block_id=block["id"], start=utf16(text[:start]),
+                end=utf16(text[:end]), quote=quote, prefix=text[max(0, start - 40):start],
+                suffix=text[end:end + 40], pdf_source=part.pdf_source if part else None))
     out = Anchor.model_validate({**anchor.model_dump(), **resolved[0].model_dump(), "version": version,
         "quote": source, "segments": resolved if len(resolved) > 1 else []})
     context = context_blocks[0] if len(resolved) == 1 else {"text": source}
@@ -575,7 +584,7 @@ async def _produce_assist(app, ctx, doc_id, kind, block, target, text, p, identi
         preceding_text = " ".join(s["text"] for s in preceding_sents)
         user_payload = {
             "task": "grammar-map",
-            **({"scope": "Multiple paragraphs: analyze each sentence separately beneath the overview; never invent grammar connections between sentences."} if target.segments else {}),
+            **({"scope": "Source block breaks can occur inside a sentence. When the source contains multiple sentences, analyze each separately beneath the overview."} if target.segments else {}),
             **({"preceding_context": preceding_text} if preceding_text else {}),
             "source": text,
             "tokens": [{"id": i, "text": m.group()} for i, m in enumerate(tokens)],
