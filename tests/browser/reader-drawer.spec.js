@@ -217,6 +217,12 @@ test("PDF range endings continue into ready pages and finish only at the end of 
 
   const footer = page.locator("#reading-end");
   const dialog = page.locator(".reader-ending");
+  const kicker = dialog.locator("#reader-ending-kicker");
+  const back = dialog.getByRole("button", { name: "回到正文" });
+  const finishFromToolbar = async () => {
+    await tools(page, "more");
+    await page.locator("#finish-reading").click();
+  };
   const lastPage = async () => goPage(page, (await pageCount(page)) - 1);
   await read(page, gap.doc_id);
   await lastPage();
@@ -224,6 +230,10 @@ test("PDF range endings continue into ready pages and finish only at the end of 
 
   await read(page, middle.doc_id);
   await lastPage();
+  await finishFromToolbar();
+  await expect(dialog).toHaveAccessibleName("结束这次阅读");
+  await expect(kicker).toHaveText("阅读小结");
+  await back.click();
   await expect(footer).toHaveText("继续下一段 →");
   await footer.click();
   await expect(page.locator("#toast")).toContainText(
@@ -240,6 +250,10 @@ test("PDF range endings continue into ready pages and finish only at the end of 
   await expect(reader).toHaveAttribute("data-page-index", "0");
   await expect(dialog).toBeHidden();
   await lastPage();
+  await finishFromToolbar();
+  await expect(dialog).toHaveAccessibleName("读到全书末尾了");
+  await expect(kicker).toHaveText("正文结束");
+  await back.click();
   await expect(footer).toHaveText("结束阅读 →");
   await footer.click();
   await expect(

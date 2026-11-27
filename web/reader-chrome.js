@@ -436,20 +436,19 @@ export function installReaderEnding(r) {
   const home = $("#reader-ending-home");
   const end = $("#reading-end");
   const atEnd = doc.pdf
-    ? "读到本节末尾了"
+    ? "读到全书末尾了"
     : doc.chapter
       ? "读到本章末尾了"
       : "读到文末了";
   const open = (ev) => {
     const footer = ev.currentTarget === end;
-    const atDocumentEnd = r.pages.atDocumentEnd();
+    const atReadingEnd =
+      r.pages.atDocumentEnd() &&
+      (!doc.pdf || doc.pdf.end_page >= doc.pdf.page_count);
     r.closePop();
     r.focus.close();
-    kicker.textContent = atDocumentEnd ? "正文结束" : "阅读小结";
-    if (!save.hidden)
-      title.textContent = atDocumentEnd
-        ? footer && doc.pdf ? "读到全书末尾了" : atEnd
-        : "结束这次阅读";
+    kicker.textContent = atReadingEnd ? "正文结束" : "阅读小结";
+    if (!save.hidden) title.textContent = atReadingEnd ? atEnd : "结束这次阅读";
     const opener = footer ? end : $("#show-tools");
     opener.focus({ preventScroll: true });
     dialog.showModal();
