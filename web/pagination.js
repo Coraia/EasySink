@@ -1262,12 +1262,19 @@ export class ReadingPages {
       ),
     };
   }
+  atDocumentEnd() {
+    return this.complete && this.pages.length > 0 && this.index + this.count >= this.pages.length;
+  }
   navigationUI({geometry = true} = {}) {
     const total = this.pages.length,
       last = Math.min(total, this.index + this.count);
     $("#reading-page-total").textContent =
       `${this.r.doc.chapter && !this.r.doc.pdf ? "本章 " : ""}${this.index + 1}${last > this.index + 1 ? "–" + last : ""} / ${total}${this.complete ? "" : "+"}`;
-    $("#reading-end").hidden = !this.complete || !total || last < total;
+    const end = $("#reading-end");
+    const pdf = this.r.doc.pdf;
+    const nextRange = pdf && this.rangeNeighbor(1);
+    end.hidden = !this.atDocumentEnd() || (pdf && !nextRange && pdf.end_page < pdf.page_count);
+    end.textContent = nextRange ? "继续下一段 →" : "结束阅读 →";
     const root = $(".reader");
     if (geometry) this.updateEdges();
     root.dataset.pageIndex = String(this.index);

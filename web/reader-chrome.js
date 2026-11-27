@@ -436,20 +436,30 @@ export function installReaderEnding(r) {
   const home = $("#reader-ending-home");
   const end = $("#reading-end");
   const atEnd = doc.pdf
-    ? "读到本节末尾了"
+    ? "读到全书末尾了"
     : doc.chapter
       ? "读到本章末尾了"
       : "读到文末了";
   const open = (ev) => {
+    const footer = ev.currentTarget === end;
+    const atReadingEnd =
+      r.pages.atDocumentEnd() &&
+      (!doc.pdf || doc.pdf.end_page >= doc.pdf.page_count);
     r.closePop();
     r.focus.close();
-    kicker.textContent = end.hidden ? "阅读小结" : "正文结束";
-    if (!save.hidden) title.textContent = end.hidden ? "结束这次阅读" : atEnd;
-    const opener = ev.currentTarget === end ? end : $("#show-tools");
+    kicker.textContent = atReadingEnd ? "正文结束" : "阅读小结";
+    if (!save.hidden) title.textContent = atReadingEnd ? atEnd : "结束这次阅读";
+    const opener = footer ? end : $("#show-tools");
     opener.focus({ preventScroll: true });
     dialog.showModal();
   };
-  scope.on(end, "click", open);
+  scope.on(end, "click", (ev) => {
+    if (doc.pdf && r.pages.rangeNeighbor(1)) {
+      r.pages.adjacent(1, "tap", { allowOpenCard: true });
+      return;
+    }
+    open(ev);
+  });
   scope.on($("#finish-reading"), "click", open);
   scope.on($("#reader-ending-back"), "click", () => dialog.close());
   scope.on(save, "click", async () => {
