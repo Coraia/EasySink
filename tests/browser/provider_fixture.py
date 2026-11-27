@@ -110,7 +110,20 @@ class Provider:
                         ]
                         for id, parent, label, quote, explanation in parts:
                             if quote in source:
-                                nodes.append({"id": id, "parent": parent, "label": label, "explanation": explanation, "kind": "reference" if id == "so" else "clause", "ranges": [bounds(quote), bounds("that we know things only in their relations")] if id == "so" else [bounds(quote)]})
+                                node = {"id": id, "parent": parent, "label": label, "explanation": explanation, "kind": "reference" if id == "so" else "clause", "ranges": [bounds(quote), bounds("that we know things only in their relations")] if id == "so" else [bounds(quote)]}
+                                if id == "felt":
+                                    node["role"] = "formal_it"
+                                    node["target_ranges"] = []
+                                elif id == "fact":
+                                    node["role"] = "clause_modifier"
+                                    node["target_ranges"] = [bounds("the fact")]
+                                nodes.append(node)
+                        if "which reveals its origin" in source and "The doctrine" in source:
+                            nodes.append({"id": "which-clause", "parent": "overview", "label": "定语从句：which", "explanation": "which 引导非限制性定语从句，修饰 The doctrine。", "kind": "clause", "role": "clause_modifier", "ranges": [bounds("which reveals its origin")], "target_ranges": [bounds("The doctrine")]})
+                        if "It remains central" in source and "the doctrine" in source:
+                            nodes.append({"id": "ref-it", "parent": "overview", "label": "代词回指：It", "explanation": "It 回指前文的 the doctrine。", "kind": "reference", "role": "referential", "ranges": [bounds("It")], "target_ranges": [bounds("the doctrine")]})
+                        if "It is clear that" in source:
+                            nodes.append({"id": "formal-it-2", "parent": "overview", "label": "形式主语：It", "explanation": "形式主语，无先行词；真正主语是后面的 that 从句。", "kind": "reference", "role": "formal_it", "ranges": [bounds("It")], "target_ranges": []})
                         if len(nodes) == 1:
                             nodes.append({"id": "main", "parent": "overview", "label": "主干", "explanation": "确定性语法样例，仅供链路验收。", "kind": "clause", "ranges": [bounds(source)]})
                         if p["model"] == "bad-grammar":
