@@ -25,6 +25,19 @@ def test_mr_is_one_sentence():
     assert len(doc.sentences) == 1
 
 
+def test_bible_book_and_reference_abbreviations_do_not_split_sentences():
+    examples = [
+        "This gospel was already heard in the maternal promise, Gen. 3:15, was preached unto Abraham, Gal. 3:8, and may not be supplanted.",
+        "Compare I Cor. 15:22, II Cor. 5:17, III Jn. 1:4, and 1 Pet. 2:9.",
+        "Consult 1. Sam. 2:1, 2. Kgs. 4:1, and 3. Jn. 1:4.",
+        "See ch. 3, v. 2, vv. 4 and 5, cf. Ex. 1:5, ibid. p. 4 ff. for details.",
+    ]
+    for sentence in examples:
+        text = sentence + " Here is the next sentence."
+        doc = parse(text)
+        assert [text[s.start:s.end].strip() for s in doc.sentences] == [sentence, "Here is the next sentence."]
+
+
 def test_reconstruct_roundtrip():
     texts = [
         "Hello, world.",
