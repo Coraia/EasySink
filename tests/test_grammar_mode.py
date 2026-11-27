@@ -210,3 +210,71 @@ def test_out_of_bounds_target_ranges_rejected(tmp_path: Path, monkeypatch):
         json={"anchor": plan["sentences"][0]["anchor"], "request_id": "bad-target-1"},
     )
     assert res.status_code == 502
+
+
+def test_cross_sentence_and_cross_block_antecedent_resolution(tmp_path: Path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    _enable_ai(c)
+    text = (
+        "The doctrine shapes the entire argument. It remains central to modern theology.\n\n"
+        "It also defines the opening chapter."
+    )
+    doc = c.post("/api/documents", json={"title": "Cross sentence it", "text": text}).json()
+    blocks = c.get(f"/api/documents/{doc['id']}").json()["blocks"]
+    plan = c.post(
+        f"/api/documents/{doc['id']}/grammar/plan",
+        json={"block_ids": [b["id"] for b in blocks]},
+    ).json()
+
+    from wise_reader import reading_assist
+
+    observed_contexts = []
+
+    async def fake_model_json(app, client_arg, system, user, p, diagnostic=None):
+        observed_contexts.append(user.get("preceding_context", ""))
+        source = user["source"]
+        if "remains central" in source:
+            return {
+                "summary": "跨句回指。",
+                "nodes": [
+                    {"id": "root", "parent": None, "label": "整句", "explanation": "整句。", "kind": "clause", "ranges": [{"first": 0, "last": 5}]},
+                    {"id": "ref-it", "parent": "root", "label": "代词回指：It", "explanation": "回指前句 The doctrine。", "kind": "reference", "role": "referential", "ranges": [{"first": 0, "last": 0}], "antecedent_quote": "The doctrine"},
+                    {"id": "bad-ref", "parent": "root", "label": "虚构回指", "explanation": "不应保留。", "kind": "reference", "role": "referential", "ranges": [{"first": 1, "last": 1}], "antecedent_quote": "hallucinated noun phrase"},
+                ],
+            }
+        return {
+            "summary": "跨段回指。",
+            "nodes": [
+                {"id": "root", "parent": None, "label": "整句", "explanation": "整句。", "kind": "clause", "ranges": [{"first": 0, "last": 5}]},
+                {"id": "ref-it-2", "parent": "root", "label": "代词回指：It", "explanation": "回指上段 The doctrine。", "kind": "reference", "role": "referential", "ranges": [{"first": 0, "last": 0}], "antecedent_quote": "The doctrine"},
+            ],
+        }
+
+    monkeypatch.setattr(reading_assist, "model_json", fake_model_json)
+
+    # Sentence 1 (same block): resolves "The doctrine" at UTF-16 [0, 12] in blocks[0].
+    res1 = c.post(
+        f"/api/documents/{doc['id']}/grammar",
+        json={"anchor": plan["sentences"][1]["anchor"], "request_id": "cross-sent-1"},
+    )
+    assert res1.status_code == 200
+    assert "The doctrine shapes the entire argument." in observed_contexts[0]
+    nodes1 = {n["id"]: n for n in res1.json()["payload"]["nodes"]}
+    assert nodes1["ref-it"]["target_ranges"] == [
+        {"block_id": blocks[0]["id"], "start": 0, "end": 12, "quote": "The doctrine"}
+    ]
+    # Hallucinated quote not in preceding_context is dropped rather than invented.
+    assert "target_ranges" not in nodes1["bad-ref"]
+
+    # Sentence 2 (next paragraph): resolves "The doctrine" back in blocks[0].
+    res2 = c.post(
+        f"/api/documents/{doc['id']}/grammar",
+        json={"anchor": plan["sentences"][2]["anchor"], "request_id": "cross-block-1"},
+    )
+    assert res2.status_code == 200
+    assert "The doctrine shapes the entire argument." in observed_contexts[1]
+    nodes2 = {n["id"]: n for n in res2.json()["payload"]["nodes"]}
+    assert nodes2["ref-it-2"]["target_ranges"] == [
+        {"block_id": blocks[0]["id"], "start": 0, "end": 12, "quote": "The doctrine"}
+    ]
+

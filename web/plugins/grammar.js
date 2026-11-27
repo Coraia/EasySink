@@ -268,7 +268,16 @@ export function install(ctx) {
         setModeStatus(`已缓存 ${plan.cached_count}/${plan.total_count}`, "未配置文本 AI，仅悬停查看已缓存句子");
         return;
       }
-      const uncached = plan.sentences.filter(s => !s.cached && !hasCachedAssist(s.anchor));
+      const visibleBlocks = new Set($$("[data-block]", article).map(el => el.dataset.block).filter(Boolean));
+      const uncached = plan.sentences
+        .filter(s => !s.cached && !hasCachedAssist(s.anchor))
+        .sort((a, b) => {
+          const aVis = visibleBlocks.has(a.anchor.block_id) ? 0 : 1;
+          const bVis = visibleBlocks.has(b.anchor.block_id) ? 0 : 1;
+          if (aVis !== bVis) return aVis - bVis;
+          if (aVis === 1 && a.has_trigger !== b.has_trigger) return a.has_trigger ? -1 : 1;
+          return 0;
+        });
       run.done = run.total - uncached.length;
       const windowDesc = windowPages === 0 ? "当前页" : `前后 ${windowPages} 页`;
       const planTitle = `窗口：${windowDesc} · 本次约 ${uncached.length} 次调用（已缓存 ${run.done} 句）`;
