@@ -56,13 +56,21 @@ export function install(ctx) {
       url,
       cancelPlayback,
       mode = "idle",
-      anchor = null;
+      anchor = null,
+      source;
+    const stopButton = document.createElement("button");
+    stopButton.id = "reading-speech-stop";
+    stopButton.type = "button";
+    stopButton.hidden = true;
+    $("#reading-end").before(stopButton);
     const same = (a) => sameSelection(a, anchor);
     const active = () => ["loading", "playing"].includes(mode);
     const controls = () => {
       if (r.scope.signal.aborted) return;
       $(".reader").dataset.audioState = mode;
       $(".reader").dataset.speechEngine = engine;
+      stopButton.hidden = !active();
+      stopButton.textContent = mode === "loading" ? "取消朗读" : "停止朗读";
       const update = (button, value, idle) => {
         if (!button) return;
         const own = active() && same(value);
@@ -118,10 +126,10 @@ export function install(ctx) {
       mode = "stopped";
       controls();
     };
-    const speak = async (a) => {
+    const speak = async (a, from) => {
       stop();
       anchor = { ...a };
-      r.speech.anchor = anchor;
+      source = from;
       const ticket = generation;
       if (!a.quote?.trim()) return;
       mode = "loading";
@@ -215,11 +223,12 @@ export function install(ctx) {
         if (err.name !== "AbortError") r.status(err.message, { notice: true });
       }
     };
-    const toggle = (a) => {
+    const toggle = (a, from) => {
       if (active() && same(a)) stop();
-      else speak(a);
+      else speak(a, from);
     };
-    r.speech = { toggle, stop, anchor: null };
+    r.speech = { toggleWord: (a) => toggle(a, "word"), stop };
+    r.scope.on(stopButton, "click", stop);
     r.tool("tts", "朗读", () => {
       const a =
         r.selection ||
@@ -239,7 +248,10 @@ export function install(ctx) {
       const b = r.doc.blocks.find((b) => b.id === button.dataset.readBlock);
       toggle(r.paragraphAnchor(b.id));
     });
-    for (const event of ["before-page", "before-selection"]) r.on(event, stop);
+    r.on("before-page", stop);
+    r.on("before-selection", (ev) => {
+      if (source !== "word" || !ev.detail?.clearing) stop();
+    });
     for (const event of ["draw", "selection-render", "speech-controls"])
       r.on(event, controls);
     r.scope.cleanup(stop);

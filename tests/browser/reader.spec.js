@@ -322,6 +322,66 @@ test("slow old route cannot replace a new route; mobile note editor fits", async
     contentType: "image/png",
   });
 });
+test("word pronunciation survives closing and reopening the card, with explicit stop", async ({
+  page,
+  request,
+}) => {
+  await page.addInitScript(() => {
+    window.__utterances = [];
+    Object.defineProperty(window, "speechSynthesis", {
+      value: {
+        getVoices: () => [],
+        cancel: () => {},
+        speak: (utterance) => window.__utterances.push(utterance),
+      },
+    });
+  });
+  const d = await document(request, "A prominent contribution can change our understanding.");
+  await read(page, d.id);
+  const reader = page.locator(".reader");
+  const word = page.locator('.source-unit[data-word="prominent"]');
+  const card = page.getByRole("dialog", { name: "注释详情" });
+  const pronunciation = card.locator("[data-word-speak]");
+  const outside = page.locator(".reader-page-caption .caption-title");
+  const stop = page.locator("#reading-speech-stop");
+  await expect(stop).toBeHidden();
+
+  await word.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+  });
+  await page.locator('[data-selection-action="lookup"]').click();
+  await pronunciation.click();
+  await expect(reader).toHaveAttribute("data-audio-state", "playing");
+  await outside.click();
+  await expect(card).toBeHidden();
+  await expect(reader).toHaveAttribute("data-audio-state", "playing");
+  await expect(reader).toHaveAttribute("data-chrome", "closed");
+  await expect(stop).toBeVisible();
+
+  await word.click();
+  await expect(pronunciation).toHaveAttribute("aria-pressed", "true");
+  expect(await page.evaluate(() => window.__utterances.map((u) => u.text))).toEqual(["prominent"]);
+  await outside.click();
+  await page.evaluate(() => window.__utterances[0].onend());
+  await expect(reader).toHaveAttribute("data-audio-state", "ended");
+  await expect(stop).toBeHidden();
+
+  await word.click();
+  await pronunciation.click();
+  await expect(pronunciation).toHaveAttribute("aria-pressed", "true");
+  await pronunciation.click();
+  await expect(reader).toHaveAttribute("data-audio-state", "stopped");
+  expect(await page.evaluate(() => window.__utterances.length)).toBe(2);
+
+  await pronunciation.click();
+  await outside.click();
+  await stop.click();
+  await expect(reader).toHaveAttribute("data-audio-state", "stopped");
+  await expect(stop).toBeHidden();
+});
 test("speech consumes only English and is stopped on leaving; finish/archive remain reversible", async ({
   page,
   request,

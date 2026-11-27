@@ -2585,12 +2585,18 @@ body.paged-reading #app {
   gap: 4px 12px;
   text-align: right;
 }
-#reading-end {
+#reading-end,
+#reading-speech-stop {
   border-color: transparent;
   padding: 3px 10px;
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 12px;
+}
+#reading-speech-stop {
+  position: absolute;
+  right: 12px;
+  bottom: calc(100% + 8px);
 }
 dialog.reader-ending {
   position: fixed;
