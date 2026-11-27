@@ -8,7 +8,9 @@ from bisect import bisect_left, bisect_right
 
 from fastapi import HTTPException
 
-PROTOCOL = "context-meaning-v22"
+from wise_reader.tokenize import sentence_spans
+
+PROTOCOL = "context-meaning-v23"
 LIMIT = 6000
 
 
@@ -20,6 +22,31 @@ def text_block(block):
     return bool(block.get("text", "").strip()) and not (
         block.get("asset_url") and block.get("type") in {"image", "image_fallback", "formula", "table"}
     )
+
+
+def sentence_ranges(blocks, indexes, parts):
+    """Map the sentences intersecting a selection to Python offsets within blocks."""
+    first, last = indexes[parts[0].block_id], indexes[parts[-1].block_id]
+    left, right = first, last + 1
+    while left > 0 and text_block(blocks[left - 1]):
+        left -= 1
+    while right < len(blocks) and text_block(blocks[right]):
+        right += 1
+    texts = [b["text"] for b in blocks[left:right]]
+    offsets = [0]
+    for text in texts:
+        offsets.append(offsets[-1] + len(text) + 2)
+    joined = "\n\n".join(texts)
+    start = offsets[first - left] + len(texts[first - left].encode("utf-16-le")[:parts[0].start * 2].decode("utf-16-le"))
+    end = offsets[last - left] + len(texts[last - left].encode("utf-16-le")[:parts[-1].end * 2].decode("utf-16-le"))
+    spans = [(a, b) for a, b in sentence_spans(joined) if a < end and b > start]
+    a, b = spans[0][0], spans[-1][1]
+    literal = joined[a:b]
+    a += len(literal) - len(literal.lstrip())
+    b -= len(literal) - len(literal.rstrip())
+    return [(i + left, max(0, a - offset), min(len(text), b - offset))
+            for i, (text, offset) in enumerate(zip(texts, offsets))
+            if a < offset + len(text) and b > offset]
 
 
 def window(text, budget, start, end):
@@ -62,7 +89,7 @@ def selection_occurrences(ranges, parts):
 
 
 def build_context(blocks, target, previous=False, following=False):
-    """Only selected paragraphs plus explicitly requested immediate neighbors.
+    """Selected paragraphs, complete focus sentences and explicitly requested neighbors.
 
     The separate selected source retains the existing 8000-unit limit. A larger
     selection is not shortened to fit the *context* budget; this is reported.
@@ -70,33 +97,56 @@ def build_context(blocks, target, previous=False, following=False):
     parts = target.segments or [target]
     indexes = {block["id"]: i for i, block in enumerate(blocks)}
     first, last = indexes[parts[0].block_id], indexes[parts[-1].block_id]
-    current = blocks[first:last + 1]
-    joined = "\n\n".join(block["text"] for block in current)
-    end = units(joined) - units(current[-1]["text"]) + parts[-1].end
+    focus = sentence_ranges(blocks, indexes, parts)
+    left, a, _ = focus[0]
+    right, _, b = focus[-1]
+    current = blocks[left:right + 1]
+    first_text, last_text = current[0]["text"], current[-1]["text"]
+    left_edge = a if left < first else 0
+    right_edge = b if right > last else len(last_text)
+    if previous and left == first - 1:
+        size = units(first_text)
+        left_edge = min(left_edge, len(first_text) - len(window(first_text, 1000, size, size)[2]))
+    if following and right == last + 1:
+        right_edge = max(right_edge, len(window(last_text, 1000, 0, 0)[2]))
+    texts = [block["text"] for block in current]
+    texts[0] = texts[0][left_edge:]
+    texts[-1] = texts[-1][:right_edge - (left_edge if left == right else 0)]
+    joined = "\n\n".join(texts)
+    offsets = [0]
+    for text in texts:
+        offsets.append(offsets[-1] + units(text) + 2)
+    selection_start = offsets[first - left] + parts[0].start
+    selection_end = offsets[last - left] + parts[-1].end
+    focus_start = min(selection_start, units(first_text[left_edge:a]))
+    focus_end = max(selection_end, offsets[-2] + units(last_text[left_edge if left == right else 0:b]))
     candidates = {
         "previous": blocks[first - 1] if first > 0 and text_block(blocks[first - 1]) else None,
         "next": blocks[last + 1] if last + 1 < len(blocks) and text_block(blocks[last + 1]) else None,
     }
     wanted = [(role, candidates[role]) for role, use in (("previous", previous), ("next", following))
-              if use and candidates[role] is not None]
+              if use and candidates[role] is not None and not left <= indexes[candidates[role]["id"]] <= right]
     # When a neighbor is explicitly needed, a long current paragraph must not
     # swallow the entire allowance. Reserve up to 1000 units per neighbor while
     # keeping the selected span intact whenever it fits the overall budget.
-    spare = max(0, LIMIT - (end - parts[0].start))
+    focus_fits = focus_end - focus_start <= LIMIT
+    required_start, required_end = (focus_start, focus_end) if focus_fits else (selection_start, selection_end)
+    spare = max(0, LIMIT - (required_end - required_start))
     reserve = min(spare, sum(min(1000, units(block["text"])) + 2 for _, block in wanted))
-    start, stop, _ = window(joined, LIMIT - reserve, parts[0].start, end)
+    start, stop, _ = window(joined, LIMIT - reserve, required_start, required_end)
     ranges, omitted = [], []
-    cursor = 0
-    for block in current:
-        size = units(block["text"])
+    for i, (block, text) in enumerate(zip(current, texts)):
+        cursor = offsets[i]
+        clip = units(first_text[:left_edge]) if i == 0 else 0
+        size = offsets[i + 1] - cursor - 2
+        source_size = units(block["text"])
         a, b = max(0, start - cursor), min(size, stop - cursor)
         if a < b:
-            ranges.append({"block_id": block["id"], "role": "current", "start": a, "end": b,
-                           "text": block["text"].encode("utf-16-le")[a * 2:b * 2].decode("utf-16-le"),
-                           "source_utf16_length": size, "truncated": a != 0 or b != size})
+            ranges.append({"block_id": block["id"], "role": "current", "start": clip + a, "end": clip + b,
+                           "text": text.encode("utf-16-le")[a * 2:b * 2].decode("utf-16-le"),
+                           "source_utf16_length": source_size, "truncated": a != 0 or b != size})
         else:
             omitted.append({"block_id": block["id"], "role": "current", "reason": "context_limit"})
-        cursor += size + 2
     remaining = LIMIT - units("\n\n".join(r["text"] for r in ranges))
     # Reserve separators, divide fairly, then give unused space to the other
     # neighbor. The selected source span has first claim on the budget.
@@ -125,7 +175,7 @@ def build_context(blocks, target, previous=False, following=False):
             "ranges": ranges, "omitted": omitted,
             "selected_occurrences": selection_occurrences(ranges, parts),
             "truncated": bool(omitted) or any(r["truncated"] for r in ranges),
-            "selection_context_truncated": start > parts[0].start or stop < end,
+            "selection_context_truncated": start > selection_start or stop < selection_end,
             "requested_neighbors": {"previous": previous, "next": following},
             "available_neighbors": {role: block is not None for role, block in candidates.items()}}
 

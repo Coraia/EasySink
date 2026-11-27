@@ -2,7 +2,7 @@
 from __future__ import annotations
 import re
 from fastapi import HTTPException
-from wise_reader.tokenize import _split_sentences
+from wise_reader.tokenize import sentence_spans
 
 SYSTEM = """Return one JSON object in this order: target_usage, lexical_gloss, translations.
 1. Resolve the PARTICULAR selected occurrence first. Copy nearby_excerpt.quote exactly into target_usage.quote.
@@ -147,72 +147,39 @@ def _units(text):
     return len(text.encode("utf-16-le")) // 2
 
 
-def _sentences(text):
-    """Reuse reader boundaries, keeping parenthetical/citation clauses together.
-
-    A boundary inside '(e.g. ...)' or '(vv. ...)' cannot discard a version or
-    contrast later in that same sentence. No source characters are rewritten.
-    """
-    # The tokenizer's public parsed sentences omit numeric-only tails such as
-    # '33, 36)?'. Keep raw spans here so those tails can close a citation before
-    # deciding whether to merge the next sentence.
-    spans = _split_sentences(text)
-    if not spans:
-        return [(0, len(text))] if text else []
-    ends = {end for _, end in spans}
-    # A version such as 4.X. is not a person's initial. A numbered footnote
-    # after a closing quotation belongs to the preceding completed sentence.
-    # Add offsets only; reconstructing the units preserves every source byte.
-    for pattern in (r"\b\d+(?:\.(?:\d+|[xX]))+\.[\"'”’)\]]*(?=\s+[A-Z])",
-                    r"[.!?…][\"'”’]+(?:\d{1,4}|\[\d{1,4}\])(?=\s+[A-Z])"):
-        ends.update(match.end() for match in re.finditer(pattern, text))
-    boundaries = sorted(ends)
-    result, start = [], 0
-    for i, end in enumerate(boundaries):
-        prefix = text[:end]
-        open_bracket = (prefix.count("(") > prefix.count(")") or
-                        prefix.count("[") > prefix.count("]"))
-        abbreviation = re.search(r"\b(?:vv|ch|chap|vol|cf)\.$", prefix, re.I)
-        if i < len(boundaries) - 1 and (open_bracket or abbreviation):
-            continue
-        result.append((start, end))
-        start = end
-    if start < len(text):
-        if result:
-            result[-1] = (result[-1][0], len(text))
-        else:
-            result.append((0, len(text)))
-    return result
-
-
 def _source_parts(source, context, target):
     """Partition authorized source at exact UTF16 anchors before generation."""
     selected = {}
     for part in target.segments or [target]:
         selected.setdefault(part.block_id, []).append(part)
-    focus, background, counter = [], [], 0
+    selected_ranges, cursor = [], 0
     for entry in context["ranges"]:
-        text = entry["text"]
-        for a, b in _sentences(text):
-            counter += 1
-            unit_id = "s" + str(counter)
-            literal = text[a:b]
-            start = entry["start"] + _units(text[:a])
-            end = start + _units(literal)
-            intersections = [(max(p.start, start) - start, min(p.end, end) - start)
-                             for p in selected.get(entry["block_id"], [])
-                             if p.start < end and p.end > start]
-            if not intersections:
-                background.append({"id": unit_id, "text": literal})
-                continue
-            raw = literal.encode("utf-16-le")
-            boundaries = sorted({0, end - start, *(x for pair in intersections for x in pair)})
-            parts = []
-            for left, right in zip(boundaries, boundaries[1:]):
-                parts.append({"id": unit_id + "p" + str(len(parts) + 1),
-                              "selected": any(lo <= left and right <= hi for lo, hi in intersections),
-                              "text": raw[left * 2:right * 2].decode("utf-16-le")})
-            focus.append({"id": unit_id, "parts": parts})
+        for part in selected.get(entry["block_id"], []):
+            start, end = max(part.start, entry["start"]), min(part.end, entry["end"])
+            if start < end:
+                selected_ranges.append((cursor + start - entry["start"], cursor + end - entry["start"]))
+        cursor += entry["end"] - entry["start"] + 2
+    focus, background = [], []
+    text = context["text"]
+    cursor = 0
+    for counter, (a, b) in enumerate(sentence_spans(text), 1):
+        unit_id = "s" + str(counter)
+        literal = text[a:b]
+        start, end = cursor, cursor + _units(literal)
+        cursor = end
+        intersections = [(max(lo, start) - start, min(hi, end) - start)
+                         for lo, hi in selected_ranges if lo < end and hi > start]
+        if not intersections:
+            background.append({"id": unit_id, "text": literal})
+            continue
+        raw = literal.encode("utf-16-le")
+        boundaries = sorted({0, end - start, *(x for pair in intersections for x in pair)})
+        parts = []
+        for left, right in zip(boundaries, boundaries[1:]):
+            parts.append({"id": unit_id + "p" + str(len(parts) + 1),
+                          "selected": any(lo <= left and right <= hi for lo, hi in intersections),
+                          "text": raw[left * 2:right * 2].decode("utf-16-le")})
+        focus.append({"id": unit_id, "parts": parts})
     if not focus:
         # Retain the already-authorized selection if the context was truncated.
         focus = [{"id": "selection", "parts": [{"id": "selectionp1", "selected": True, "text": source}]}]

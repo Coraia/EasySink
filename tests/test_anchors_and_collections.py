@@ -9,8 +9,9 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from wise_reader.app import create_app
+from wise_reader.assist_context_generation import plan
 from wise_reader.content import Anchor, get_content
-from wise_reader.reading_assist import offset_index, selected, source_ranges, utf16
+from wise_reader.reading_assist import ContextIn, context_plan, offset_index, selected, source_ranges, utf16
 
 
 def _anchor(doc: dict, block_idx: int, start_char: int, end_char: int, **extra) -> dict:
@@ -81,6 +82,65 @@ def test_utf16_anchor_offsets_and_surrogate_pair_guards():
         with pytest.raises(HTTPException) as ver_err:
             selected(ctx, doc_id, Anchor.model_validate(stale))
         assert ver_err.value.status_code == 409
+
+
+@pytest.mark.parametrize("block_idx, word", [(0, "Anthropology"), (1, "gracious"), (2, "effective")])
+def test_grammar_and_context_share_cross_block_sentence(block_idx, word):
+    blocks = [
+        "An earlier sentence. Anthropology",
+        "already directs attention to the gracious provision of God for a covenant of friendship with man,",
+        "which provides for a life of blessed communion with God; but it is a covenant which is effective only in and through Christ. 🐕 A new sentence.",
+    ]
+    expected = ["Anthropology", blocks[1], blocks[2].split(" 🐕 ")[0]]
+    with TestClient(create_app()) as c:
+        doc = c.post("/api/documents", json={"title": "Cross-block sentence", "text": "\n\n".join(blocks)}).json()
+        ctx = SimpleNamespace(store=c.app.state.store)
+        start = blocks[block_idx].index(word)
+        anchor = Anchor.model_validate(_anchor(doc, block_idx, start, start + len(word)))
+        _, expanded, grammar_source = selected(ctx, doc["id"], anchor, sentence=True)
+        target, source, context, _ = context_plan(ctx, doc["id"], ContextIn(anchor=anchor))
+        assert grammar_source == "\n\n".join(expected)
+        assert [entry["quote"] for entry in source_ranges(expanded, 0, len(grammar_source))] == expected
+        assert target.quote == source == word
+        prompt = plan(source, context, target)
+        unit, = prompt["focus_sources"]
+        marker, = unit["markers"]
+        assert marker["selected_source"] == word
+        assert unit["marked_text"].replace(marker["open"], "").replace(marker["close"], "").strip() == grammar_source
+        assert all(entry["text"].strip() in {"An earlier sentence.", "🐕 A new sentence."}
+                   for entry in prompt["context_sources"])
+
+
+def test_cross_block_grammar_preserves_utf16_and_stops_at_sentence_end():
+    blocks = ["Last one. 🐕 Her reference, Gen.", "3:15, was clear.", "Do not include this."]
+    with TestClient(create_app()) as c:
+        doc = c.post("/api/documents", json={"title": "Bible reference", "text": "\n\n".join(blocks)}).json()
+        ctx = SimpleNamespace(store=c.app.state.store)
+        start = blocks[0].index("reference")
+        anchor = Anchor.model_validate(_anchor(doc, 0, start, start + len("reference")))
+        _, expanded, source = selected(ctx, doc["id"], anchor, sentence=True)
+        assert source == "🐕 Her reference, Gen.\n\n3:15, was clear."
+        first, second = source_ranges(expanded, source.index("reference"), len(source))
+        assert (first["start"], first["end"], first["quote"]) == (utf16(blocks[0][:start]), utf16(blocks[0]), "reference, Gen.")
+        assert (second["start"], second["end"], second["quote"]) == (0, len(blocks[1]), blocks[1])
+        target, word, context, _ = context_plan(ctx, doc["id"], ContextIn(anchor=anchor))
+        assert [r["text"] for r in context["ranges"]] == blocks[:2]
+        assert plan(word, context, target)["focus_sources"][0]["markers"][0]["selected_source"] == "reference"
+
+
+def test_cross_block_sentence_respects_existing_source_limits():
+    text = "Start here\n\n" + "then continue " * 700 + "to the end."
+    with TestClient(create_app()) as c:
+        doc = c.post("/api/documents", json={"title": "Long sentence", "text": text}).json()
+        ctx = SimpleNamespace(store=c.app.state.store)
+        anchor = Anchor.model_validate(_anchor(doc, 0, 0, 5))
+        with pytest.raises(HTTPException) as too_long:
+            selected(ctx, doc["id"], anchor, sentence=True)
+        assert too_long.value.status_code == 400
+        target, word, context, _ = context_plan(ctx, doc["id"], ContextIn(anchor=anchor))
+        assert context["utf16_length"] <= context["limit_utf16"]
+        assert context["truncated"] is True
+        assert plan(word, context, target)["focus_sources"][0]["markers"][0]["selected_source"] == "Start"
 
 
 def test_collections_save_idempotency_merge_and_undo():

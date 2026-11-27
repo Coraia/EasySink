@@ -3,7 +3,7 @@ import { $, e, api } from "./core.js";
 import { anchorSegments } from "./source-selection.js";
 import { offerAISetup } from "./ai-setup-guard.js";
 
-// Keep the server's bounded current-passage default for every preview/request.
+// Keep the server's bounded focus-sentence default for every preview/request.
 // Removing the scope UI must never expand what is sent to the model.
 const defaultContext = Object.freeze({ context_previous: false, context_next: false });
 
@@ -33,7 +33,7 @@ function validLocalRecord(r, value, anchor) {
   const context = value.payload?.context;
   if (!sameSelection(value, anchor) || value.doc_id !== r.doc.id ||
       value.version !== r.doc.version || !context ||
-      !["context-meaning-v7", "context-meaning-v9", "context-meaning-v22"].includes(context.protocol) ||
+      !["context-meaning-v7", "context-meaning-v9", "context-meaning-v22", "context-meaning-v23"].includes(context.protocol) ||
       context.requested_neighbors.previous !== defaultContext.context_previous ||
       context.requested_neighbors.next !== defaultContext.context_next) return false;
   const blocks = new Map(r.doc.blocks.map(block => [block.id, block]));

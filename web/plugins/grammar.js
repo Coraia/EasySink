@@ -187,10 +187,6 @@ export function install(ctx) {
         paint();
         return;
       }
-      const existing = r.assists.filter(a => a.kind === "grammar").find(a =>
-        anchorSegments(anchor).every(part => anchorSegments(a.anchor).some(saved =>
-          saved.block_id === part.block_id && saved.start <= part.start && saved.end >= part.end)));
-      if (existing) { show(existing); return; }
       pendingAnchor = anchor;
       inspect(true);
       const result = await r.requestAssist("grammar", anchor);
