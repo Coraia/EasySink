@@ -262,7 +262,7 @@ export function setupReadingInteractions(r) {
     r.ctx.run("selection", r).catch(console.error);
   };
   r.clearSelection = ({ native = true } = {}) => {
-    r.emit("before-selection");
+    r.emit("before-selection", { clearing: true });
     for (const controller of r.pending.values()) controller.cancel();
     r.pending.clear();
     r.selection = null;
@@ -440,7 +440,7 @@ export function setupReadingInteractions(r) {
     if (ev.button !== 0 || !r.selection) return;
     // Keep the anchor while operating its menu/panels. A new source gesture or
     // an outside click owns a fresh selection, including after native collapse.
-    if (ev.target.closest(".selection-handles,#reading-selection,#tool-panel,#reader-chrome,#show-tools,.annotation-pop,#translation-pane,.inline-grammar,#toast,.reading-edge-grip")) return;
+    if (ev.target.closest(".selection-handles,#reading-selection,#tool-panel,#reader-chrome,#show-tools,.annotation-pop,#translation-pane,.inline-grammar,#toast,.reading-edge-grip,#reading-speech-stop")) return;
     r.selectionDismissedByPointer = true;
     r.clearSelection();
   }, { capture: true });
@@ -547,17 +547,9 @@ export function setupReadingInteractions(r) {
     pronunciation.innerHTML = `${singleWord && result?.phonetic ? `<span data-word-ipa>/${e(result.phonetic.replace(/^\[|\]$|^\/|\/$/g, ""))}/</span>` : ""}${r.ctx.enabled("tts") ? '<button type="button" data-word-speak>听发音</button>' : ""}`;
     ($(".word-card-title", pop) || $("h3", pop)).after(pronunciation);
     scope.on(pronunciation, "click", (ev) => {
-      if (ev.target.closest("[data-word-speak]")) r.speech?.toggle(anchor);
+      if (ev.target.closest("[data-word-speak]")) r.speech?.toggleWord(anchor);
     });
     setReadingAction($("[data-word-speak]", pronunciation), "sound", "发音", "听发音");
     r.emit("speech-controls");
-    scope.cleanup(() => {
-      if (
-        r.speech?.anchor?.block_id === anchor.block_id &&
-        r.speech.anchor.start === anchor.start &&
-        r.speech.anchor.end === anchor.end
-      )
-        r.speech.stop();
-    });
   };
 }
