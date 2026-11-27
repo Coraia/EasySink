@@ -1,5 +1,12 @@
 import { test, expect } from "@playwright/test";
-import { enableAll, read, tools } from "./reader-helpers.js";
+import {
+  enableAll,
+  goPage,
+  pageCount,
+  read,
+  readerDefaults,
+  tools,
+} from "./reader-helpers.js";
 
 test("reading settings stay in a shallow bottom drawer and apply live", async ({
   request,
@@ -145,4 +152,97 @@ test("the last page offers a finish screen without recording until confirmed", a
   expect(await logs()).toHaveLength(1);
   await page.getByRole("link", { name: "返回书架", exact: false }).click();
   await expect(page).toHaveURL(/#\/$/);
+});
+
+test("PDF range endings continue into ready pages and finish only at the end of the book", async ({
+  request,
+  page,
+}) => {
+  await readerDefaults(page);
+  const ranges = [];
+  const chapters = [];
+  for (const [start, end] of [
+    [1, 2],
+    [5, 6],
+    [7, 8],
+  ]) {
+    const title = `PDF pages ${start}–${end}`;
+    const response = await request.post("/api/documents", {
+      data: {
+        title,
+        text: Array(24)
+          .fill(`${title}. The last light bounced off the water.`)
+          .join("\n\n"),
+      },
+    });
+    expect(response.ok()).toBeTruthy();
+    const { id } = await response.json();
+    ranges.push({ doc_id: id, start_page: start, end_page: end });
+    chapters.push({ doc_id: id, idx: chapters.length, title });
+  }
+  const [gap, middle, final] = ranges;
+  let nextUnavailable = true;
+  await page.route(
+    /\/api\/documents\/\d+\?compact=true(?:&|$)/,
+    async (route) => {
+      const id = Number(
+        new URL(route.request().url()).pathname.split("/").at(-1),
+      );
+      const range = ranges.find((entry) => entry.doc_id === id);
+      if (!range) return route.fallback();
+      if (id === final.doc_id && nextUnavailable)
+        return route.fulfill({ status: 503, json: { detail: "暂时无法加载" } });
+      const response = await route.fetch();
+      const doc = await response.json();
+      await route.fulfill({
+        response,
+        json: {
+          ...doc,
+          chapter: {
+            ...chapters.find((entry) => entry.doc_id === id),
+            book_id: 1,
+          },
+          chapters,
+          pdf: {
+            ...range,
+            book_id: 1,
+            page_count: 8,
+            source_sha256: "fixture",
+            ranges,
+          },
+        },
+      });
+    },
+  );
+
+  const footer = page.locator("#reading-end");
+  const dialog = page.locator(".reader-ending");
+  const lastPage = async () => goPage(page, (await pageCount(page)) - 1);
+  await read(page, gap.doc_id);
+  await lastPage();
+  await expect(footer).toBeHidden();
+
+  await read(page, middle.doc_id);
+  await lastPage();
+  await expect(footer).toHaveText("继续下一段 →");
+  await footer.click();
+  await expect(page.locator("#toast")).toContainText(
+    "相邻页面未能加载，当前页面已保留",
+  );
+  await expect(dialog).toBeHidden();
+  await expect(page).toHaveURL(new RegExp(`#/read/${middle.doc_id}$`));
+
+  nextUnavailable = false;
+  await footer.click();
+  await expect(page).toHaveURL(new RegExp(`#/read/${final.doc_id}$`));
+  const reader = page.locator(".reader");
+  await expect(reader).toHaveAttribute("data-ready", "true");
+  await expect(reader).toHaveAttribute("data-page-index", "0");
+  await expect(dialog).toBeHidden();
+  await lastPage();
+  await expect(footer).toHaveText("结束阅读 →");
+  await footer.click();
+  await expect(
+    page.getByRole("dialog", { name: "读到全书末尾了" }),
+  ).toBeVisible();
 });
