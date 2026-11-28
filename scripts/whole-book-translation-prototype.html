@@ -1,0 +1,847 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="day">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EasySink · 整本翻译原型</title>
+  <style>
+    :root {
+      --bg: #f5f4ef;
+      --paper: #fffefa;
+      --surface: #efeee7;
+      --ink: #282f2a;
+      --muted: #687168;
+      --border: #dedfd5;
+      --accent: #315c49;
+      --accent-soft: #e7ede2;
+      --linked-bg: #f5dfaa;
+      --linked-ink: #593b11;
+      --danger: #a33e35;
+      --sans:
+        -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
+        sans-serif;
+      font: 14px/1.65 var(--sans);
+      color: var(--ink);
+      background: var(--bg);
+    }
+    :root[data-theme="night"] {
+      color-scheme: dark;
+      --bg: #1b211f;
+      --paper: #232b27;
+      --surface: #2d3731;
+      --ink: #e7eadf;
+      --muted: #acb7ac;
+      --border: #435247;
+      --accent: #bbd8ad;
+      --accent-soft: #354735;
+      --linked-bg: #62471f;
+      --linked-ink: #fff0ce;
+      --danger: #ffb6aa;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    [hidden] {
+      display: none !important;
+    }
+    body {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 24px clamp(12px, 3vw, 42px);
+    }
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 610;
+    }
+    h2,
+    summary {
+      font-size: 13px;
+      font-weight: 620;
+    }
+    button,
+    select {
+      color: inherit;
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font: inherit;
+      padding: 3px 9px;
+    }
+    button,
+    select,
+    summary {
+      cursor: pointer;
+    }
+    button:hover:not(:disabled),
+    select:hover {
+      background: var(--surface);
+    }
+    button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .demo-intro {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 15px;
+    }
+    .demo-intro p,
+    .review p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .demo-intro select {
+      font-size: 12px;
+      flex: none;
+    }
+    .reader {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--bg);
+      box-shadow: 0 12px 40px #1a261719;
+    }
+    .window-bar {
+      position: relative;
+      background: var(--surface);
+      text-align: center;
+      padding: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .window-dots {
+      display: flex;
+      gap: 6px;
+      position: absolute;
+      top: 11px;
+      left: 13px;
+    }
+    .window-dots i {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #e2756e;
+    }
+    .window-dots i:nth-child(2) {
+      background: #e7bd61;
+    }
+    .window-dots i:nth-child(3) {
+      background: #77b98c;
+    }
+    .reading-columns {
+      display: grid;
+      height: clamp(480px, 65vh, 660px);
+    }
+    .reading-columns:has(aside:not([hidden])) {
+      gap: 12px;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+    .page-leaf {
+      min-height: 0;
+      min-width: 0;
+      overflow: auto;
+      overscroll-behavior: contain;
+      padding: 28px clamp(18px, 3.3vw, 48px);
+      background: var(--paper);
+    }
+    .source-inner {
+      max-width: 760px;
+      margin: auto;
+    }
+    .leaf-heading {
+      color: var(--muted);
+      font: 12px/1.5 var(--sans);
+      margin-bottom: 22px;
+    }
+    .source-prose {
+      font:
+        clamp(17px, 1.75vw, 22px)/1.9 Georgia,
+        "Times New Roman",
+        serif;
+    }
+    .chapter-heading {
+      margin-bottom: 14px;
+      font:
+        600 1.18em/1.3 Georgia,
+        serif;
+    }
+    .source-prose p,
+    .translation-prose p {
+      margin: 0 0 0.95em;
+    }
+    .source-prose p:last-child,
+    .translation-prose p:last-child {
+      margin-bottom: 0;
+    }
+    .source-prose .linked {
+      background: var(--linked-bg);
+      color: var(--linked-ink);
+    }
+    .grammar-on .grammar-example {
+      text-decoration: underline dotted var(--accent);
+      text-underline-offset: 4px;
+    }
+    .grammar-note {
+      position: absolute;
+      z-index: 1;
+      display: block;
+      width: max-content;
+      max-width: min(270px, 65vw);
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--paper);
+      color: var(--ink);
+      box-shadow: 0 4px 14px #0002;
+      font: 12px/1.6 var(--sans);
+    }
+    .grammar-example {
+      position: relative;
+    }
+    .grammar-example:not(:hover, :focus-visible) .grammar-note {
+      visibility: hidden;
+    }
+    .translation-pane {
+      padding: 24px clamp(18px, 2.7vw, 36px);
+    }
+    .translation-heading {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .translation-heading > span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .translation-prose {
+      font-size: 16px;
+      line-height: 1.95;
+    }
+    .translation-prose p:focus-visible,
+    .translation-prose p:hover {
+      color: var(--accent);
+    }
+    .translation-state {
+      display: grid;
+      place-content: center;
+      min-height: 65%;
+      padding: 12px 0;
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .state-title {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 4px;
+      color: var(--ink);
+    }
+    .translation-state[data-state="error"] .state-title {
+      color: var(--danger);
+    }
+    .translation-state button {
+      justify-self: center;
+      margin-top: 10px;
+    }
+    .spinner {
+      width: 13px;
+      height: 13px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to {
+        transform: rotate(1turn);
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .spinner {
+        animation: none;
+      }
+    }
+    .reader-page-caption {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 5px 12px;
+      padding: 7px 12px 6px;
+      background: var(--paper);
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .caption-title {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .caption-end,
+    .modes,
+    .page-nav {
+      display: flex;
+      align-items: center;
+    }
+    .caption-end {
+      gap: 5px 12px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+    .modes,
+    .page-nav {
+      gap: 5px;
+      white-space: nowrap;
+    }
+    .mode-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      font: 12px/1.3 var(--sans);
+    }
+    .mode-toggle::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0.45;
+    }
+    .mode-toggle[aria-pressed="true"] {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 500;
+    }
+    .mode-toggle[aria-pressed="true"]::before {
+      opacity: 1;
+    }
+    .page-nav button {
+      display: grid;
+      place-items: center;
+      width: 26px;
+      height: 24px;
+      padding: 0;
+    }
+    .page-nav svg {
+      width: 12px;
+      height: 12px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.5;
+    }
+    .review {
+      display: grid;
+      gap: 9px;
+      margin-top: 15px;
+    }
+    .demo-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 5px 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .demo-controls label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+    }
+    input[type="checkbox"] {
+      accent-color: var(--accent);
+    }
+    .review details {
+      border-top: 1px solid var(--border);
+      padding-top: 9px;
+    }
+    .review details p {
+      margin-top: 6px;
+    }
+    @media (max-width: 1100px) {
+      .reading-columns:has(aside:not([hidden])) {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1.52fr) minmax(0, 1fr);
+        gap: 1px;
+      }
+      .translation-pane {
+        padding-top: 14px;
+      }
+      .translation-heading {
+        margin-bottom: 10px;
+      }
+    }
+    @media (max-width: 620px) {
+      .reader-page-caption {
+        flex-wrap: wrap;
+      }
+      .caption-end {
+        width: 100%;
+        justify-content: space-between;
+      }
+      .page-leaf {
+        padding-top: 15px;
+      }
+      .leaf-heading {
+        margin-bottom: 12px;
+      }
+    }
+  </style>
+  <header class="demo-intro">
+    <div>
+      <h1>整本翻译 · 交互原型</h1>
+      <p>打开阅读页底部的「整本翻译」，再翻到下一页、翻回来看区别。</p>
+    </div>
+    <select id="theme" aria-label="原型配色">
+      <option value="day">浅色</option>
+      <option value="night">深色</option>
+    </select>
+  </header>
+  <noscript
+    >请将原型文件下载到本地，并在启用 JavaScript 的浏览器中打开。</noscript
+  >
+  <main class="reader" aria-label="EasySink 阅读器原型">
+    <div class="window-bar">
+      <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+      EasySink
+    </div>
+    <div class="reading-columns">
+      <article id="source" class="page-leaf" aria-label="英文正文" tabindex="0">
+        <div class="source-inner" lang="en">
+          <div class="leaf-heading">The Lantern Keeper</div>
+          <div id="source-prose" class="source-prose"></div>
+        </div>
+      </article>
+      <aside
+        id="translation-pane"
+        class="page-leaf translation-pane"
+        aria-labelledby="translation-title"
+        tabindex="0"
+        hidden
+      >
+        <header class="translation-heading">
+          <h2 id="translation-title">本页译文</h2>
+          <span id="translation-page"></span>
+          <button id="return-translation" type="button" hidden>
+            返回本页译文
+          </button>
+        </header>
+        <div id="translation-state" class="translation-state" hidden>
+          <div role="status">
+            <h3 class="state-title">
+              <span id="spinner" class="spinner" aria-hidden="true"></span>
+              <span id="state-title"></span>
+            </h3>
+            <p id="state-detail"></p>
+          </div>
+          <button id="retry" type="button" hidden>重新请求</button>
+        </div>
+        <div id="translation-prose" class="translation-prose"></div>
+      </aside>
+    </div>
+    <footer class="reader-page-caption">
+      <span class="caption-title">The Lantern Keeper</span>
+      <div class="caption-end">
+        <div class="modes" role="group" aria-label="阅读模式">
+          <button
+            id="grammar"
+            class="mode-toggle"
+            type="button"
+            aria-pressed="false"
+          >
+            语法模式
+          </button>
+          <button
+            id="translate"
+            class="mode-toggle"
+            type="button"
+            aria-pressed="false"
+            aria-controls="translation-pane"
+            title="开启后仅翻译正在读的页"
+          >
+            整本翻译
+          </button>
+        </div>
+        <nav class="page-nav" aria-label="翻页">
+          <button id="prev" type="button" aria-label="上一页">
+            <svg viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M7.5 2 3.5 6l4 4" />
+            </svg>
+          </button>
+          <span id="page-number" aria-live="polite"></span>
+          <button id="next" type="button" aria-label="下一页">
+            <svg viewBox="0 0 12 12" aria-hidden="true">
+              <path d="m4.5 2 4 4-4 4" />
+            </svg>
+          </button>
+        </nav>
+      </div>
+    </footer>
+  </main>
+  <section class="review" aria-label="演示与评估">
+    <div class="demo-controls">
+      <span>演示工具 · 不调用 AI</span>
+      <button id="selection-example" type="button">演示选区翻译</button>
+      <label><input id="fail-next" type="checkbox" /> 下次请求模拟超时</label>
+      <button id="reset" type="button">重置演示</button>
+    </div>
+    <details>
+      <summary>可行性与首版边界</summary>
+      <p>
+        <strong>交互：</strong
+        >两个模式独立；原文始终能读，宽屏左右对照、窄屏上下分栏。选区译文暂时占用同一面板，返回时恢复本页状态，不新增请求。
+      </p>
+      <p>
+        <strong>实现：</strong>复用分页器的原文范围、文本 AI
+        设置和译文面板，不复用已禁用的整书接口。按完整句段批量翻译本页缺失范围；用篇章版本、原文锚点和目标语言缓存，改字号、窗口或跨章时不依赖页码。
+      </p>
+      <p>
+        <strong>范围与成本：</strong
+        >默认关闭，开启仅处理停留的阅读页，不预翻、不扫全书；未配置时沿用 AI
+        设置入口。翻页后旧请求不能覆盖当前页；已发出仍可能计费，按请求标识查回结果，状态未知时不自动重试。PDF
+        先支持已有文本的阅读版，不自动 OCR 或发送原版。
+      </p>
+    </details>
+  </section>
+  <script>
+    const pages = [
+      {
+        chapter: 1,
+        number: 1,
+        total: 3,
+        heading: "I. The evening crossing",
+        example: [
+          "which stood alone at the head of the pier",
+          "非限制性定语从句，补充说明 the lamp。",
+        ],
+        paragraphs: [
+          [
+            "By the time Mara reached the harbour, the boats had gone in and the village windows were beginning to glow. The lamp, which stood alone at the head of the pier, had not been lit.",
+            "玛拉赶到港口时，船只已经归港，村里的窗户也渐渐亮了起来。独自立在码头尽头的那盏灯，却还没点亮。",
+          ],
+          [
+            "She stopped to listen. From beyond the breakwater came the easy, unhurried sound of the tide. On an ordinary evening her father would already have turned the key in the little iron door.",
+            "她停下脚步听了听。防波堤外传来潮水舒缓而从容的声响。换作平常，父亲这会儿早已拿钥匙打开了那扇小铁门。",
+          ],
+          [
+            "Tonight the door stood open. On the step lay a folded note, held down by a flat stone that was still wet from the sea.",
+            "今晚，门却敞开着。台阶上有一张折起的字条，用一块还沾着海水的扁石压着。",
+          ],
+        ],
+      },
+      {
+        chapter: 1,
+        number: 2,
+        total: 3,
+        example: [
+          "that she had known since childhood",
+          "限制性定语从句，修饰 the hurried hand。",
+        ],
+        paragraphs: [
+          [
+            "The note was written in the hurried hand that she had known since childhood. There were only six words: Keep the light until I return.",
+            "字条上是她从小就认得的潦草笔迹。上面只写了一句话：在我回来之前，别让灯灭。",
+          ],
+          [
+            "Mara read it twice, then put it in the pocket of her coat. Down by the water a rope worked softly against its post. Otherwise the harbour was still.",
+            "玛拉读了两遍，把字条放进口袋。近水处，一根绳子轻轻磨着系缆桩。除此以外，港口一片寂静。",
+          ],
+          [
+            "She climbed the narrow stairs without a candle. She knew the steps well enough to count them in the dark, and at the top the last of the daylight waited for her.",
+            "她没有点蜡烛，摸黑走上狭窄的楼梯。台阶早已熟记于心，黑暗中也数得清。到了顶端，最后一抹天光还在那里等她。",
+          ],
+        ],
+      },
+      {
+        chapter: 1,
+        number: 3,
+        total: 3,
+        example: [
+          "where the sea met the sky",
+          "地点从句，说明那道亮光出现的位置。",
+        ],
+        paragraphs: [
+          [
+            "She trimmed the wick and struck a match. The glass caught the flame at once, sending a thin streak of light out where the sea met the sky.",
+            "她剪好灯芯，划亮一根火柴。玻璃立刻映出火光，朝海天相接的地方投出细细一道亮光。",
+          ],
+          [
+            "For a while nothing answered. Then, well beyond the harbour mouth, a small light appeared and disappeared again.",
+            "起初，远处毫无回应。过了一会儿，港湾入口之外很远的地方，一点微光出现，又消失了。",
+          ],
+          [
+            "Mara drew the chair closer to the window. She had never before watched the water all night, but she was not afraid of it now.",
+            "玛拉把椅子拉近窗边。她从未整夜守望过海面，此刻却并不害怕。",
+          ],
+        ],
+      },
+      {
+        chapter: 2,
+        number: 1,
+        total: 2,
+        heading: "II. Before sunrise",
+        example: [
+          "When the first gull called",
+          "时间状语从句，交代远处灯光发生变化的时间。",
+        ],
+        paragraphs: [
+          [
+            "When the first gull called, the light in the distance was brighter and lower. It moved steadily toward the harbour, rising and falling with the swell.",
+            "第一只海鸥叫起来时，远处的光更亮了，也更低了。它随着涌浪起伏，稳稳地朝港口靠近。",
+          ],
+          [
+            "Mara opened the window. The cold came in, and with it came the sound of oars. She held her lamp high above the rail.",
+            "玛拉推开窗，冷空气涌进来，把桨声也带了进来。她把灯举过栏杆。",
+          ],
+        ],
+      },
+      {
+        chapter: 2,
+        number: 2,
+        total: 2,
+        example: [
+          "until the light reached the steps",
+          "时间状语从句，说明玛拉等待到什么时候。",
+        ],
+        paragraphs: [
+          [
+            "She waited until the light reached the steps. A hand rose from the boat and caught the railing she had polished the previous spring.",
+            "她一直等到那点光靠近台阶。小船上伸出一只手，握住了她去年春天擦亮的栏杆。",
+          ],
+          [
+            "Her father looked up and smiled. Neither of them said a word until the oars were safe on the pier.",
+            "父亲抬头笑了笑。直到把桨稳稳地放上码头，两人才开口说话。",
+          ],
+        ],
+      },
+    ];
+
+    const $ = (id) => document.getElementById(id);
+    const results = new Map();
+    let index = 0;
+    let grammar = false;
+    let translate = false;
+    let selection = false;
+    let request = null;
+
+    function renderSource() {
+      const page = pages[index];
+      const prose = $("source-prose");
+      prose.replaceChildren();
+      if (page.heading) {
+        const heading = document.createElement("h2");
+        heading.className = "chapter-heading";
+        heading.textContent = page.heading;
+        prose.append(heading);
+      }
+      page.paragraphs.forEach(([source], i) => {
+        const paragraph = document.createElement("p");
+        paragraph.dataset.pair = i;
+        const [phrase, explanation] = page.example;
+        const start = grammar ? source.indexOf(phrase) : -1;
+        if (start < 0) {
+          paragraph.textContent = source;
+        } else {
+          const end = start + phrase.length;
+          const term = document.createElement("span");
+          term.className = "grammar-example";
+          term.tabIndex = 0;
+          term.append(phrase);
+          const tip = document.createElement("span");
+          tip.className = "grammar-note";
+          tip.lang = "zh-CN";
+          tip.setAttribute("role", "tooltip");
+          tip.id = "grammar-note";
+          tip.textContent = explanation;
+          term.setAttribute("aria-describedby", tip.id);
+          term.append(tip);
+          paragraph.append(source.slice(0, start), term, source.slice(end));
+        }
+        prose.append(paragraph);
+      });
+      $("source").classList.toggle("grammar-on", grammar);
+      $("grammar").setAttribute("aria-pressed", grammar);
+      $("prev").disabled = index === 0;
+      $("next").disabled = index === pages.length - 1;
+      $("page-number").textContent =
+        `第 ${page.chapter} 章 · ${page.number} / ${page.total}`;
+    }
+
+    function highlightSource(pair) {
+      $("source-prose")
+        .querySelectorAll("[data-pair]")
+        .forEach((paragraph) => {
+          paragraph.classList.toggle("linked", paragraph.dataset.pair === pair);
+        });
+    }
+
+    function renderPane() {
+      const show = translate || selection;
+      const result = results.get(index);
+      const phase = request ? "loading" : (result?.status ?? "idle");
+      const waiting = !selection && (phase === "loading" || phase === "error");
+      $("translate").setAttribute("aria-pressed", translate);
+      $("translation-pane").hidden = !show;
+      $("translation-title").textContent = selection
+        ? "所选文字 · 对照"
+        : "本页译文";
+      $("translation-page").hidden = selection;
+      $("translation-page").textContent = $("page-number").textContent;
+      const back = $("return-translation");
+      back.hidden = !selection;
+      back.textContent = translate ? "返回本页译文" : "关闭选区译文";
+      const status = $("translation-state");
+      status.hidden = !waiting;
+      status.dataset.state = phase;
+      $("spinner").hidden = phase !== "loading";
+      $("retry").hidden = phase !== "error";
+      $("state-title").textContent =
+        phase === "loading" ? "正在翻译本页…" : "本页翻译结果未知";
+      $("state-detail").textContent =
+        phase === "loading"
+          ? "你可以继续读原文或翻页。"
+          : "未收到译文，服务可能已处理；不会自动重试。";
+      const prose = $("translation-prose");
+      prose.replaceChildren();
+      highlightSource(selection ? "0" : null);
+      const translations = selection
+        ? [pages[index].paragraphs[0][1]]
+        : result?.paragraphs;
+      if (!show || !translations) return;
+      translations.forEach((text, i) => {
+        const paragraph = document.createElement("p");
+        paragraph.textContent = text;
+        if (!selection) {
+          const pair = String(i);
+          paragraph.tabIndex = 0;
+          paragraph.addEventListener("mouseenter", () => highlightSource(pair));
+          paragraph.addEventListener("mouseleave", () => highlightSource(null));
+          paragraph.addEventListener("focus", () => highlightSource(pair));
+          paragraph.addEventListener("blur", () => highlightSource(null));
+        }
+        prose.append(paragraph);
+      });
+    }
+
+    function stopRequest() {
+      request?.abort();
+      request = null;
+    }
+
+    function loadPage({ retry = false } = {}) {
+      if (!translate || (!retry && results.has(index))) {
+        return renderPane();
+      }
+      const page = index;
+      const fail = $("fail-next").checked;
+      $("fail-next").checked = false;
+      const { signal } = (request = new AbortController());
+      renderPane();
+      const timer = setTimeout(() => {
+        request = null;
+        const result = fail
+          ? { status: "error" }
+          : {
+              status: "ready",
+              paragraphs: pages[page].paragraphs.map(([, zh]) => zh),
+            };
+        results.set(page, result);
+        if (!selection) renderPane();
+      }, 1400);
+      signal.addEventListener("abort", () => clearTimeout(timer), {
+        once: true,
+      });
+    }
+
+    function navigate(target) {
+      if (target < 0 || target >= pages.length) return;
+      stopRequest();
+      index = target;
+      selection = false;
+      $("source").scrollTop = 0;
+      $("translation-pane").scrollTop = 0;
+      renderSource();
+      loadPage();
+    }
+
+    $("prev").onclick = () => navigate(index - 1);
+    $("next").onclick = () => navigate(index + 1);
+    document.addEventListener("keydown", (event) => {
+      if (
+        event.defaultPrevented ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.target.closest("select, input") ||
+        !getSelection().isCollapsed
+      )
+        return;
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      navigate(index + (event.key === "ArrowLeft" ? -1 : 1));
+    });
+    $("grammar").onclick = () => {
+      grammar = !grammar;
+      renderSource();
+      if (selection) highlightSource("0");
+    };
+    $("translate").onclick = () => {
+      translate = !translate;
+      if (!translate) stopRequest();
+      if (translate) selection = false;
+      loadPage();
+    };
+    $("retry").onclick = () => {
+      loadPage({ retry: true });
+      $("translation-pane").focus({ preventScroll: true });
+    };
+    $("selection-example").onclick = () => {
+      selection = true;
+      $("source").scrollTop = 0;
+      $("translation-pane").scrollTop = 0;
+      renderPane();
+      $("return-translation").focus({ preventScroll: true });
+    };
+    $("return-translation").onclick = () => {
+      selection = false;
+      renderPane();
+      (translate ? $("translation-pane") : $("selection-example")).focus({
+        preventScroll: true,
+      });
+    };
+    $("theme").onchange = () => {
+      document.documentElement.dataset.theme = $("theme").value;
+    };
+    $("reset").onclick = () => {
+      grammar = false;
+      translate = false;
+      results.clear();
+      $("fail-next").checked = false;
+      navigate(0);
+    };
+
+    navigate(0);
+  </script>
+</html>
