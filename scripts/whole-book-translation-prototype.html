@@ -235,6 +235,12 @@
     .translation-prose p:hover {
       color: var(--accent);
     }
+    .continued {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--muted);
+      font-size: 11px;
+    }
     .translation-state {
       display: grid;
       place-content: center;
@@ -411,7 +417,7 @@
   <header class="demo-intro">
     <div>
       <h1>整本翻译 · 交互原型</h1>
-      <p>打开阅读页底部的「整本翻译」，再翻到下一页、翻回来看区别。</p>
+      <p>打开页脚的「整本翻译」。首批完成后连翻两页，试试预译和跨页续段。</p>
     </div>
     <select id="theme" aria-label="原型配色">
       <option value="day">浅色</option>
@@ -455,7 +461,7 @@
             </h3>
             <p id="state-detail"></p>
           </div>
-          <button id="retry" type="button" hidden>重新请求</button>
+          <button id="retry" type="button" hidden>重新请求本批</button>
         </div>
         <div id="translation-prose" class="translation-prose"></div>
       </aside>
@@ -478,7 +484,7 @@
             type="button"
             aria-pressed="false"
             aria-controls="translation-pane"
-            title="开启后仅翻译正在读的页"
+            title="开启后，按完整自然段分批翻译当前页及后续页面"
           >
             整本翻译
           </button>
@@ -505,6 +511,7 @@
       <button id="selection-example" type="button">演示选区翻译</button>
       <label><input id="fail-next" type="checkbox" /> 下次请求模拟超时</label>
       <button id="reset" type="button">重置演示</button>
+      <span id="batch-status"></span>
     </div>
     <details>
       <summary>可行性与首版边界</summary>
@@ -513,14 +520,18 @@
         >两个模式独立；原文始终能读，宽屏左右对照、窄屏上下分栏。选区译文暂时占用同一面板，返回时恢复本页状态，不新增请求。
       </p>
       <p>
-        <strong>实现：</strong>复用分页器的原文范围、文本 AI
-        设置和译文面板，不复用已禁用的整书接口。按完整句段批量翻译本页缺失范围；用篇章版本、原文锚点和目标语言缓存，改字号、窗口或跨章时不依赖页码。
+        <strong>批次：</strong
+        >打开时翻译当前页和后两页。读到缓存末页时，后台补下一批；只有读得比预译快，才在未就绪页显示「正在翻译」。下一章内容可用时可接着预译。
+      </p>
+      <p>
+        <strong>段落：</strong
+        >分页只决定显示范围。同一自然段即使跨页也只翻一次；整段送译，按对齐的原文句段显示本页部分。复用分页器和文本
+        AI 设置，按篇章版本、段落锚点、目标语言缓存，不按页码缓存。
       </p>
       <p>
         <strong>范围与成本：</strong
-        >默认关闭，开启仅处理停留的阅读页，不预翻、不扫全书；未配置时沿用 AI
-        设置入口。翻页后旧请求不能覆盖当前页；已发出仍可能计费，按请求标识查回结果，状态未知时不自动重试。PDF
-        先支持已有文本的阅读版，不自动 OCR 或发送原版。
+        >默认关闭；开启时只在阅读附近按批预译，每次最多一批在途，按字数设上限，不扫全书。关闭后不再发请求；已发送的批次仍可能计费，也可留存结果。结果未知不自动重试；PDF
+        首版仅处理已有文本的阅读版。
       </p>
     </details>
   </section>
@@ -539,14 +550,17 @@
           [
             "By the time Mara reached the harbour, the boats had gone in and the village windows were beginning to glow. The lamp, which stood alone at the head of the pier, had not been lit.",
             "玛拉赶到港口时，船只已经归港，村里的窗户也渐渐亮了起来。独自立在码头尽头的那盏灯，却还没点亮。",
+            "harbour-arrival",
           ],
           [
             "She stopped to listen. From beyond the breakwater came the easy, unhurried sound of the tide. On an ordinary evening her father would already have turned the key in the little iron door.",
             "她停下脚步听了听。防波堤外传来潮水舒缓而从容的声响。换作平常，父亲这会儿早已拿钥匙打开了那扇小铁门。",
+            "evening-tide",
           ],
           [
             "Tonight the door stood open. On the step lay a folded note, held down by a flat stone that was still wet from the sea.",
             "今晚，门却敞开着。台阶上有一张折起的字条，用一块还沾着海水的扁石压着。",
+            "folded-note",
           ],
         ],
       },
@@ -562,14 +576,17 @@
           [
             "The note was written in the hurried hand that she had known since childhood. There were only six words: Keep the light until I return.",
             "字条上是她从小就认得的潦草笔迹。上面只写了一句话：在我回来之前，别让灯灭。",
+            "folded-note",
           ],
           [
             "Mara read it twice, then put it in the pocket of her coat. Down by the water a rope worked softly against its post. Otherwise the harbour was still.",
             "玛拉读了两遍，把字条放进口袋。近水处，一根绳子轻轻磨着系缆桩。除此以外，港口一片寂静。",
+            "quiet-harbour",
           ],
           [
             "She climbed the narrow stairs without a candle. She knew the steps well enough to count them in the dark, and at the top the last of the daylight waited for her.",
             "她没有点蜡烛，摸黑走上狭窄的楼梯。台阶早已熟记于心，黑暗中也数得清。到了顶端，最后一抹天光还在那里等她。",
+            "stairs",
           ],
         ],
       },
@@ -585,14 +602,17 @@
           [
             "She trimmed the wick and struck a match. The glass caught the flame at once, sending a thin streak of light out where the sea met the sky.",
             "她剪好灯芯，划亮一根火柴。玻璃立刻映出火光，朝海天相接的地方投出细细一道亮光。",
+            "lighting-the-lamp",
           ],
           [
             "For a while nothing answered. Then, well beyond the harbour mouth, a small light appeared and disappeared again.",
             "起初，远处毫无回应。过了一会儿，港湾入口之外很远的地方，一点微光出现，又消失了。",
+            "light-on-the-water",
           ],
           [
             "Mara drew the chair closer to the window. She had never before watched the water all night, but she was not afraid of it now.",
             "玛拉把椅子拉近窗边。她从未整夜守望过海面，此刻却并不害怕。",
+            "night-watch",
           ],
         ],
       },
@@ -609,10 +629,12 @@
           [
             "When the first gull called, the light in the distance was brighter and lower. It moved steadily toward the harbour, rising and falling with the swell.",
             "第一只海鸥叫起来时，远处的光更亮了，也更低了。它随着涌浪起伏，稳稳地朝港口靠近。",
+            "dawn",
           ],
           [
             "Mara opened the window. The cold came in, and with it came the sound of oars. She held her lamp high above the rail.",
             "玛拉推开窗，冷空气涌进来，把桨声也带了进来。她把灯举过栏杆。",
+            "oars",
           ],
         ],
       },
@@ -628,16 +650,29 @@
           [
             "She waited until the light reached the steps. A hand rose from the boat and caught the railing she had polished the previous spring.",
             "她一直等到那点光靠近台阶。小船上伸出一只手，握住了她去年春天擦亮的栏杆。",
+            "landing",
           ],
           [
             "Her father looked up and smiled. Neither of them said a word until the oars were safe on the pier.",
             "父亲抬头笑了笑。直到把桨稳稳地放上码头，两人才开口说话。",
+            "return",
           ],
         ],
       },
     ];
 
     const $ = (id) => document.getElementById(id);
+    const batchSize = 3;
+    const blocks = new Map();
+    const pageSpans = pages.map(({ paragraphs }) =>
+      paragraphs.map(([en, zh, id]) => {
+        const parts = blocks.get(id) ?? [];
+        const partIndex = parts.length;
+        parts.push([en, zh]);
+        blocks.set(id, parts);
+        return { id, partIndex };
+      }),
+    );
     const results = new Map();
     let index = 0;
     let grammar = false;
@@ -655,7 +690,8 @@
         heading.textContent = page.heading;
         prose.append(heading);
       }
-      page.paragraphs.forEach(([source], i) => {
+      pageSpans[index].forEach(({ id, partIndex }, i) => {
+        const [source] = blocks.get(id)[partIndex];
         const paragraph = document.createElement("p");
         paragraph.dataset.pair = i;
         const [phrase, explanation] = page.example;
@@ -696,11 +732,16 @@
         });
     }
 
+    function pageState(page) {
+      const states = pageSpans[page].map(({ id }) => results.get(id)?.status);
+      if (states.includes("error")) return "error";
+      return states.every((state) => state === "ready") ? "ready" : "loading";
+    }
+
     function renderPane() {
       const show = translate || selection;
-      const result = results.get(index);
-      const phase = request ? "loading" : (result?.status ?? "idle");
-      const waiting = !selection && (phase === "loading" || phase === "error");
+      const phase = pageState(index);
+      const waiting = translate && !selection && phase !== "ready";
       $("translate").setAttribute("aria-pressed", translate);
       $("translation-pane").hidden = !show;
       $("translation-title").textContent = selection
@@ -716,22 +757,30 @@
       status.dataset.state = phase;
       $("spinner").hidden = phase !== "loading";
       $("retry").hidden = phase !== "error";
+      $("retry").disabled = Boolean(request);
       $("state-title").textContent =
         phase === "loading" ? "正在翻译本页…" : "本页翻译结果未知";
       $("state-detail").textContent =
         phase === "loading"
-          ? "你可以继续读原文或翻页。"
+          ? "同时准备后续几页；你可以继续读原文或翻页。"
           : "未收到译文，服务可能已处理；不会自动重试。";
       const prose = $("translation-prose");
       prose.replaceChildren();
       highlightSource(selection ? "0" : null);
-      const translations = selection
-        ? [pages[index].paragraphs[0][1]]
-        : result?.paragraphs;
-      if (!show || !translations) return;
-      translations.forEach((text, i) => {
+      if (!show || waiting) return;
+      const spans = selection ? pageSpans[index].slice(0, 1) : pageSpans[index];
+      spans.forEach(({ id, partIndex }, i) => {
         const paragraph = document.createElement("p");
-        paragraph.textContent = text;
+        const text = selection
+          ? blocks.get(id)[partIndex][1]
+          : results.get(id).segments[partIndex];
+        if (!selection && partIndex > 0) {
+          const continuation = document.createElement("span");
+          continuation.className = "continued";
+          continuation.textContent = "接上页 · 同一自然段";
+          paragraph.append(continuation);
+        }
+        paragraph.append(text);
         if (!selection) {
           const pair = String(i);
           paragraph.tabIndex = 0;
@@ -744,30 +793,46 @@
       });
     }
 
-    function stopRequest() {
-      request?.abort();
-      request = null;
-    }
-
-    function loadPage({ retry = false } = {}) {
-      if (!translate || (!retry && results.has(index))) {
-        return renderPane();
-      }
-      const page = index;
+    function startBatch({ retry = false } = {}) {
+      if (!translate || request) return;
+      const start = pageState(index) === "ready" ? index + 1 : index;
+      if (start === pages.length || (!retry && pageState(start) !== "loading"))
+        return;
+      const end = Math.min(start + batchSize, pages.length);
+      const ids = new Set(
+        pageSpans
+          .slice(start, end)
+          .flat()
+          .map(({ id }) => id)
+          .filter(
+            (id) =>
+              !results.has(id) || (retry && results.get(id).status === "error"),
+          ),
+      );
+      for (const id of ids) results.delete(id);
+      const first = pages[start],
+        last = pages[end - 1];
+      const range =
+        first.chapter === last.chapter
+          ? `第 ${first.chapter} 章 · ${first.number}–${last.number} 页`
+          : `第 ${first.chapter} 章第 ${first.number} 页至第 ${last.chapter} 章第 ${last.number} 页`;
       const fail = $("fail-next").checked;
       $("fail-next").checked = false;
       const { signal } = (request = new AbortController());
-      renderPane();
+      $("batch-status").textContent = `本批预译：${range}`;
       const timer = setTimeout(() => {
+        const visibleWasReady = pageState(index) === "ready";
         request = null;
-        const result = fail
-          ? { status: "error" }
-          : {
-              status: "ready",
-              paragraphs: pages[page].paragraphs.map(([, zh]) => zh),
-            };
-        results.set(page, result);
-        if (!selection) renderPane();
+        for (const id of ids) {
+          const result = fail
+            ? { status: "error" }
+            : { status: "ready", segments: blocks.get(id).map(([, zh]) => zh) };
+          results.set(id, result);
+        }
+        $("batch-status").textContent =
+          `最近一批${fail ? "结果未知" : "完成"}：${range} · ${ids.size} 个自然段`;
+        startBatch();
+        if (translate && !selection && !visibleWasReady) renderPane();
       }, 1400);
       signal.addEventListener("abort", () => clearTimeout(timer), {
         once: true,
@@ -776,13 +841,13 @@
 
     function navigate(target) {
       if (target < 0 || target >= pages.length) return;
-      stopRequest();
       index = target;
       selection = false;
       $("source").scrollTop = 0;
       $("translation-pane").scrollTop = 0;
       renderSource();
-      loadPage();
+      startBatch();
+      renderPane();
     }
 
     $("prev").onclick = () => navigate(index - 1);
@@ -809,12 +874,13 @@
     };
     $("translate").onclick = () => {
       translate = !translate;
-      if (!translate) stopRequest();
       if (translate) selection = false;
-      loadPage();
+      startBatch();
+      renderPane();
     };
     $("retry").onclick = () => {
-      loadPage({ retry: true });
+      startBatch({ retry: true });
+      renderPane();
       $("translation-pane").focus({ preventScroll: true });
     };
     $("selection-example").onclick = () => {
@@ -837,7 +903,10 @@
     $("reset").onclick = () => {
       grammar = false;
       translate = false;
+      request?.abort();
+      request = null;
       results.clear();
+      $("batch-status").textContent = "";
       $("fail-next").checked = false;
       navigate(0);
     };
