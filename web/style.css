@@ -2252,6 +2252,23 @@ dialog::backdrop {
     sans-serif;
   margin: 0;
 }
+[data-page-translation-progress]:not([hidden]) {
+  display: block;
+  width: min(100%, 14rem);
+  margin-block: 5px 10px;
+}
+[data-page-translation-failures] {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+}
+[data-page-translation-failures] li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 8px;
+  margin-block: 4px;
+}
 .translation-segments {
   margin: 18px 0;
 }

@@ -215,6 +215,7 @@ class Store:
             "wr_progress",
             "wr_translation",
             "wr_page_translation",
+            "wr_page_translation_attempt",
             "wr_assist",
             "wr_review",
             "wr_session_time",
