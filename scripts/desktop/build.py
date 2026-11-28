@@ -25,7 +25,10 @@ ROOT = Path(__file__).resolve().parents[2]
 ICON = ROOT / "desktop/Assets/EasySink.icns"
 VERSION = "1.3.0"
 BUILD = "40"
-RELEASE_STATUS = "Whole-book search, consecutive annotation-reflow gloss fix, and whole-word/phrase default usage-feedback scope with phrase independence."
+RELEASE_STATUS = (
+    "Whole-book search, buffered book translation, grammar analysis, continued reading across PDF ranges, "
+    "and improved pagination and annotation reflow."
+)
 PDFJS_ROOT = ROOT / "web/vendor/pdfjs-6.4.299"
 PDFJS_MANIFEST = PDFJS_ROOT / "SOURCE.json"
 PDF_PINS = {
@@ -317,6 +320,7 @@ def main():
         dependencies(uv, python_root / "bin/python3", output, dependency_lock)
 
     copy(ICON, resource_root / "EasySink.icns")
+    copy(ROOT / "desktop/ECDICT-LICENSE.txt", resource_root / "ECDICT-LICENSE.txt")
     resources(app)
     (app / "desktop-build-flavor.json").write_text(json.dumps(profile, indent=2) + "\n")
     audit_native_runtime(python_root, output)

@@ -248,7 +248,7 @@ final class ReaderApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         guard let resources = Bundle.main.resourceURL else { fail("应用资源不完整，请重新安装客户端。"); return }
         let process = Process()
         process.executableURL = resources.appendingPathComponent("python/bin/python3")
-        process.arguments = ["-I", resources.appendingPathComponent("app/scripts/desktop/backend.py").path,
+        process.arguments = ["-I", "-B", resources.appendingPathComponent("app/scripts/desktop/backend.py").path,
             "--data-dir", dataDirectory.path, "--launch-flavor", profile.flavor.rawValue,
             "--bundle-id", profile.bundleIdentifier, "--root-id", profile.rootID,
             "--ready-file", readyFile.path, "--token", token]
