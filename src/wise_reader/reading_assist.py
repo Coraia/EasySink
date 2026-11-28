@@ -249,10 +249,24 @@ async def model_json(app, request, system, user, p=None, diagnostic=None, *, bef
             diagnostic.exception_type = type(exc).__name__
             if isinstance(exc, httpx.TimeoutException):
                 diagnostic.stage = "timeout"
-        raise HTTPException(502, provider_error(exc)) from None
+        raise ModelRequestError(exc) from None
     if diagnostic:
         diagnostic.stage = "validation"
     return raw
+
+
+class ModelRequestError(HTTPException):
+    def __init__(self, cause):
+        self.provider_status = cause.response.status_code if isinstance(cause, httpx.HTTPStatusError) else None
+        if self.provider_status is not None:
+            self.code = {401: "credentials", 403: "credentials", 429: "rate_limit"}.get(self.provider_status, "provider_http")
+        elif isinstance(cause, httpx.TimeoutException):
+            self.code = "timeout"
+        elif isinstance(cause, httpx.RequestError):
+            self.code = "connection"
+        else:
+            self.code = "model_format"
+        super().__init__(502, provider_error(cause))
 
 
 def receipt(app, doc_id, request_id):

@@ -67,6 +67,9 @@ class Provider:
                         if p["model"] == "bad-alignment":
                             content = '{"segments":[{"quote":"invented source","zh":"虚构对应"}]}'
                     elif task == "page-translation":
+                        if p["model"] == "page-rate-limit":
+                            self.send(429, b'{"error":"fixture rate limit"}')
+                            return
                         paragraphs = [
                             {"id": unit["id"], "segments": [
                                 {"quote": quote.strip(), "zh": f"测试段落译文 {index + 1}：{quote.strip().split()[0]}"}
@@ -77,6 +80,8 @@ class Provider:
                         ]
                         if p["model"] == "bad-alignment":
                             paragraphs.pop()
+                        if p["model"] == "partial-page":
+                            paragraphs[0]["segments"][0]["quote"] = "Invented source."
                         content = json.dumps({"paragraphs": paragraphs})
                     elif task == "anchored-usage-then-gloss-and-source-rendering":
                         explanation = "测试译文：这两个人的论证未能令人信服。"
