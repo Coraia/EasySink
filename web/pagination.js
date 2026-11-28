@@ -960,7 +960,7 @@ export class ReadingPages {
       this.render();
       return true;
     }
-    const geometryChange=["font","size","line","width","typography-reset","viewport","columns"].includes(reason);
+    const geometryChange=["font","size","line","width","typography-reset","viewport","columns","translation-pane"].includes(reason);
     let geometryIntent=null;
     if(geometryChange && this.validAnchor(anchor)) {
       const prior=this.geometryRestore;

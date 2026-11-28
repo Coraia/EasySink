@@ -1,6 +1,5 @@
 import { test, expect } from "@playwright/test";
-import fs from "node:fs";
-import { goPage, pageIndex, read, readerDefaults, selectParagraph } from "./reader-helpers.js";
+import { goPage, read, readerDefaults, selectParagraph } from "./reader-helpers.js";
 
 const provider = `http://127.0.0.1:${process.env.WR_E2E_PROVIDER_PORT || "18768"}`;
 const toggle = page => page.getByRole("button", {name: "整本翻译", exact: true});
@@ -114,24 +113,41 @@ test("disabling during a request stops prefetch and reopening uses the saved tra
 
 test("prefetches across a chapter boundary and shows only the new chapter's translation", async ({page, request}) => {
   await configure(request, "e2e-model");
-  const imported = await (await request.post("/api/import", {multipart: {
-    file: {name: "Reading.epub", mimeType: "application/epub+zip", buffer: fs.readFileSync("web/sample.epub")},
-  }})).json();
-  const [first, second] = imported.chapters;
-  const next = await (await request.get(`/api/documents/${second.doc_id}`)).json();
-  const firstNextSource = next.blocks.find(block => block.text.trim()).text;
+  const book = await (await request.post("/api/library/books", {data: {title: "Translation chapters"}})).json();
+  const first = await sample(request, "Evening settled over the first chapter.");
+  const secondSource = "Morning welcomed the second chapter.";
+  const second = await sample(request, secondSource);
+  for (const doc of [first, second])
+    expect((await request.post(`/api/library/books/${book.id}/adopt/${doc.id}`)).ok()).toBe(true);
   const before = (await calls(request)).length;
-  await read(page, first.doc_id);
+  await read(page, first.id);
   await toggle(page).click();
-  await expect(translation(page)).toContainText("测试段落译文");
-  while (await pageIndex(page) + 1 < +(await page.locator(".reader").getAttribute("data-page-count"))) {
-    await goPage(page, (await pageIndex(page)) + 1);
-    await expect(status(page)).toHaveText("");
-  }
-  await expect.poll(async () => (await calls(request)).slice(before).flatMap(call =>
-    call.paragraphs.map(unit => unit.source))).toContain(firstNextSource);
+  await expect(translation(page)).toContainText("译文 1：Evening");
+  expect((await calls(request))[before].paragraphs.map(unit => unit.source)).toContain(secondSource);
   await page.locator("#reading-edge-next").click();
-  await expect(page.locator(".reader")).toHaveAttribute("data-document-id", String(second.doc_id));
+  await expect(page.locator(".reader")).toHaveAttribute("data-document-id", String(second.id));
   await expect(toggle(page)).toHaveAttribute("aria-pressed", "true");
-  await expect(translation(page)).toContainText(`译文 1：${firstNextSource.split(/\s+/)[0]}`);
+  await expect(translation(page)).toContainText("译文 1：Morning");
+  await expect(translation(page)).not.toContainText("Evening");
+  expect((await calls(request)).length).toBe(before + 1);
+});
+
+test("switching back to a two-page spread keeps the same visible source start", async ({page, request}) => {
+  await configure(request, "e2e-model");
+  await page.setViewportSize({width: 1440, height: 900});
+  await page.addInitScript(() => localStorage.setItem("wr2:page-layout", JSON.stringify("double")));
+  const doc = await sample(request, [longParagraph, ...otherParagraphs].join("\n\n"));
+  await read(page, doc.id);
+  const reader = page.locator(".reader");
+  await expect(reader).toHaveAttribute("data-page-layout", "double");
+  await toggle(page).click();
+  await goPage(page, 2);
+  const start = () => page.locator("#article .reading-prose [data-block]").first()
+    .evaluate(node => [node.dataset.block, +node.dataset.start]);
+  const previous = await start();
+  expect(previous[0] !== doc.blocks[0].id || previous[1] > 0).toBe(true);
+  await toggle(page).click();
+  await expect(translation(page)).toBeHidden();
+  await expect(reader).toHaveAttribute("data-page-layout", "double");
+  await expect.poll(start).toEqual(previous);
 });

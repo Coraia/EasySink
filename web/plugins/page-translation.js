@@ -225,7 +225,8 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
     updateToggle();
     syncPane();
     if (pane.hidden !== wasHidden)
-      void r.pages.reflow(anchor).catch(error => r.status(error.message, {notice: true}));
+      void r.pages.reflow(anchor, {reason: "translation-pane"})
+        .catch(error => r.status(error.message, {notice: true}));
     $("#article").focus({preventScroll: true});
     if (enabled()) schedule(); else {
       clearTimeout(timer);

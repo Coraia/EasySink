@@ -395,6 +395,6 @@ export function install(ctx) {
       highlight(null);
     });
     if (pageMode.enabled() && r.pages.geometryIdentity !== r.pages.geometrySignature())
-      return r.pages.reflow(r.captureView().visibleAnchor || undefined);
+      return r.pages.reflow(r.captureView().visibleAnchor || undefined, {reason: "translation-pane"});
   });
 }
