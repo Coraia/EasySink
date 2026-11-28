@@ -997,6 +997,7 @@ class LocalWorkers:
                             block["asset_url"] = (f"{self.asset_prefix}/books/{book['id']}/assets/{task['id']}/"
                                                   + quote(block["asset"], safe="/"))
                     page["conversion_task_id"] = task["id"]
+                    page["source_sha256"] = book["file_sha256"]
                     pages[page["page_number"]] = page
             except (ValueError, OSError, sqlite3.Error) as exc:
                 warnings.append({"code": "retained_result_unavailable", "message": str(exc)[:300]})

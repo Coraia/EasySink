@@ -66,6 +66,7 @@ export class AnnotationReflow {
       n.dataset.sourceBlock===anchor.block_id && +n.dataset.sourceStart===anchor.start);
     if (!node || anchor.end!==+node.dataset.sourceEnd || anchor.segments?.length || this.pages.displayPending) return;
     // Mixed object/style runs retain the existing exact-position reservation.
+    if (this.pages.pdfFurniture.size) return;
     if (document.querySelector('#article [data-pdf-object],#article .url-image,#article .pdf-inline-object,#article .pdf-inline-formula,#article .pdf-inline-anchor,#article pre,#article blockquote,#article .list-block,#article .table-row')) return;
     this.anchor={...anchor,end:+node.dataset.sourceEnd}; this.target=rectOf(node.getBoundingClientRect()); this.targetNode=node;
     this.index=this.pages.index; this.count=this.pages.count;

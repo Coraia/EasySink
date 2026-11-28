@@ -3,6 +3,8 @@ import math
 import re
 from statistics import median
 
+from .text_normalization import source_lines
+
 POLICY = 'adjacent-source-pages-continuation-v1'
 
 
@@ -19,97 +21,151 @@ def _plain(block):
             not block.get('asset_url') and not block.get('inline_objects') and _box(block))
 
 
-def _label(page):
-    width, height = page.get('width', 0), page.get('height', 0)
-    if width <= 0 or height <= 0 or len(page.get('blocks', [])) > 256:
-        return None
-    candidates = []
-    for block in page['blocks']:
-        text, box = block.get('text', '').strip(), _box(block)
-        if (not _plain(block) or not re.fullmatch(r'[0-9]{1,5}', text) or
-                box[1] < height * .90 or box[3] > height or
-                box[2] - box[0] > width * .12 or box[3] - box[1] > height * .04):
+def _margin_objects(page):
+    height = page.get('height', 0)
+    if not height or not page.get('width'):
+        return ()
+    objects = [*page['blocks'], *page.get('non_content_objects', [])]
+    boxes = [(obj, box) for obj in objects if (box := _box(obj))]
+    sizes = [size for obj, box in boxes
+             if height * .075 < box[1] < height * .89 and _plain(obj)
+             and (size := _line_height(source_lines(obj)))]
+    body_size = median(sizes) if sizes else 0
+    result = []
+    for obj, box in boxes:
+        text = ' '.join(obj.get('text', '').casefold().split())
+        size = box[3] - box[1]
+        if not text or obj.get('asset') or obj.get('asset_url') or size > height * .04:
             continue
-        others = [b for b in page['blocks'] if b is not block and _box(b)]
-        prose = [b for b in others if _plain(b) and sum(c.isalpha() for c in b.get('text', '')) >= 40]
-        if (not prose or not others or
-                box[1] - max(_box(b)[3] for b in others) < height * .012):
-            continue
-        candidates.append((block, int(text)))
-    return candidates[0] if len(candidates) == 1 else None
+        side = 'header' if box[3] < height * .075 else 'footer' if box[1] > height * .89 else None
+        if side and all(max(box[1] - other[3], other[1] - box[3]) >= size * .65
+                        for item, other in boxes if item is not obj):
+            result.append((obj, side, text, box, body_size))
+    return result
 
 
-def _same_pages(a, b):
-    return (b.get('page_number') == a.get('page_number', -2) + 1 and
-            a.get('conversion_task_id') and a.get('conversion_task_id') == b.get('conversion_task_id') and
-            a.get('source_sha256') and a.get('source_sha256') == b.get('source_sha256') and
+def _furniture(pages):
+    by_number = {p['page_number']: p for p in pages}
+    candidates = {n: _margin_objects(p) for n, p in by_number.items()}
+    result = {}
+    for n, objects in candidates.items():
+        page = by_number[n]
+        peers = [(other, by_number[other], item) for other in range(n - 2, n + 3)
+                 if other != n and other in by_number and _same_layout(page, by_number[other])
+                 for item in candidates[other]]
+        for obj, side, text, box, body_size in objects:
+            matching = [(other, item[2]) for other, other_page, item in peers if item[1] == side
+                        and abs(box[0] / page['width'] - item[3][0] / other_page['width']) <= .045
+                        and abs(box[1] / page['height'] - item[3][1] / other_page['height']) <= .025]
+            hint = obj.get('role')
+            numeric = re.fullmatch(r'[0-9]{1,5}', text)
+            numbers = numeric and any(re.fullmatch(r'[0-9]{1,5}', t) and int(t) - int(text) == other - n
+                                      for other, t in matching)
+            repeats = [other for other, t in matching if t == text]
+            if side == 'footer' and numbers:
+                result[id(obj)] = ('printed-page-label', 'detached-margin+consecutive-label')
+            elif side == 'footer' and hint == 'printed_page_label' and (numeric or re.fullmatch(r'[ivxlcdm]{1,8}', text)):
+                result[id(obj)] = ('printed-page-label', 'detached-margin+engine-label')
+            elif repeats and not numeric:
+                pattern = 'alternating-pages' if all((other - n) % 2 == 0 for other in repeats) else 'adjacent-pages'
+                result[id(obj)] = (side, 'detached-margin+recurring-text+' + pattern)
+            elif hint in {'running_title', 'running_furniture'} and obj.get('type') == 'page_' + side:
+                result[id(obj)] = (side, 'detached-margin+engine-label')
+            elif side == 'footer' and (obj['type'] == 'footnote' or
+                    body_size and box[3] - box[1] < .92 * body_size and
+                    re.match(r'^(?:\d+[.)]|\[\d+\])\s+\S', text)):
+                result[id(obj)] = ('footnote', 'detached-margin+footnote-label-or-marker')
+    return result
+
+
+def _same_layout(a, b):
+    return (a.get('source_sha256') and a.get('source_sha256') == b.get('source_sha256') and
             a.get('rotation', 0) == b.get('rotation', 0) and
             a.get('crop_box') == b.get('crop_box') and
             all(a.get(k, 0) > 0 and b.get(k, 0) > 0 and
                 abs(a[k] - b[k]) <= a[k] * .02 for k in ['width', 'height']))
 
 
-def _line_height(block):
-    values = [line['bbox'][3] - line['bbox'][1] for line in block.get('source', {}).get('lines', [])
-              if isinstance(line.get('bbox'), list) and len(line['bbox']) == 4 and line['bbox'][3] > line['bbox'][1]]
+def _line_height(lines):
+    values = [box[3] - box[1] for line in lines if (box := _box({'source': line}))]
     return median(values) if values else None
 
 
+def _possible_end(page, block):
+    box = _plain(block)
+    text = block.get('text', '').strip()
+    return (box and box[3] >= page['height'] * .78 and len(text) >= 80 and
+        len(text.split()) >= 12 and source_lines(block) and re.search(r'(?:[a-z]-?|,)$', text))
+
+
+def _possible_start(page, block):
+    box = _plain(block)
+    text = block.get('text', '').strip()
+    return (box and box[1] <= page['height'] * .20 and len(text) >= 25 and
+        len(text.split()) >= 5 and source_lines(block) and re.match(r'^[a-z]', text))
+
+
 def _continuation(a, b, left, right):
-    if not _same_pages(a, b) or not _plain(left) or not _plain(right):
+    if (b['page_number'] != a['page_number'] + 1 or not _same_layout(a, b)
+            or not _possible_end(a, left) or not _possible_start(b, right)):
         return False
     before, after = left.get('text', '').strip(), right.get('text', '').strip()
     marker = r'^(?:[•●▪◦]|\d{1,3}[.)]\s|\[\d+\]|[A-Z][.)]\s|[IVX]+\.\s)'
-    if (len(before) < 80 or len(before.split()) < 12 or len(after) < 25 or len(after.split()) < 5 or
-            not re.match(r'^[a-z]', after) or re.match(marker, before) or re.match(marker, after) or
-            re.search(r'[.!?;:][\s"\')\]”’]*$', before) or not re.search(r'[a-z,]$', before)):
+    if re.match(marker, before) or re.match(marker, after):
         return False
     x, y = _box(left), _box(right)
-    lh, rh = _line_height(left), _line_height(right)
+    lines, right_lines = source_lines(left), source_lines(right)
+    lh, rh = _line_height(lines), _line_height(right_lines)
     if not lh or not rh or not .75 <= lh / rh <= 1.35:
         return False
-    lines = left.get('source', {}).get('lines', [])
     body_left = min((line['bbox'][0] for line in lines), default=x[0])
-    first = right.get('source', {}).get('lines', [{}])[0].get('bbox', y)
+    first = right_lines[0]['bbox']
     return (x[3] >= a['height'] * .78 and y[1] <= b['height'] * .20 and
             abs(x[0] / a['width'] - y[0] / b['width']) <= .025 and
             abs(first[0] - body_left) <= max(lh, rh) * .65)
 
 
-def paragraph_projection(pages):
+def paragraph_projection(pages, page_count, overrides):
     """Return confirmed furniture and source-ID groups, never mutate pages."""
     pages = [p for p in pages if p.get('quality_state') != 'rejected']
-    labels = {p['page_number']: _label(p) for p in pages}
-    confirmed = {}
+    confirmed = _furniture(pages)
+    for page in pages:
+        for obj in [*page['blocks'], *page['non_content_objects']]:
+            action = overrides.get((page['page_number'], page.get('conversion_task_id'), obj['id']))
+            if action == 'body':
+                confirmed.pop(id(obj), None)
+            elif action == 'outside':
+                confirmed[id(obj)] = ('excluded', 'manual')
+    body = {p['page_number']: [v for v in p['blocks'] if id(v) not in confirmed] for p in pages}
+    links, possible = [], {}
     for a, b in zip(pages, pages[1:]):
-        left, right = labels[a['page_number']], labels[b['page_number']]
-        if not left or not right or not _same_pages(a, b):
-            continue
-        lb, rb = _box(left[0]), _box(right[0])
-        if (right[1] == left[1] + 1 and
-                abs((lb[0] + lb[2]) / (2 * a['width']) - (rb[0] + rb[2]) / (2 * b['width'])) <= .035 and
-                abs(lb[1] / a['height'] - rb[1] / b['height']) <= .02):
-            confirmed[a['page_number']] = left[0]
-            confirmed[b['page_number']] = right[0]
-    links = []
-    for a, b in zip(pages, pages[1:]):
-        left = [v for v in a['blocks'] if v is not confirmed.get(a['page_number'])]
-        right = [v for v in b['blocks'] if v is not confirmed.get(b['page_number'])]
+        left = body[a['page_number']]
+        right = body[b['page_number']]
         if left and right and _continuation(a, b, left[-1], right[0]):
             pair = ['pdf-' + left[-1]['id'], 'pdf-' + right[0]['id']]
             if links and links[-1][-1] == pair[0]:
                 links[-1].append(pair[1])
             else:
                 links.append(pair)
-    return confirmed, links
+    for page in pages:
+        n = page['page_number']
+        if not body[n]:
+            continue
+        for offset, edge, check in ((-1, body[n][0], _possible_start), (1, body[n][-1], _possible_end)):
+            if 1 <= n + offset <= page_count and check(page, edge):
+                possible.setdefault('pdf-' + edge['id'], []).append(n + offset)
+    return confirmed, links, possible
 
 
 def apply_paragraph_groups(blocks, groups):
     indexes = {block['id']: i for i, block in enumerate(blocks)}
     for members in groups:
+        if len(members) < 2:
+            continue
         positions = [indexes.get(member) for member in members]
-        if (any(i is None for i in positions) or
-                positions != list(range(positions[0], positions[0] + len(members))) or
+        if (any(i is None for i in positions) or positions != sorted(positions) or
+                any(not blocks[i].get('pdf_role') and blocks[i]['id'] not in members
+                    for i in range(positions[0], positions[-1] + 1)) or
                 any(blocks[i]['type'] != 'paragraph' or blocks[i].get('asset_url') for i in positions)):
             continue
         metadata = {'id': 'paragraph-' + members[0], 'blocks': members, 'policy': POLICY}

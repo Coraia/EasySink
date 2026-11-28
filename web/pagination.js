@@ -228,6 +228,12 @@ export class ReadingPages {
     let html = "", list = "";
     for (const fragment of fragments) {
       const block = this.blocks?.get(fragment.id);
+      const [top, bottom] = this.furnitureMarkup(fragment);
+      if (top) {
+        if (list) html += `</${list}>`;
+        list = "";
+        html += top;
+      }
       if (block?.type === "list-item") {
         const next = block.ordered ? "ol" : "ul";
         if (list !== next) {
@@ -240,6 +246,11 @@ export class ReadingPages {
         if (list) html += `</${list}>`;
         list = "";
         html += this.markup(fragment);
+      }
+      if (bottom) {
+        if (list) html += `</${list}>`;
+        list = "";
+        html += bottom;
       }
     }
     if (list) html += `</${list}>`;
@@ -385,7 +396,7 @@ export class ReadingPages {
       this.measure.parentElement.append(measure);
       const forward=direction>0 || Boolean(history);
       Object.assign(packet,{r:this.r,blocks:this.blocks,fragments:this.fragments,urlRanges:this.urlRanges,
-        inlineStyles:this.inlineStyles,inlineObjects:this.inlineObjects,urlImages:this.urlImages,
+        inlineStyles:this.inlineStyles,inlineObjects:this.inlineObjects,urlImages:this.urlImages,pdfFurniture:this.pdfFurniture,
         measure,width:this.width,height:this.height,count:this.count,pages:[],index:0,complete:false,
         viewStart:history?history.start:direction>0?current.end:null,
         incomingCarry:history?history.incomingCarry:direction>0?current.outgoingCarry:[],
@@ -467,7 +478,7 @@ export class ReadingPages {
   presentationPacket(view, intent) {
     const packet=Object.create(ReadingPages.prototype);
     Object.assign(packet,{r:this.r,blocks:this.blocks,fragments:this.fragments,urlRanges:this.urlRanges,
-      inlineStyles:this.inlineStyles,inlineObjects:this.inlineObjects,urlImages:this.urlImages,
+      inlineStyles:this.inlineStyles,inlineObjects:this.inlineObjects,urlImages:this.urlImages,pdfFurniture:this.pdfFurniture,
       pages:view.snapshots.map(p=>p.fragments),annotationLayout:view.snapshots,index:0,count:this.count,
       generation:this.presentationTextureGeneration(view),complete:true,view,intent});
     return packet;
@@ -519,7 +530,7 @@ export class ReadingPages {
     let order=this.r.doc.blocks.findIndex(b=>b.id===cursor.block_id),end=cursor.start,page=[],slice=performance.now();
     const height=this.height;
     const measure=function*(part){
-      this.measure.innerHTML=[part,...page].map(item=>this.markup(item,true)).join('');
+      this.measure.innerHTML=[part,...page].map(item=>this.measureMarkup(item)).join('');
       const value=this.measure.lastElementChild.getBoundingClientRect().bottom-this.measure.getBoundingClientRect().top+2;
       if(performance.now()-slice>=4){yield null;slice=performance.now();}return value;
     }.bind(this);
@@ -770,6 +781,27 @@ export class ReadingPages {
       this.inlineObjects = new Map();
     }
     this.blocks = new Map();
+    this.pdfFurniture = new Map();
+    if (this.r.doc.pdf) {
+      const pages = new Map();
+      for (const block of this.r.doc.blocks) {
+        const page = block.source?.page_number;
+        if (page == null) continue;
+        if (!pages.has(page)) pages.set(page, {first: block.id, top: [], bottom: []});
+        const margin = pages.get(page);
+        margin.last = block.id;
+        for (const item of block.page_furniture || []) {
+          const top = item.role === "header" || item.role === "excluded" &&
+            (item.source.bbox[1] + item.source.bbox[3]) / 2 < item.source.height / 2;
+          margin[top ? "top" : "bottom"].push(item);
+        }
+      }
+      const byPosition = (a, b) => a.source.bbox[1] - b.source.bbox[1] || a.source.bbox[0] - b.source.bbox[0];
+      for (const {first, last, top, bottom} of pages.values()) {
+        if (top.length) this.pdfFurniture.set(first, {top: top.sort(byPosition)});
+        if (bottom.length) this.pdfFurniture.set(last, {...this.pdfFurniture.get(last), bottom: bottom.sort(byPosition)});
+      }
+    }
     this.offsets = new Map();
     this.length = 0;
     for (const block of this.r.doc.blocks) {
@@ -839,6 +871,24 @@ export class ReadingPages {
       })
       .join("");
   }
+  furnitureMarkup({id, start, end, annotationCarry}, measure = false) {
+    const sides = this.pdfFurniture.get(id);
+    if (!sides || annotationCarry) return ["", ""];
+    const strip = (side, items) => !items?.length ? "" :
+      `<aside class="pdf-page-furniture pdf-page-furniture-${side}" aria-label="${side === "top" ? "原页上边注" : "原页下边注"}">${items.map(item => {
+        const label = {header: "页眉", footer: "页脚", "printed-page-label": "印刷页码", excluded: "已移出正文"}[item.role];
+        return `<div><button type="button" class="pdf-furniture-control" ${measure ? "" : `data-pdf-prose-control="${e(item.id)}" title="${e(label)}"`}>${e(item.text)}</button></div>`;
+      }).join("")}</aside>`;
+    return [
+      start === 0 ? strip("top", sides.top) : "",
+      end === this.blocks.get(id).text.length ? strip("bottom", sides.bottom) : "",
+    ];
+  }
+  measureMarkup(fragment) {
+    const [top, bottom] = this.furnitureMarkup(fragment, true);
+    const source = this.markup(fragment, true);
+    return top || bottom ? `<div class="pdf-fragment-measure">${top}${source}${bottom}</div>` : source;
+  }
   markup(fragment, measure = false) {
     const b = this.blocks.get(fragment.id);
     const { start, end } = fragment;
@@ -893,10 +943,13 @@ export class ReadingPages {
       .join("");
     const source = `<${tag} data-block="${b.id}" data-start="${start}" data-end="${end}" class="${b.type === "list-item" ? "list-block" : b.type}">${text}</${tag}>`;
     if (measure) return source;
-    const actions =
-      b.type === "heading"
-        ? ""
-        : `<div class="paragraph-actions"><button data-read-block="${b.id}" type="button" ${this.r.ctx.enabled("tts") ? "" : "hidden"}>听这一段</button><button data-select-block="${b.id}" type="button">选择这一段</button></div>`;
+    const classify = this.r.doc.pdf && b.source?.conversion_task_id
+      ? `<button type="button" data-pdf-prose-control="${e(b.id)}">正文分类</button>` : "";
+    const notes = (b.footnote_links || []).map(link =>
+      `<button type="button" data-pdf-note-link="${e(link.id)}" data-start="0">查看脚注 ${e(link.marker)}</button>`).join("") +
+      (b.footnote_reference ? `<button type="button" data-pdf-note-link="${e(b.footnote_reference.id)}" data-start="${b.footnote_reference.start}">返回注号</button>` : "");
+    const actions = b.type === "heading" && !classify ? ""
+      : `<div class="paragraph-actions">${b.type === "heading" ? "" : `<button data-read-block="${b.id}" type="button" ${this.r.ctx.enabled("tts") ? "" : "hidden"}>听这一段</button><button data-select-block="${b.id}" type="button">选择这一段</button>`}${classify}${notes}</div>`;
     const wrapper = b.type === "list-item" ? "li" : "section";
     return `<${wrapper} class="source-fragment" data-fragment="${b.id}" data-fragment-start="${start}" data-fragment-end="${end}"><div class="source-row"><span class="grammar-slot" data-grammar-slot="${b.id}"></span>${source}</div>${actions}<section class="inline-grammar" data-grammar-block="${b.id}" hidden></section></${wrapper}>`;
   }
@@ -1091,7 +1144,7 @@ export class ReadingPages {
       used = 0;
     let sliceStarted = performance.now();
     const measure = function* (part) {
-      this.measure.innerHTML = this.markup(part, true);
+      this.measure.innerHTML = this.measureMarkup(part);
       const el = this.measure.firstElementChild,
         css = getComputedStyle(el);
       const measured = (

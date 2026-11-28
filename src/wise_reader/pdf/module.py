@@ -16,6 +16,7 @@ from wise_reader.pdf_lab.worker import LocalWorkers
 from wise_reader.store import _now
 
 from .representation import build_representation
+from .prose import RANGE_PAGES
 from .text_normalization import intersects_change
 from .formulas import FormulaService
 from .enhancements import EnhancementService
@@ -23,7 +24,6 @@ from .enhancement_publication import prepare_page as prepare_enhancement_page
 from .uploads import MAX_PAGES, error, receive_original
 
 log = logging.getLogger(__name__)
-RANGE_PAGES = 8
 MAX_REPAIRS = (MAX_PAGES + RANGE_PAGES - 1) // RANGE_PAGES
 
 
@@ -76,6 +76,11 @@ class PDFModule:
             );
             CREATE TABLE IF NOT EXISTS wr_pdf_archive_hold (
                 doc_id INTEGER PRIMARY KEY, was_archived INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS wr_pdf_prose_override (
+                book_id INTEGER NOT NULL, page_number INTEGER NOT NULL, task_id TEXT NOT NULL,
+                block_id TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('body','outside')),
+                PRIMARY KEY(book_id,page_number,task_id,block_id)
             );
         """)
         self.formulas = FormulaService(self)
@@ -407,31 +412,35 @@ class PDFModule:
             self.repair_attempts[key] = 0
             self.pending_repairs[key] = {'generation': generation}
 
-    def _read_representation(self, mapping, source, start, end, candidate):
+    def _read_representation(self, mapping, source, start, end, candidate, override=None):
+        first, last = max(1, start - 2), min(source["page_count"], end + 2)
         accepted = self.store.query("SELECT * FROM wr_pdf_page WHERE book_id=? AND page_number BETWEEN ? AND ?",
-                                    (mapping["book_id"], start, end))
+                                    (mapping["book_id"], first, last))
+        ledger_by_page = {row["page_number"]: row for row in accepted}
         tasks = {t["id"]: t for t in self.originals.tasks(source["id"])}
         pages = {}
         results = {}
         for task_id in {r["task_id"] for r in accepted} | {candidate["id"]}:
             if task_id not in tasks:
                 raise ValueError("Accepted source-page task is missing; prior reader content retained.")
-            result = self.workers.result(source, start, end, task_ids={task_id})
+            result = self.workers.result(source, first, last, task_ids={task_id})
             results[task_id] = result
             for page in result["pages"]:
                 number = page["page_number"]
-                ledger = next((r for r in accepted if r["page_number"] == number), None)
+                ledger = ledger_by_page.get(number)
                 if ledger and ledger["task_id"] == task_id:
                     pages[number] = page
-        for page in results[candidate["id"]]["pages"]:
+        for page in results[candidate["id"]]["pages"] if override is None else ():
             number = page["page_number"]
-            ledger = next((r for r in accepted if r["page_number"] == number), None)
+            if not start <= number <= end:
+                continue
+            ledger = ledger_by_page.get(number)
             if ledger and (self.enhancements.task_intent_time(tasks[ledger["task_id"]])
                            > self.enhancements.task_intent_time(candidate)):
                 continue  # resumed base work cannot replace a newer localized result
             if (page["blocks"] or page["text"].strip()) and page.get("quality_state") != "rejected":
                 pages[number] = page
-        if any(r["page_number"] not in pages for r in accepted):
+        if any(start <= n <= end and n not in pages for n in ledger_by_page):
             raise ValueError("Previously accepted source-page material is unavailable; prior reader content retained.")
         result = {"pages": [pages[n] for n in sorted(pages)]}
         prefix = f"/api/pdf-lab/books/{source['id']}/"
@@ -445,11 +454,26 @@ class PDFModule:
                         if not asset.startswith(prefix):
                             raise ValueError("Published resource does not belong to this original.")
                         item["asset_url"] = f"/api/pdf/books/{mapping['book_id']}/" + asset[len(prefix):]
-        text, blocks, revision = build_representation(result["pages"], mapping["book_id"], source["file_sha256"])
+        overrides = {(r['page_number'], r['task_id'], r['block_id']): r['action'] for r in self.store.query(
+            'SELECT * FROM wr_pdf_prose_override WHERE book_id=? AND page_number BETWEEN ? AND ?',
+            (mapping['book_id'], first, last))}
+        if override:
+            key = (page_number, task_id, block_id) = override[:3]
+            if (page_number not in pages or pages[page_number]['conversion_task_id'] != task_id or
+                    not start <= page_number <= end):
+                raise error(409, 'prose_source_changed', '原页来源已更新，请刷新阅读版。')
+            if override[3] == 'reset':
+                overrides.pop(key, None)
+            else:
+                overrides[key] = override[3]
+        text, blocks, revision = build_representation(result["pages"], mapping["book_id"],
+            source["file_sha256"], (start, end), source["page_count"], overrides)
         return text, blocks, revision, [(p["page_number"], p["conversion_task_id"]) for p in result["pages"]
-            if (p["blocks"] or p["text"].strip()) and p.get("quality_state") != "rejected"]
+            if start <= p["page_number"] <= end and (p["blocks"] or p["text"].strip())
+            and p.get("quality_state") != "rejected"]
 
-    async def publish_range(self, task_id, page_number, retained=False, *, expected_generation=None, publication_guard=None):
+    async def publish_range(self, task_id, page_number, retained=False, *, expected_generation=None,
+                            publication_guard=None, override=None, expected_revision=None):
         """Return done/deferred/stale so queued repairs cannot be silently lost."""
         async with self.bridge_lock:
             task = self.originals.task(task_id)
@@ -462,7 +486,7 @@ class PDFModule:
             allowed = {"running", "completed", "partial"} | ({"paused"} if retained else set())
             if not epoch or epoch["generation"] != mapping["generation"] or not self.enabled():
                 return 'stale'
-            if task["engine"] == "external_vision":
+            if task["engine"] == "external_vision" and override is None:
                 # Recovery/reconciliation must honor the same retained authorization
                 # as immediate publication, including cancelled or superseded results.
                 job_id = (task.get("metrics") or {}).get("enhancement_job_id")
@@ -481,11 +505,14 @@ class PDFModule:
             source = self.originals.book(task["book_id"])
             start = ((page_number - 1) // RANGE_PAGES) * RANGE_PAGES + 1
             end = min(source["page_count"], start + RANGE_PAGES - 1)
-            text, blocks, revision, accepted = await asyncio.to_thread(self._read_representation, mapping, source, start, end, task)
+            old = self.store.query_one("SELECT * FROM wr_pdf_range WHERE book_id=? AND start_page=?", (mapping["book_id"], start))
+            if expected_revision is not None and (not old or old['revision'] != expected_revision):
+                raise error(409, 'prose_source_changed', '正文版本已更新，请刷新阅读版。')
+            text, blocks, revision, accepted = await asyncio.to_thread(
+                self._read_representation, mapping, source, start, end, task, override)
             ready = [p[0] for p in accepted]
             if not blocks or not ready:
                 return 'done'
-            old = self.store.query_one("SELECT * FROM wr_pdf_range WHERE book_id=? AND start_page=?", (mapping["book_id"], start))
             if old and old["revision"] == revision:
                 self.clear_bridge_failure(mapping["book_id"], task_id, start)
                 self.enhancements.pages_available(mapping['book_id'], accepted)
@@ -495,12 +522,33 @@ class PDFModule:
             prepared["version"] = revision
             anchors = self.store.query("SELECT * FROM wr_anchor WHERE doc_id=?", (old["doc_id"],)) if old else []
             states = await asyncio.to_thread(self.anchor_states, anchors, blocks, revision)
-            committed = await asyncio.to_thread(self._commit_range, mapping, task_id, prepared, start, end, accepted, states, retained, publication_guard)
+            committed = await asyncio.to_thread(self._commit_range, mapping, task_id, prepared, start, end,
+                                                accepted, states, retained, publication_guard, override)
             if committed:
                 self.clear_bridge_failure(mapping["book_id"], task_id, start)
                 self.enhancements.pages_available(mapping['book_id'], accepted)
                 return 'done'
             return 'deferred'  # recheck lifecycle after a concurrent pause/resume
+
+    async def prose_override(self, doc_id, revision, block_id, action):
+        row = self.store.query_one(
+            'SELECT r.book_id,c.version,c.blocks FROM wr_pdf_range r JOIN wr_content c ON c.doc_id=r.doc_id'
+            ' WHERE r.doc_id=?', (doc_id,))
+        if not row:
+            raise error(404, 'prose_source_missing', '找不到 PDF 阅读版。')
+        if revision != row['version']:
+            raise error(409, 'prose_source_changed', '正文版本已更新，请刷新阅读版。')
+        blocks = json.loads(row['blocks'])
+        item = next((item for block in blocks for item in (block, *block.get('page_furniture', []))
+                     if item['id'] == block_id and item['text'].strip() and not item.get('asset_url')), None)
+        if not item or not item['source'].get('conversion_task_id'):
+            raise error(422, 'prose_source_missing', '此处没有可分类的 PDF 文字。')
+        page, task = item['source']['page_number'], item['source']['conversion_task_id']
+        status = await self.publish_range(task, page, retained=True,
+            override=(page, task, block_id.removeprefix('pdf-'), action), expected_revision=revision)
+        if status != 'done':
+            raise error(409, 'prose_update_unavailable', '暂不能更新正文分类，请稍后再试。')
+        return {'ok': True}
 
     def clear_bridge_failure(self, book_id, task_id, start):
         key = (task_id, start)
@@ -534,7 +582,8 @@ class PDFModule:
                            "mapped" if reliable else "uncertain"))
         return states
 
-    def _commit_range(self, expected, task_id, prepared, start, end, accepted, states, retained, publication_guard=None):
+    def _commit_range(self, expected, task_id, prepared, start, end, accepted, states, retained,
+                      publication_guard=None, override=None):
         with self.store.transaction():
             if publication_guard is not None and not publication_guard():
                 return
@@ -572,6 +621,13 @@ class PDFModule:
                     (current["book_id"], number, source_task_id, time.time()))
             for state in states:
                 self.store.execute("INSERT OR REPLACE INTO wr_pdf_anchor_status VALUES(?,?,?,?,?)", state)
+            if override:
+                if override[3] == 'reset':
+                    self.store.execute('DELETE FROM wr_pdf_prose_override WHERE book_id=? AND page_number=? AND task_id=? AND block_id=?',
+                                       (current['book_id'], *override[:3]))
+                else:
+                    self.store.execute('INSERT OR REPLACE INTO wr_pdf_prose_override VALUES(?,?,?,?,?)',
+                                       (current['book_id'], *override))
             return True
 
     async def apply_enhancement(self, job, page):

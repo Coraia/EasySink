@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import { goPage, read, readerDefaults, selectParagraph } from "./reader-helpers.js";
 
 const provider = `http://127.0.0.1:${process.env.WR_E2E_PROVIDER_PORT || "18768"}`;
@@ -25,6 +26,107 @@ async function sample(request, text) {
 test.beforeEach(async ({page}) => {
   await readerDefaults(page);
   await page.setViewportSize({width: 1060, height: 760});
+});
+
+async function importPDF(request, name, count) {
+  const capability = await (await request.get("/api/pdf/capabilities")).json();
+  test.skip(!capability.adapters?.some(engine => engine.id === "digital" && engine.available), "local digital PDF worker unavailable");
+  const buffer = execFileSync(".venv/bin/python", ["-c",
+    "import sys; sys.path.insert(0, 'tests'); from pdf_prose_fixture import pdf_fixture; sys.stdout.buffer.write(pdf_fixture(sys.argv[1]))", name]);
+  const response = await request.post("/api/pdf/imports", {multipart: {
+    engine: "digital", file: {name: name + ".pdf", mimeType: "application/pdf", buffer},
+  }});
+  expect(response.ok()).toBeTruthy();
+  const {book_id} = await response.json();
+  const book = async () => (await request.get(`/api/pdf/books/${book_id}`)).json();
+  await expect.poll(async () => (await book()).pdf.ready_pages).toBe(count);
+  return book();
+}
+
+test("PDF reader keeps furniture separate, restores roles, and aligns translation across source ranges", async ({page, request}) => {
+  const book = await importPDF(request, "range-edge", 9);
+  const [left, right] = book.pdf.ranges;
+  await configure(request, "slow-assist");
+  await read(page, right.doc_id);
+  const header = page.locator("#article .pdf-page-furniture").getByRole("button", {name: "ODD ARCHIVE"});
+  await expect(header).toBeVisible();
+  await expect(page.locator("#article [data-block]").filter({hasText: "ODD ARCHIVE"})).toHaveCount(0);
+  const prose = page.locator("#article .reading-prose").first();
+  await expect(prose).toHaveText(/ODD ARCHIVE.*to the laboratory.*RESEARCH DIVISION COPY\s*9/s);
+  const bounds = await prose.evaluate(node => {
+    const footer = node.querySelector(".pdf-page-furniture-bottom").getBoundingClientRect();
+    const caption = document.querySelector(".reader-page-caption").getBoundingClientRect();
+    return {gap: footer.top - node.querySelector("[data-block]").getBoundingClientRect().bottom,
+      inset: caption.top - footer.bottom};
+  });
+  expect(bounds.gap).toBeGreaterThan(70);
+  expect(bounds.inset).toBeGreaterThanOrEqual(0);
+  expect(bounds.inset).toBeLessThan(35);
+  await header.click();
+  await page.getByRole("button", {name: "保留在正文", exact: true}).click();
+  const promoted = page.locator("#article [data-block]").filter({hasText: "ODD ARCHIVE"});
+  await expect(promoted).toBeVisible();
+  await promoted.hover();
+  const row = page.locator("#article .source-fragment").filter({
+    has: page.locator("[data-block]").filter({hasText: "ODD ARCHIVE"}),
+  });
+  await row.getByRole("button", {name: "正文分类"}).click();
+  await page.getByRole("button", {name: "恢复自动判断", exact: true}).click();
+  await expect(header).toBeVisible();
+  const before = (await calls(request)).length;
+  await toggle(page).click();
+  await expect.poll(async () => (await calls(request)).length).toBeGreaterThan(before);
+  const callsOnPDF = (await calls(request)).slice(before).flatMap(call => call.paragraphs);
+  expect(callsOnPDF.some(unit => unit.source.includes("remaining material to the laboratory"))).toBe(true);
+  expect(callsOnPDF.every(unit => !unit.source.includes("ARCHIVE") && !unit.source.includes("DIVISION COPY"))).toBe(true);
+  const translationButton = page.locator("[data-page-pair]").first();
+  await expect(translationButton).toBeVisible();
+  await translationButton.hover();
+  await expect(page.locator("#article .linked-translation").first()).toBeVisible();
+  expect(left.doc_id).not.toBe(right.doc_id);
+  const translated = (await calls(request)).length;
+  await header.click();
+  await page.getByRole("button", {name: "保留在正文", exact: true}).click();
+  await expect(promoted).toBeVisible();
+  await expect(status(page)).toHaveText("正文已更新；如需翻译，请关闭再开启整本翻译。");
+  await expect(page.locator("[data-page-translation-progress]")).toBeHidden();
+  expect((await calls(request)).length).toBe(translated);
+  await promoted.hover();
+  await row.getByRole("button", {name: "正文分类"}).click();
+  await page.getByRole("button", {name: "恢复自动判断", exact: true}).click();
+  await expect(header).toBeVisible();
+});
+
+test("PDF furniture stays on the first and last fragments when a source page splits", async ({page, request}) => {
+  const book = await importPDF(request, "range-edge", 9);
+  await page.addInitScript(() => localStorage.setItem("wr2:typography",
+    JSON.stringify({size: 30, line: 2, width: 660, font: "serif"})));
+  await page.setViewportSize({width: 440, height: 420});
+  await read(page, book.pdf.ranges[1].doc_id);
+  const top = page.locator("#article .pdf-page-furniture-top");
+  const bottom = page.locator("#article .pdf-page-furniture-bottom");
+  const source = page.locator("#article [data-block]");
+  await expect(top).toHaveText("ODD ARCHIVE");
+  await expect(bottom).toHaveCount(0);
+  const id = await source.getAttribute("data-block");
+  const split = await source.getAttribute("data-end");
+  await goPage(page, 1);
+  await expect(top).toHaveCount(0);
+  await expect(source).toHaveAttribute("data-block", id);
+  await expect(source).toHaveAttribute("data-start", split);
+  await expect(bottom).toHaveText(/RESEARCH DIVISION COPY\s*9/);
+  await goPage(page, 0);
+  await expect(top).toHaveText("ODD ARCHIVE");
+  await expect(bottom).toHaveCount(0);
+});
+
+test("PDF reader displays evidence-backed native line repairs", async ({page, request}) => {
+  const book = await importPDF(request, "line-break", 1);
+  await read(page, book.pdf.reading_doc_id);
+  const body = page.locator("#article .reading-prose");
+  await expect(body).toContainText("carefully prepared the instruments");
+  await expect(body).toContainText("the location was marked");
+  await expect(body).toContainText("in side pockets");
 });
 
 test("reads a cross-page paragraph once, buffers ahead, and preserves selection translation", async ({page, request}) => {

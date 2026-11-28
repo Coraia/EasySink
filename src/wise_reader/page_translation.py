@@ -8,7 +8,8 @@ from fastapi import BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from wise_reader.content import Anchor, AnchorSegment
-from wise_reader.reading_assist import ModelRequestError, model_json, source_content, translated_segments, utf16
+from wise_reader.pdf.prose import resolve as resolve_pdf_prose
+from wise_reader.reading_assist import ModelRequestError, model_json, projected_anchor, source_content, translated_segments, utf16
 from wise_reader.store import _now
 
 MAX_BLOCKS = 48
@@ -92,7 +93,7 @@ def lookup(store, refs, batch):
 
 
 def translatable(block):
-    return block["type"] not in {"image", "image_fallback", "formula", "table", "table-row", "code"} and block["text"].strip()
+    return not block.get("pdf_role") and block["type"] not in {"image", "image_fallback", "formula", "table", "table-row", "code"} and block["text"].strip()
 
 
 def source_units(ctx, refs):
@@ -100,31 +101,50 @@ def source_units(ctx, refs):
     for ref in refs:
         doc_key = (ref.doc_id, ref.version)
         if doc_key not in documents:
-            _, blocks = source_content(ctx, ref.doc_id, Anchor(version=ref.version))
-            documents[doc_key] = {block["id"]: (i, block) for i, block in enumerate(blocks)}
-        by_id = documents[doc_key]
+            current_version, blocks = source_content(ctx, ref.doc_id, Anchor())
+            projection = resolve_pdf_prose(ctx.store, ref.doc_id, current_version, blocks) if ctx else None
+            if not projection and current_version != ref.version:
+                if any(block.get("source_page") for block in blocks):
+                    raise HTTPException(409, "正文投影已更新，请确认后再翻译。")
+                _, blocks = source_content(ctx, ref.doc_id, Anchor(version=ref.version))
+            documents[doc_key] = (projection, {block["id"]: (i, block) for i, block in enumerate(blocks)})
+        projection, by_id = documents[doc_key]
         found = by_id.get(ref.block_id)
         if not found or not translatable(found[1]):
             raise HTTPException(422, "请选择阅读版中可翻译的原文段落")
         index, block = found
         group = block.get("paragraph_group")
-        members = [block]
-        if group:
+        target = None
+        if projection:
+            unit = projection.paragraph(ref.block_id)
+            if unit.ref != ref.model_dump():
+                raise HTTPException(409, "正文投影已更新，请确认后再翻译。")
+            if unit.pending:
+                continue
+            target = projected_anchor(unit, ref.version, 0, len(unit.text))
+        elif group:
+            members = [block]
             matches = [by_id.get(block_id) for block_id in group["blocks"]]
             if all(part and part[1].get("paragraph_group") == group and translatable(part[1])
                    for part in matches):
                 first = matches[0][0]
-                if [part[0] for part in matches] == list(range(first, first + len(matches))):
+                last = matches[-1][0]
+                included = {part[0] for part in matches}
+                if not any(i not in included and not item.get("pdf_role")
+                           for i, item in by_id.values() if first < i < last):
                     if first != index:
                         raise HTTPException(422, "请从完整自然段的起点翻译")
                     members = [part[1] for part in matches]
-        source = "\n\n".join(part["text"] for part in members)
-        total += utf16(source)
+            members = [AnchorSegment(block_id=part["id"], end=utf16(part["text"]), quote=part["text"]) for part in members]
+        else:
+            members = [AnchorSegment(block_id=block["id"], end=utf16(block["text"]), quote=block["text"])]
+        if target is None:
+            target = Anchor(block_id=ref.block_id, end=members[0].end, quote="\n\n".join(part.quote for part in members),
+                            segments=members if len(members) > 1 else [], doc_id=ref.doc_id)
+        total += utf16(target.quote)
         if total > MAX_SOURCE or len(refs) > MAX_BLOCKS:
             raise HTTPException(422, "这一批原文超过翻译上限，请选取部分文字翻译")
-        parts = [AnchorSegment(block_id=part["id"], end=utf16(part["text"]), quote=part["text"]) for part in members]
-        units.append(Anchor(block_id=ref.block_id, end=parts[0].end, quote=source,
-                            segments=parts if len(parts) > 1 else []))
+        units.append(target)
     return units
 
 
@@ -153,7 +173,8 @@ def align_batch(units, raw, secret):
             continue
         aligned[index] = [
             {"zh": segment["zh"], "ranges": [
-                {"block_id": part.get("block_id", unit.block_id), "start": part["start"], "end": part["end"]}
+                {key: part[key] for key in ("doc_id", "revision", "start", "end") if key in part}
+                | {"block_id": part.get("block_id", unit.block_id)}
                 for part in segment.get("ranges", [segment])
             ]}
             for segment in segments
@@ -262,6 +283,11 @@ def register(router, ctx):
         if not missing:
             return cached
         units = source_units(ctx, missing)
+        if len(units) != len(missing):
+            sendable = {(unit.doc_id, unit.block_id) for unit in units}
+            missing = [ref for ref in missing if (ref.doc_id, ref.block_id) in sendable]
+        if not missing:
+            return cached
         provider = request.app.state.ai.snapshot("text")
         if not provider["enabled"] or not provider["api_key"]:
             raise HTTPException(400, "请先在 AI 与语音中配置并启用文本 AI")

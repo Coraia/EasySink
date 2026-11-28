@@ -19,6 +19,7 @@ from wise_reader.jobs import Jobs
 from wise_reader.l1 import NullLLM, OpenAICompatLLM
 from wise_reader.lexicon import Lexicon
 from wise_reader.native_input import register as register_native_input
+from wise_reader.pdf.prose import resolve as resolve_pdf_prose
 from wise_reader.plugins import PluginContext, mount_plugins
 from wise_reader.plugins.importer import start_url_import
 from wise_reader.profile import DOMAINS, EXAM_VOCAB
@@ -265,6 +266,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     metadata = pdf.document_metadata(doc_id)
                     if metadata is not None:
                         result["pdf"] = metadata
+                        projection = resolve_pdf_prose(store, doc_id, result["version"], result["blocks"])
+                        if projection:
+                            result["pdf"]["prose"] = projection.metadata()
                 return JSONResponse(result, headers={'Cache-Control': 'private, no-store'} if info else None)
         except KeyError:
             raise HTTPException(404, "not found")

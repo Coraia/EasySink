@@ -56,6 +56,8 @@ class PDFSource(BaseModel):
 
 
 class AnchorSegment(BaseModel):
+    doc_id: int | None = Field(default=None, ge=1)
+    revision: str | None = Field(default=None, max_length=64)
     block_id: str = Field(default="", max_length=80)
     start: int = Field(default=0, ge=0)
     end: int = Field(default=0, ge=0)
@@ -68,6 +70,8 @@ class AnchorSegment(BaseModel):
 
 class Anchor(AnchorSegment):
     version: str = Field(default="", max_length=64)
+    projection: str | None = Field(default=None, max_length=64)
+    projection_gaps: list[Literal[0, 1]] = Field(default_factory=list, max_length=255)
     ratio: float = Field(default=0, ge=0, le=1)
     segments: list[AnchorSegment] = Field(default_factory=list, max_length=256)
 

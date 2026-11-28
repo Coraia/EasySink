@@ -14,7 +14,7 @@ const annotationIdentity = items => JSON.stringify(items.map(item=>[item.block.i
 export function captureRetainedWordLayout(pages) {
   const r=pages.r,a=r.popAnchor,owner=document.querySelector('#article'),pop=r.popElement;
   if(!owner || !a || a.segments?.length || a.version!==r.doc.version || !pop?.isConnected ||
-    pages.displayPending || r.search || r.focus.isOpen() ||
+    pages.pdfFurniture.size || pages.displayPending || r.search || r.focus.isOpen() ||
     owner.querySelector('.inline-grammar:not([hidden])') ||
     !owner.querySelector('pre,blockquote,.list-block,[data-pdf-object],.url-image,.pdf-inline-object,.pdf-inline-formula,.table-row')) return null;
   const target=[...owner.querySelectorAll('[data-word]')].find(node=>node.dataset.sourceBlock===a.block_id &&
@@ -167,7 +167,7 @@ async function nativeRetainedSuffix(pages, request, valid) {
     const measure=pages.measure.cloneNode(false),packet=Object.create(Object.getPrototypeOf(pages));
     pages.measure.parentElement.append(measure);
     Object.assign(packet,{r:pages.r,blocks:pages.blocks,fragments:pages.fragments,urlRanges:pages.urlRanges,
-      inlineStyles:pages.inlineStyles,inlineObjects:pages.inlineObjects,urlImages:pages.urlImages,
+      inlineStyles:pages.inlineStyles,inlineObjects:pages.inlineObjects,urlImages:pages.urlImages,pdfFurniture:pages.pdfFurniture,
       measure,width:pages.width,height:available,count:1,pages:[],index:0,complete:false,
       viewStart:cursor,incomingCarry:carry,excludedCarry:[]});
     packet.markup=function(part, measuring=false) {

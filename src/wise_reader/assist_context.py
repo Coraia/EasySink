@@ -24,19 +24,52 @@ def text_block(block):
     )
 
 
+def body_blocks(blocks, parts):
+    selected = {part.block_id for part in parts}
+    return [b for b in blocks if not b.get("pdf_role") or b["id"] in selected]
+
+
+def paragraph_bounds(blocks, indexes, first, last):
+    left, right = first, last + 1
+    if not blocks[first].get("source_page"):
+        while left > 0 and text_block(blocks[left - 1]):
+            left -= 1
+        while right < len(blocks) and text_block(blocks[right]):
+            right += 1
+        return left, right
+    one, two = blocks[first].get("paragraph_group"), blocks[last].get("paragraph_group")
+    if one:
+        left = min(indexes[id] for id in one["blocks"])
+    if two:
+        right = max(indexes[id] for id in two["blocks"]) + 1
+    return left, right
+
+
+def assemble(blocks, texts, length):
+    offsets, pieces, position = [], [], 0
+    for i, (block, text) in enumerate(zip(blocks, texts)):
+        if i:
+            group = block.get("paragraph_group")
+            separator = blocks[i - 1].get("prose_separator", " ") if group and group == blocks[i - 1].get("paragraph_group") else "\n\n"
+            pieces.append(separator)
+            position += len(separator)
+        offsets.append(position)
+        pieces.append(text)
+        position += length(text)
+    return "".join(pieces), offsets
+
+
+def source_revision(block):
+    return ({"doc_id": block["prose_doc_id"], "revision": block["prose_revision"]}
+            if "prose_revision" in block else {})
+
+
 def sentence_ranges(blocks, indexes, parts):
     """Map the sentences intersecting a selection to Python offsets within blocks."""
     first, last = indexes[parts[0].block_id], indexes[parts[-1].block_id]
-    left, right = first, last + 1
-    while left > 0 and text_block(blocks[left - 1]):
-        left -= 1
-    while right < len(blocks) and text_block(blocks[right]):
-        right += 1
+    left, right = paragraph_bounds(blocks, indexes, first, last)
     texts = [b["text"] for b in blocks[left:right]]
-    offsets = [0]
-    for text in texts:
-        offsets.append(offsets[-1] + len(text) + 2)
-    joined = "\n\n".join(texts)
+    joined, offsets = assemble(blocks[left:right], texts, len)
     start = offsets[first - left] + len(texts[first - left].encode("utf-16-le")[:parts[0].start * 2].decode("utf-16-le"))
     end = offsets[last - left] + len(texts[last - left].encode("utf-16-le")[:parts[-1].end * 2].decode("utf-16-le"))
     spans = [(a, b) for a, b in sentence_spans(joined) if a < end and b > start]
@@ -95,6 +128,7 @@ def build_context(blocks, target, previous=False, following=False):
     selection is not shortened to fit the *context* budget; this is reported.
     """
     parts = target.segments or [target]
+    blocks = body_blocks(blocks, parts)
     indexes = {block["id"]: i for i, block in enumerate(blocks)}
     first, last = indexes[parts[0].block_id], indexes[parts[-1].block_id]
     focus = sentence_ranges(blocks, indexes, parts)
@@ -112,14 +146,11 @@ def build_context(blocks, target, previous=False, following=False):
     texts = [block["text"] for block in current]
     texts[0] = texts[0][left_edge:]
     texts[-1] = texts[-1][:right_edge - (left_edge if left == right else 0)]
-    joined = "\n\n".join(texts)
-    offsets = [0]
-    for text in texts:
-        offsets.append(offsets[-1] + units(text) + 2)
+    joined, offsets = assemble(current, texts, units)
     selection_start = offsets[first - left] + parts[0].start
     selection_end = offsets[last - left] + parts[-1].end
     focus_start = min(selection_start, units(first_text[left_edge:a]))
-    focus_end = max(selection_end, offsets[-2] + units(last_text[left_edge if left == right else 0:b]))
+    focus_end = max(selection_end, offsets[-1] + units(last_text[left_edge if left == right else 0:b]))
     candidates = {
         "previous": blocks[first - 1] if first > 0 and text_block(blocks[first - 1]) else None,
         "next": blocks[last + 1] if last + 1 < len(blocks) and text_block(blocks[last + 1]) else None,
@@ -138,11 +169,11 @@ def build_context(blocks, target, previous=False, following=False):
     for i, (block, text) in enumerate(zip(current, texts)):
         cursor = offsets[i]
         clip = units(first_text[:left_edge]) if i == 0 else 0
-        size = offsets[i + 1] - cursor - 2
+        size = units(text)
         source_size = units(block["text"])
         a, b = max(0, start - cursor), min(size, stop - cursor)
         if a < b:
-            ranges.append({"block_id": block["id"], "role": "current", "start": clip + a, "end": clip + b,
+            ranges.append({"block_id": block["id"], **source_revision(block), "role": "current", "start": clip + a, "end": clip + b,
                            "text": text.encode("utf-16-le")[a * 2:b * 2].decode("utf-16-le"),
                            "source_utf16_length": source_size, "truncated": a != 0 or b != size})
         else:
@@ -164,13 +195,14 @@ def build_context(blocks, target, previous=False, following=False):
         if not text:
             omitted.append({"block_id": block["id"], "role": role, "reason": "context_limit"})
             continue
-        entry = {"block_id": block["id"], "role": role, "start": a, "end": b, "text": text,
+        entry = {"block_id": block["id"], **source_revision(block), "role": role, "start": a, "end": b, "text": text,
                  "source_utf16_length": size, "truncated": a != 0 or b != size}
         if role == "previous":
             ranges.insert(0, entry)
         else:
             ranges.append(entry)
-    text = "\n\n".join(r["text"] for r in ranges)
+    text, _ = assemble([blocks[indexes[r["block_id"]]] for r in ranges],
+                       [r["text"] for r in ranges], units)
     return {"protocol": PROTOCOL, "text": text, "utf16_length": units(text), "limit_utf16": LIMIT,
             "ranges": ranges, "omitted": omitted,
             "selected_occurrences": selection_occurrences(ranges, parts),
@@ -183,7 +215,9 @@ def build_context(blocks, target, previous=False, following=False):
 def cache_identity(doc_id, target, source, context):
     value = [PROTOCOL, doc_id, target.version, source,
              [[s.block_id, s.start, s.end] for s in (target.segments or [target])],
-             [[r["block_id"], r["start"], r["end"], r["text"]] for r in context["ranges"]],
+             [[r["block_id"], r["start"], r["end"], r["text"], *(
+                 (r["doc_id"], r["revision"]) if "revision" in r else ())]
+               for r in context["ranges"]],
              context.get("dictionary_candidates")]
     return hashlib.sha256(json.dumps(value, ensure_ascii=False).encode()).hexdigest()
 

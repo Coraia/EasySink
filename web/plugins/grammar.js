@@ -300,7 +300,7 @@ export function install(ctx) {
           try {
             const result = await api(`/documents/${r.doc.id}/grammar`, {
               method: "POST",
-              body: { anchor: item.anchor, request_id: req.requestId },
+              body: { anchor: item.selection || item.anchor, request_id: req.requestId },
               signal: req.signal,
             });
             if (req.signal.aborted || run.controller.signal.aborted || !modeOn || modeRun !== run || r.scope.signal.aborted) return;
