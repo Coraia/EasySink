@@ -51,6 +51,17 @@ test("PDF reader keeps furniture separate, restores roles, and aligns translatio
   const header = page.locator("#article .pdf-page-furniture").getByRole("button", {name: "ODD ARCHIVE"});
   await expect(header).toBeVisible();
   await expect(page.locator("#article [data-block]").filter({hasText: "ODD ARCHIVE"})).toHaveCount(0);
+  const prose = page.locator("#article .reading-prose").first();
+  await expect(prose).toHaveText(/ODD ARCHIVE.*to the laboratory.*RESEARCH DIVISION COPY\s*9/s);
+  const bounds = await prose.evaluate(node => {
+    const footer = node.querySelector(".pdf-page-furniture-bottom").getBoundingClientRect();
+    const caption = document.querySelector(".reader-page-caption").getBoundingClientRect();
+    return {gap: footer.top - node.querySelector("[data-block]").getBoundingClientRect().bottom,
+      inset: caption.top - footer.bottom};
+  });
+  expect(bounds.gap).toBeGreaterThan(70);
+  expect(bounds.inset).toBeGreaterThanOrEqual(0);
+  expect(bounds.inset).toBeLessThan(35);
   await header.click();
   await page.getByRole("button", {name: "保留在正文", exact: true}).click();
   const promoted = page.locator("#article [data-block]").filter({hasText: "ODD ARCHIVE"});
@@ -80,6 +91,33 @@ test("PDF reader keeps furniture separate, restores roles, and aligns translatio
   await expect(status(page)).toHaveText("正文已更新；如需翻译，请关闭再开启整本翻译。");
   await expect(page.locator("[data-page-translation-progress]")).toBeHidden();
   expect((await calls(request)).length).toBe(translated);
+  await promoted.hover();
+  await row.getByRole("button", {name: "正文分类"}).click();
+  await page.getByRole("button", {name: "恢复自动判断", exact: true}).click();
+  await expect(header).toBeVisible();
+});
+
+test("PDF furniture stays on the first and last fragments when a source page splits", async ({page, request}) => {
+  const book = await importPDF(request, "range-edge", 9);
+  await page.addInitScript(() => localStorage.setItem("wr2:typography",
+    JSON.stringify({size: 30, line: 2, width: 660, font: "serif"})));
+  await page.setViewportSize({width: 440, height: 420});
+  await read(page, book.pdf.ranges[1].doc_id);
+  const top = page.locator("#article .pdf-page-furniture-top");
+  const bottom = page.locator("#article .pdf-page-furniture-bottom");
+  const source = page.locator("#article [data-block]");
+  await expect(top).toHaveText("ODD ARCHIVE");
+  await expect(bottom).toHaveCount(0);
+  const id = await source.getAttribute("data-block");
+  const split = await source.getAttribute("data-end");
+  await goPage(page, 1);
+  await expect(top).toHaveCount(0);
+  await expect(source).toHaveAttribute("data-block", id);
+  await expect(source).toHaveAttribute("data-start", split);
+  await expect(bottom).toHaveText(/RESEARCH DIVISION COPY\s*9/);
+  await goPage(page, 0);
+  await expect(top).toHaveText("ODD ARCHIVE");
+  await expect(bottom).toHaveCount(0);
 });
 
 test("PDF reader displays evidence-backed native line repairs", async ({page, request}) => {
