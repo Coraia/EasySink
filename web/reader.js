@@ -365,11 +365,13 @@ export class Reader {
       if (pdfBackground && doc.version === this.doc.version && doc.density === this.doc.density) {
         this.doc.pdf = doc.pdf;
         this.doc.chapters = doc.chapters;
+        this.emit("pdf-prose");
         return true;
       }
       preserveLayout &&= doc.version === this.doc.version;
       this.doc = doc;
       this.sourceBlocks = doc.blocks;
+      if (doc.pdf) this.emit("pdf-prose");
       const anchored = preserveLayout && this.pages.wordReflow.eligible();
       await this.draw({preserveLayout, signal: refresh.signal});
       if (anchored && !this.popElement) await this.pages.wordReflow.flush({reconcile:true});

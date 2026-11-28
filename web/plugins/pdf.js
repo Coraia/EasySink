@@ -775,6 +775,20 @@ class PDFReading {
     // Capture before word/annotation click handlers, but leave pointer gestures
     // and native cross-paragraph selection untouched.
     this.scope.on($("#article"), "click", openInline, { capture: true });
+    this.scope.on($("#article"), "click", (event) => {
+      const note = event.target.closest("[data-pdf-note-link]");
+      if (note) {
+        const start = Number(note.dataset.start);
+        const anchor = r.anchorFor(note.dataset.pdfNoteLink, start, start);
+        if (anchor) r.restore(anchor);
+        return;
+      }
+      const control = event.target.closest("[data-pdf-prose-control]");
+      if (!control) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.proseActions(control.dataset.pdfProseControl);
+    });
     // Window capture precedes the reader's document-level Space-to-turn key.
     this.scope.on(window, "keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") openInline(event);
@@ -840,6 +854,39 @@ class PDFReading {
     });
     this.schedule();
   }
+  proseActions(id) {
+    const r = this.r;
+    const item = r.doc.blocks.flatMap(block => [block, ...(block.page_furniture || [])]).find(b => b.id === id);
+    if (!item) return;
+    r.closePop();
+    r.panel("pdf-prose", "PDF 正文分类",
+      `<p class="meta">原页 ${e(item.source.page_number)} · ${e(item.text.slice(0, 140))}</p><div class="row wrap">${[
+        ["body", "保留在正文"], ["outside", "移出正文"], ["reset", "恢复自动判断"],
+      ].map(([action, label]) => `<button type="button" data-prose-action="${action}" aria-pressed="${item.pdf_prose_override === action}">${label}</button>`).join("")}
+      <button type="button" data-prose-original>核对原版</button></div><p class="meta" role="status"></p>`,
+      (panel, scope) => scope.on(panel, "click", async event => {
+        if (event.target.closest("[data-prose-original]")) {
+          r.closePanel();
+          this.openOriginal(item.source);
+          return;
+        }
+        const action = event.target.closest("[data-prose-action]")?.dataset.proseAction;
+        if (!action) return;
+        const buttons = $$("[data-prose-action]", panel);
+        buttons.forEach(button => button.disabled = true);
+        try {
+          await this.api(`/pdf/documents/${r.doc.id}/prose-override`, {method: "POST", signal: scope.signal,
+            body: {revision: r.doc.version, block_id: id, action}});
+          if (scope.signal.aborted) return;
+          r.closePanel();
+          this.schedule(0);
+        } catch (error) {
+          if (error.name !== "AbortError") $("[role=status]", panel).textContent = error.message;
+        } finally {
+          buttons.forEach(button => button.disabled = false);
+        }
+      }));
+  }
   outline() {
     if (!this.outlineController) {
       // Read the original's bookmark tree only when the reader asks for it.
@@ -881,6 +928,16 @@ class PDFReading {
         old.pdf.book_id !== doc.pdf?.book_id) return null;
     const before = old.blocks.filter(b => b.id === anchor.block_id);
     const after = doc.blocks.filter(b => b.id === anchor.block_id);
+    if (before.length === 1 && !after.length) {
+      const page = before[0].source?.page_number;
+      const nearby = doc.blocks.find(block => block.source?.page_number === page &&
+        block.page_furniture?.some(item => item.id === anchor.block_id &&
+          item.source.source_sha256 === anchor.pdf_source?.source_sha256 &&
+          JSON.stringify(item.source.bbox) === JSON.stringify(anchor.pdf_source?.bbox)));
+      if (nearby && nearby.type !== "image" && nearby.type !== "image_fallback")
+        return {version: doc.version, block_id: nearby.id, start: 0, end: 0,
+          kind: "text", quote: "", ratio: anchor.ratio, pdf_source: {...nearby.source, revision: doc.version}};
+    }
     if (before.length !== 1 || after.length !== 1) return null;
     const a = before[0], b = after[0], map = b.normalization;
     const box = value => Array.isArray(value) && value.length === 4 &&
@@ -913,8 +970,8 @@ class PDFReading {
     let cursor = 0, text = "", removed = 0, start = anchor.start;
     for (const edit of map.edits) {
       const [lo, hi] = edit.old_utf16 || [];
-      if (!Number.isInteger(lo) || !Number.isInteger(hi) || lo < cursor || hi !== lo + 2 ||
-          hi > a.text.length || a.text.slice(lo, hi) !== "- ") return null;
+      if (!Number.isInteger(lo) || !Number.isInteger(hi) || lo < cursor ||
+          hi > a.text.length || ![" ", "- "].includes(a.text.slice(lo, hi))) return null;
       text += a.text.slice(cursor, lo);
       cursor = hi;
       if (anchor.start >= hi) removed += hi - lo;

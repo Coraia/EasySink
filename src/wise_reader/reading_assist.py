@@ -18,8 +18,9 @@ from wise_reader import assist_context, assist_context_generation
 from wise_reader.ai import AssistFailureDiagnostic, provider_error
 from wise_reader.content import Anchor, AnchorSegment, get_content, with_anchor
 from wise_reader.l1 import _parse_json
+from wise_reader.pdf.prose import resolve as resolve_pdf_prose
 from wise_reader.store import _now
-from wise_reader.tokenize import parse
+from wise_reader.tokenize import parse, sentence_spans
 
 PROMPT_VERSION = "reading-v3-2"
 
@@ -90,6 +91,8 @@ def source_content(ctx, doc_id, anchor):
 def selected(ctx, doc_id, anchor, sentence=False):
     version, blocks = source_content(ctx, doc_id, anchor)
     parts = anchor.segments or [anchor]
+    if sentence:
+        blocks = assist_context.body_blocks(blocks, parts)
     if anchor.segments and (len(parts) < 2 or any(
         getattr(anchor, field) != getattr(parts[0], field)
         for field in ("block_id", "start", "end")
@@ -115,7 +118,7 @@ def selected(ctx, doc_id, anchor, sentence=False):
         if part.quote and text[start:end] != part.quote:
             raise HTTPException(409, "选区与原文不一致，请重新选择")
         selected_quotes.append(text[start:end])
-        resolved.append(AnchorSegment(**{**part.model_dump(),
+        resolved.append(AnchorSegment(**{**part.model_dump(exclude={"doc_id", "revision"}),
             "start": utf16(text[:start]), "end": utf16(text[:end]),
             "quote": text[start:end], "prefix": text[max(0, start - 40):start],
             "suffix": text[end:end + 40]}))
@@ -123,6 +126,20 @@ def selected(ctx, doc_id, anchor, sentence=False):
     if anchor.quote and anchor.quote != "\n\n".join(selected_quotes):
         raise HTTPException(409, "选区与原文不一致，请重新选择")
     if sentence:
+        projection = resolve_pdf_prose(ctx.store, doc_id, version, blocks)
+        paragraph = projection and projection.paragraph(resolved[0].block_id)
+        if paragraph:
+            start = paragraph.location(doc_id, resolved[0].block_id, resolved[0].start)
+            end = paragraph.location(doc_id, resolved[-1].block_id, resolved[-1].end)
+            if end is not None:
+                if paragraph.pending:
+                    raise HTTPException(409, "等待相邻原页，暂不分析未完段落。")
+                spans = [(a, b) for a, b in paragraph.sentences() if a < end and b > start]
+                if spans:
+                    target = projected_anchor(paragraph, version, spans[0][0], spans[-1][1])
+                    if utf16(target.quote) > 8000:
+                        raise HTTPException(400, "本次选区超过 8000 个字符，请缩短后重试")
+                    return {"text": target.quote}, target, target.quote
         ranges = assist_context.sentence_ranges(blocks, indexes, resolved)
         texts = [blocks[i]["text"][start:end] for i, start, end in ranges]
         if len(ranges) > 256:
@@ -143,25 +160,66 @@ def selected(ctx, doc_id, anchor, sentence=False):
                 end=utf16(text[:end]), quote=quote, prefix=text[max(0, start - 40):start],
                 suffix=text[end:end + 40], pdf_source=part.pdf_source if part else None))
     out = Anchor.model_validate({**anchor.model_dump(), **resolved[0].model_dump(), "version": version,
+        "projection": None, "projection_gaps": [],
         "quote": source, "segments": resolved if len(resolved) > 1 else []})
     context = context_blocks[0] if len(resolved) == 1 else {"text": source}
     return context, out, source
 
 
+def projected_anchor(paragraph, version, start, end):
+    parts = []
+    for member, lo, hi in paragraph.ranges(start, end):
+        block = member.block
+        text = block["text"]
+        parts.append(AnchorSegment(block_id=block["id"], start=utf16(text[:lo]), end=utf16(text[:hi]),
+            quote=text[lo:hi], prefix=text[max(0, lo - 40):lo], suffix=text[hi:hi + 40],
+            doc_id=member.doc_id, revision=member.revision))
+    return Anchor(**{**parts[0].model_dump(), "version": version, "projection": paragraph.ref["version"],
+        "quote": paragraph.text[start:end], "segments": parts if len(parts) > 1 else [],
+        "projection_gaps": paragraph.gaps(start, end)})
+
+
+def projected_sentences(blocks):
+    joined = "\n\n".join(block["text"] for block in blocks)
+    offsets, cursor = [], 0
+    for block in blocks:
+        offsets.append(cursor)
+        cursor += len(block["text"]) + 2
+    for start, end in sentence_spans(joined):
+        literal = joined[start:end]
+        start += len(literal) - len(literal.lstrip())
+        end -= len(literal) - len(literal.rstrip())
+        if end <= start:
+            continue
+        parts = []
+        for block, cursor in zip(blocks, offsets):
+            text = block["text"]
+            lo, hi = max(0, start - cursor), min(end - cursor, len(text))
+            if lo < hi and text[lo:hi].strip():
+                parts.append(AnchorSegment(block_id=block["id"], start=utf16(text[:lo]),
+                    end=utf16(text[:hi]), quote=text[lo:hi], prefix=text[max(0, lo - 40):lo],
+                    suffix=text[hi:hi + 40]))
+        if parts:
+            yield parts
+
+
 def source_ranges(anchor, start, end):
     """Map Python offsets in joined source back to per-block UTF-16 ranges."""
     if not anchor.segments:
-        return [{"start": anchor.start + utf16(anchor.quote[:start]),
+        coordinates = {"block_id": anchor.block_id, "doc_id": anchor.doc_id, "revision": anchor.revision} if anchor.revision else {}
+        return [{**coordinates, "start": anchor.start + utf16(anchor.quote[:start]),
                  "end": anchor.start + utf16(anchor.quote[:end]),
                  "quote": anchor.quote[start:end]}]
     cursor, result = 0, []
-    for part in anchor.segments:
+    for i, part in enumerate(anchor.segments):
         a, b = max(0, start - cursor), min(len(part.quote), end - cursor)
         if a < b:
             result.append({**part.model_dump(exclude_none=True),
                 "start": part.start + utf16(part.quote[:a]),
                 "end": part.start + utf16(part.quote[:b]), "quote": part.quote[a:b]})
-        cursor += len(part.quote) + 2
+        cursor += len(part.quote)
+        if i + 1 < len(anchor.segments):
+            cursor += anchor.projection_gaps[i] if anchor.projection else 2
     return result
 
 
@@ -427,7 +485,7 @@ def _preceding_grammar_context(ctx, doc_id, target, max_sentences=2, max_chars=4
     while len(collected) < max_sentences and prev_idx >= 0:
         prev = blocks[prev_idx]
         prev_idx -= 1
-        if prev.get("asset_url") and prev.get("type") in {"image", "image_fallback", "formula", "table"}:
+        if prev.get("pdf_role") or prev.get("asset_url") and prev.get("type") in {"image", "image_fallback", "formula", "table"}:
             continue
         ptext = prev.get("text") or ""
         if not ptext.strip():
@@ -479,6 +537,8 @@ def _assist_identity(doc_id, target, kind, p):
     cache_key = [PROMPT_VERSION, doc_id, target.version, target.block_id, target.start, target.end, kind, p["base_url"], p["model"], p["api_key"]]
     if target.segments:
         cache_key.append([[s.block_id, s.start, s.end] for s in target.segments])
+    if target.projection:
+        cache_key.append(target.projection)
     return hashlib.sha256(json.dumps(cache_key, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -488,6 +548,7 @@ def grammar_plan(app, ctx, doc_id, body: GrammarPlanIn):
         raise HTTPException(404, "原文不存在")
     version, blocks = get_content(ctx.store, doc)
     by_id = {b["id"]: b for b in blocks}
+    projection = resolve_pdf_prose(ctx.store, doc_id, version, blocks)
     p = app.state.ai.snapshot("text")
     provider_available = bool(p["enabled"] and p["api_key"])
     sentences, seen = [], set()
@@ -496,12 +557,45 @@ def grammar_plan(app, ctx, doc_id, body: GrammarPlanIn):
             continue
         seen.add(block_id)
         block = by_id.get(block_id)
-        if not block:
+        if not block or block.get("pdf_role"):
             continue
         if block.get("asset_url") and block.get("type") in {"image", "image_fallback", "formula", "table"}:
             continue
         text = block.get("text") or ""
         if not text.strip():
+            continue
+        if block.get("source_page"):
+            paragraph = projection and projection.paragraph(block_id)
+            if paragraph:
+                local = [item for item in paragraph.members if item.doc_id == doc_id]
+                seen.update(member.block["id"] for member in local)
+                if paragraph.pending:
+                    continue
+                wanted = set(body.block_ids)
+                for start, end in paragraph.sentences():
+                    target = projected_anchor(paragraph, version, start, end)
+                    seed = next((part for part in (target.segments or [target])
+                                 if part.doc_id == doc_id and part.block_id in wanted), None)
+                    if seed is None:
+                        continue
+                    selection = Anchor(version=version, block_id=seed.block_id, start=seed.start, end=seed.end,
+                                       quote=seed.quote)
+                    existing = ctx.store.query_one("SELECT id FROM wr_assist WHERE identity=?",
+                        (_assist_identity(doc_id, target, "grammar", p),))
+                    sentences.append({"anchor": target.model_dump(), "selection": selection.model_dump(),
+                        "cached": bool(existing), "assist_id": existing["id"] if existing else None,
+                        "has_trigger": bool(_GRAMMAR_TRIGGER.search(target.quote))})
+                continue
+            group = block.get("paragraph_group", {}).get("blocks", [block_id])
+            seen.update(group)
+            for parts in projected_sentences([by_id[id] for id in group]):
+                quote = "\n\n".join(part.quote for part in parts)
+                target = Anchor(**{**parts[0].model_dump(), "version": version, "quote": quote,
+                    "segments": parts if len(parts) > 1 else []})
+                existing = ctx.store.query_one("SELECT id FROM wr_assist WHERE identity=?",
+                    (_assist_identity(doc_id, target, "grammar", p),))
+                sentences.append({"anchor": target.model_dump(), "cached": bool(existing),
+                    "assist_id": existing["id"] if existing else None, "has_trigger": bool(_GRAMMAR_TRIGGER.search(quote))})
             continue
         for span in parse(text).sentences:
             start, end = span.start, span.end
@@ -664,6 +758,25 @@ async def _produce_assist(app, ctx, doc_id, kind, block, target, text, p, identi
 def context_plan(ctx, doc_id, body):
     _, target, text = selected(ctx, doc_id, body.anchor)
     _, blocks = source_content(ctx, doc_id, target)
+    projection = resolve_pdf_prose(ctx.store, doc_id, target.version, blocks)
+    if projection:
+        selection = target.segments or [target]
+        projected = {}
+        for part in selection:
+            paragraph = projection.paragraph(part.block_id)
+            if not paragraph:
+                continue
+            if paragraph.pending:
+                raise HTTPException(409, "等待相邻原页，暂不解释未完段落。")
+            members = [member.block["id"] for member in paragraph.members]
+            for member, value, _, separator in paragraph.pieces:
+                projected[member.block["id"]] = {**member.block,
+                    "text": value, "prose_separator": separator,
+                    "paragraph_group": {"id": paragraph.ref["block_id"], "blocks": members},
+                    "prose_doc_id": member.doc_id, "prose_revision": member.revision}
+        before = [b for b in projected.values() if b["source_page"] < blocks[0].get("source_page", 0)]
+        after = [b for b in projected.values() if b["source_page"] > blocks[-1].get("source_page", 0)]
+        blocks = [*before, *(projected.get(b["id"], b) for b in blocks), *after]
     context = assist_context.build_context(blocks, target, body.context_previous, body.context_next)
     identity = assist_context.cache_identity(doc_id, target, text, context)
     return target, text, context, identity

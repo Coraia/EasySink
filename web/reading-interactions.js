@@ -323,7 +323,8 @@ export function setupReadingInteractions(r) {
     }
   };
   r.paintRanges = (anchor, ranges, kind = "translation") => {
-    ranges = linkedRanges(anchor, ranges);
+    ranges = linkedRanges(anchor, ranges).filter(v =>
+      !v.doc_id || v.doc_id === r.doc.id && v.revision === r.doc.version);
     $$("#article .source-unit").forEach((el) =>
       el.classList.toggle(
         "linked-" + kind,

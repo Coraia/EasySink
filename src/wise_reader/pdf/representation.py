@@ -3,11 +3,32 @@
 import hashlib
 import json
 import math
+import re
 
 from .text_normalization import normalize_block
-from .paragraph_groups import paragraph_projection, apply_paragraph_groups
+from .paragraph_groups import apply_paragraph_groups, paragraph_projection
 
 OBJECT = "\ufffc"
+NOTE_MARKER = re.compile(r"^(?:([0-9]+)[.)]|\[([0-9]+)\])\s")
+
+
+def link_footnotes(blocks):
+    notes, references = {}, {}
+    for block in blocks:
+        if block['type'] == 'footnote':
+            if match := NOTE_MARKER.match(block['text']):
+                notes.setdefault(match[1] or match[2], []).append(block)
+        for style in block.get('inline_styles', []):
+            marker = block['text'][style['start']:style['end']]
+            if style['kind'] == 'sup' and re.fullmatch(r"[0-9]+", marker):
+                offset = len(block['text'][:style['start']].encode('utf-16-le')) // 2
+                references.setdefault(marker, []).append((block, offset))
+    for marker, found in notes.items():
+        refs = references.get(marker, ())
+        if len(found) == len(refs) == 1:
+            note, (body, offset) = found[0], refs[0]
+            note['footnote_reference'] = {'id': body['id'], 'start': offset}
+            body.setdefault('footnote_links', []).append({'id': note['id'], 'marker': marker})
 
 
 def inline_objects(original, value, source):
@@ -42,15 +63,53 @@ def inline_objects(original, value, source):
     return result
 
 
-def build_representation(pages, book_id, source_sha256):
+def build_representation(pages, book_id, source_sha256, scope=None, page_count=None, overrides=None):
     blocks, text, position = [], [], 0
-    furniture, paragraph_groups = paragraph_projection(pages)
+    overrides = overrides or {}
+    classified = []
+    for raw_page in pages:
+        page = {**raw_page, 'blocks': list(raw_page['blocks']), 'non_content_objects': []}
+        for index, original in enumerate(raw_page.get('non_content_objects', [])):
+            key = original.get('id', f"p{page['page_number']:06d}-margin-{index}")
+            item = {**original, 'id': key}
+            if overrides.get((page['page_number'], page.get('conversion_task_id'), key)) == 'body':
+                item['type'] = 'paragraph'
+                box = item['source']['bbox']
+                index = next((i for i, b in enumerate(page['blocks']) if b['source']['bbox'][1] > box[1]), len(page['blocks']))
+                page['blocks'].insert(index, item)
+            else:
+                page['non_content_objects'].append(item)
+        classified.append(page)
+    pages = classified
+    furniture, paragraph_groups, possible = paragraph_projection(pages,
+        page_count or (pages[-1]['page_number'] if pages else 0), overrides)
+    published = {p['page_number'] for p in pages if p.get('quality_state') != 'rejected'}
+    task_ids = {'pdf-' + original['id']: page.get('conversion_task_id')
+                for page in pages for original in page['blocks']}
     for page in pages:
-        if page.get("quality_state") == "rejected":
+        if (page.get("quality_state") == "rejected" or
+                scope and not scope[0] <= page['page_number'] <= scope[1]):
             continue
         first = len(blocks)
+        margin = []
+        non_content = page.get('non_content_objects', [])
+        has_prose = any(id(block) not in furniture or furniture[id(block)][0] == 'footnote'
+                        for block in page['blocks'])
+        for index, original in enumerate([*page['blocks'], *non_content]):
+            if not (role := furniture.get(id(original))) or role[0] == 'footnote':
+                continue
+            key = original.get('id', f"p{page['page_number']:06d}-margin-{index - len(page['blocks'])}")
+            item_id = f"pdf-{key}"
+            margin.append({'id': item_id, 'role': role[0], 'text': original['text'], 'evidence': role[1],
+                'pdf_prose_override': overrides.get((page['page_number'], page.get('conversion_task_id'), key)),
+                'source': {'page_number': page['page_number'], 'bbox': original['source']['bbox'],
+                    'coordinate_space': page.get('coordinate_space'), 'width': page['width'], 'height': page['height'],
+                    'rotation': page.get('rotation', 0), 'crop_box': page.get('crop_box'),
+                    'book_id': book_id, 'source_sha256': source_sha256,
+                    'conversion_task_id': page.get('conversion_task_id', ''), 'object_id': item_id}})
         for original in page["blocks"]:
-            if original is furniture.get(page['page_number']):
+            role = furniture.get(id(original))
+            if role and role[0] != 'footnote' and has_prose:
                 continue
             normalization = None
             asset = original.get("asset_url")
@@ -59,7 +118,7 @@ def build_representation(pages, book_id, source_sha256):
                 kind = "image_fallback" if kind == "image_fallback" else "image"
                 value = OBJECT
             else:
-                value, normalization = normalize_block(original)
+                value, normalization = normalize_block(original, page)
                 if not value:
                     continue
                 kind = {"list": "list-item", "table": "table-row"}.get(kind, kind)
@@ -74,6 +133,15 @@ def build_representation(pages, book_id, source_sha256):
             block = {"id": f"pdf-{original['id']}", "type": kind, "text": value,
                      "start": position, "end": position + len(value), "source": source,
                      "source_page": page["page_number"], "quality_state": page.get("quality_state", "candidate")}
+            if action := overrides.get((page['page_number'], page.get('conversion_task_id'), original['id'])):
+                block['pdf_prose_override'] = action
+            if role:
+                block['pdf_role'], block['pdf_role_evidence'] = role
+                if role[0] == 'footnote':
+                    block['type'] = 'footnote'
+            if edges := possible.get(block['id']):
+                block['pdf_prose_waits'] = [p for p in edges if p not in published]
+                block['pdf_prose_neighbors'] = edges
             if normalization:
                 block["normalization"] = normalization
             if original.get("formula_id"):
@@ -108,17 +176,24 @@ def build_representation(pages, book_id, source_sha256):
             blocks.append(block)
             text.append(value)
             position = block["end"]
-        label = furniture.get(page['page_number'])
-        if label and len(blocks) > first:
-            source = {**label['source'], 'width': page['width'], 'height': page['height'],
-                'rotation': page.get('rotation', 0), 'crop_box': page.get('crop_box'),
-                'book_id': book_id, 'source_sha256': source_sha256,
-                'conversion_task_id': page.get('conversion_task_id', ''),
-                'object_id': 'pdf-' + label['id']}
-            blocks[first]['page_furniture'] = [{'id': 'pdf-' + label['id'],
-                'role': 'printed-page-label', 'text': label['text'], 'source': source,
-                'evidence': 'detached-bottom-margin+adjacent-consecutive-label'}]
-    apply_paragraph_groups(blocks, paragraph_groups)
+        if margin and len(blocks) > first:
+            block_ids = {b['id'] for b in blocks[first:]}
+            kept = [item for item in margin if item['id'] not in block_ids]
+            if kept:
+                blocks[first]['page_furniture'] = kept
+        link_footnotes(blocks[first:])
+    by_id = {block['id']: block for block in blocks}
+    for group in paragraph_groups:
+        for index, block_id in enumerate(group):
+            if block_id in by_id:
+                block = by_id[block_id]
+                if index and group[index - 1] not in by_id:
+                    edge = group[index - 1]
+                    block['pdf_prose_previous'] = [edge, task_ids[edge]]
+                if index + 1 < len(group) and group[index + 1] not in by_id:
+                    edge = group[index + 1]
+                    block['pdf_prose_next'] = [edge, task_ids[edge]]
+    apply_paragraph_groups(blocks, [[id for id in group if id in by_id] for group in paragraph_groups])
     canonical = "\n\n".join(text)
     revision = hashlib.sha256(json.dumps({"text": canonical, "blocks": blocks}, ensure_ascii=False,
         sort_keys=True, separators=(",", ":")).encode()).hexdigest()

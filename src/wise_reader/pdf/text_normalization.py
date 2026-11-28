@@ -1,4 +1,4 @@
-"""Conservative reading-only repair of retained OCR line wraps.
+"""Conservative reading-only repair of retained PDF text.
 
 A dictionary entry is never sufficient evidence: require the same complete word
 elsewhere in the original paragraph, exact reconstruction and adjacent same-column
@@ -11,6 +11,7 @@ import hashlib
 import math
 import re
 import sqlite3
+import unicodedata
 from contextlib import closing
 from pathlib import Path
 
@@ -18,6 +19,8 @@ POLICY = 'pdf-line-wrap-v1'
 _WORD = re.compile(r"(?<![A-Za-z'-])[A-Za-z]+(?![A-Za-z'-])")
 _END = re.compile(r"(?<![A-Za-z'-])([a-z]{2,})-$")
 _START = re.compile(r"^([a-z]{2,})(?![A-Za-z'-])")
+_NATIVE_END = re.compile(r"(?<![A-Za-z'-])([A-Za-z]+)(-?)$")
+_NATIVE_START = re.compile(r"^([a-z]+)(?![A-Za-z'-])")
 
 
 def _u16(text):
@@ -50,21 +53,102 @@ def _box(line):
     return box
 
 
-def normalize_block(block):
+def native_lines(block):
+    raw, glyphs = block.get('raw_text'), block.get('source', {}).get('glyphs')
+    if not raw or not glyphs:
+        return []
+    chars = [(c, g['bbox']) for g in glyphs for c in unicodedata.normalize('NFKC', g['text'])
+             if not c.isspace()]
+    lines, cursor = [], 0
+    for i, line in enumerate(raw.split('\n')):
+        letters = [(j, c) for j, c in enumerate(line) if not c.isspace()]
+        span = chars[cursor:cursor + len(letters)]
+        if not letters or [c for _, c in letters] != [c for c, _ in span]:
+            return []
+        boxes = {j: box for (j, _), (_, box) in zip(letters, span)}
+        bbox = [min(b[0] for b in boxes.values()), min(b[1] for b in boxes.values()),
+                max(b[2] for b in boxes.values()), max(b[3] for b in boxes.values())]
+        lines.append({'id': f"{block['id']}-line-{i}", 'text': line, 'bbox': bbox, 'glyphs': boxes})
+        cursor += len(letters)
+    return lines if cursor == len(chars) else []
+
+
+def source_lines(block):
+    return block.get('source', {}).get('lines') or native_lines(block)
+
+
+def _native_word(left, right):
+    a, b = _NATIVE_END.search(left), _NATIVE_START.match(right)
+    if not a or not b or a[1].isupper() and len(a[1]) > 1:
+        return None
+    first, last = a[1].lower(), b[1]
+    word = first + last
+    if len(word) < 4:
+        return None
+    hyphen = first + '-' + last
+    keys = {first, last, word, hyphen}
+    keys |= {key[:-1] for key in keys if len(key) > 3 and key.endswith('s')}
+    path = Path(__file__).resolve().parents[3] / 'data/stardict.db'
+    try:
+        with closing(sqlite3.connect(path.as_uri() + '?mode=ro&immutable=1', uri=True)) as db:
+            words = {row[0] for row in db.execute(
+                f"SELECT word FROM stardict WHERE word IN ({','.join('?' for _ in keys)})", tuple(keys))}
+    except (sqlite3.Error, OSError):
+        return None
+    def known(value):
+        return (value in {'a', 'i'} if len(value) == 1 else
+                value in words or len(value) > 3 and value.endswith('s') and value[:-1] in words)
+    if known(word) and not (known(first) and known(last)) and not (a[2] and hyphen in words):
+        return a.start(1), len(a[2]), len(last)
+    return None
+
+
+def discretionary_hyphen(left, right):
+    return left.endswith('-') and _native_word(left, right) is not None
+
+
+def _native_edits(lines, texts, boxes):
+    left, right = min(b[0] for b in boxes), max(b[2] for b in boxes)
+    offset = 0
+    for i, (line, value, box) in enumerate(zip(lines, texts, boxes)):
+        glyphs = line['glyphs']
+        height = box[3] - box[1]
+        for gap in re.finditer(r"(?<=[A-Za-z]) (?=[a-z])", value):
+            p = gap.start()
+            a, b = glyphs[p - 1], glyphs[p + 1]
+            if 0 <= b[0] - a[2] <= .23 * height and (word := _native_word(value[:p], value[p + 1:])):
+                start, _, length = word
+                yield offset + p, offset + p + 1, [offset + start, offset + p + 1 + length], [line['id']], 'tight_glyph_gap+dictionary'
+        end = offset + len(value)
+        if i + 1 < len(lines):
+            following = boxes[i + 1]
+            if (.8 <= height / (following[3] - following[1]) <= 1.25
+                    and -.1 * height <= following[1] - box[3] <= .85 * height
+                    and abs(following[0] - left) <= .6 * height and right - box[2] <= 2.6 * height
+                    and (word := _native_word(value, texts[i + 1]))):
+                start, hyphen, length = word
+                yield end - hyphen, end + 1, [offset + start, end + 1 + length], [line['id'], lines[i + 1]['id']], 'adjacent_glyph_lines+dictionary'
+        offset = end + 1
+
+
+def normalize_block(block, page=None):
     """Return (reading text, optional mapping); unsupported/ambiguous => identity."""
     value = block.get('text', '').strip()
     source = block.get('source') or {}
-    lines = source.get('lines') or []
+    geometry = page or source
+    lines = source_lines(block)
+    native = bool(lines and 'glyphs' in lines[0])
     if (block.get('type') != 'paragraph' or block.get('asset') or block.get('asset_url')
             or block.get('inline_objects') or block.get('inline_styles')
-            or source.get('rotation', 0) != 0 or len(lines) < 2
-            or source.get('coordinate_space') != 'rotated_crop_top_left'
+            or geometry.get('rotation', 0) != 0 or len(lines) < (1 if native else 2)
+            or geometry.get('coordinate_space') != 'rotated_crop_top_left'
             or not all(isinstance(line, dict) and isinstance(line.get('text'), str) for line in lines)):
         return value, None
     # Do not normalize a previously corrected version from stale original lines.
     # Other join conventions and line-trimming differences fail closed as well.
     texts = [line['text'].strip() for line in lines]
     if (' '.join(texts) != value or block.get('raw_text') != '\n'.join(line['text'] for line in lines)
+            or native and any(text != line['text'] for text, line in zip(texts, lines))
             or any(line.get('page_number', source.get('page_number')) != source.get('page_number') for line in lines)):
         return value, None
     witnesses = {m.group().lower() for line in texts for m in _WORD.finditer(line)}
@@ -75,7 +159,7 @@ def normalize_block(block):
     right = max(box[2] for box in boxes)
     left = min(box[0] for box in boxes)
     offset, edits, changes = 0, [], []
-    for i, previous in enumerate(texts[:-1]):
+    for i, previous in enumerate(texts[:-1] if not native else ()):
         following = texts[i + 1]
         a, b = _END.search(previous), _START.match(following)
         old_end = offset + len(previous)
@@ -102,6 +186,16 @@ def normalize_block(block):
                     'reason': 'same_paragraph_intact_witness+adjacent_column+dictionary_veto'})
                 changes.append({'old_cp': old_word, 'new_cp': new_word})
         offset = old_end + 1
+    if native:
+        for start, end, old_word, line_ids, reason in _native_edits(lines, texts, boxes):
+            removed = sum(e['old_cp'][1] - e['old_cp'][0] for e in edits)
+            if changes and old_word[0] < changes[-1]['old_cp'][1]:
+                continue
+            old = _range(value, start, end)
+            edits.append({'old_cp': old['cp'], 'old_utf16': old['utf16'],
+                'new_cp': [start - removed] * 2, 'line_ids': line_ids, 'reason': reason})
+            changes.append({'old_cp': old_word,
+                'new_cp': [old_word[0] - removed, old_word[1] - removed - (end - start)]})
     if not edits:
         return value, None
     result, cursor = [], 0
@@ -142,13 +236,14 @@ def verified_mapping(before, after):
         for edit in mapping['edits']:
             lo, hi = edit['old_cp']
             if (type(lo) is not int or type(hi) is not int or lo < cursor
-                    or hi != lo + 2 or hi > len(old) or old[lo:hi] != '- '):
+                    or hi > len(old) or old[lo:hi] not in {' ', '- '}):
                 return False
-            left, right = re.search(r"(?<![A-Za-z'-])[a-z]{2,}$", old[:lo]), _START.match(old[hi:])
-            if not left or not right:
+            left = _NATIVE_END.search(old[:lo])
+            right = _NATIVE_START.match(old[hi:])
+            if not left or left[2] or not right:
                 return False
             old_word = [left.start(), hi + right.end()]
-            new_word = [old_word[0] - removed, old_word[1] - removed - 2]
+            new_word = [old_word[0] - removed, old_word[1] - removed - (hi - lo)]
             if (edit['old_utf16'] != _range(old, lo, hi)['utf16']
                     or edit['new_cp'] != [lo - removed] * 2
                     or edit['new_utf16'] != [_u16(new[:lo - removed])] * 2):
@@ -156,7 +251,7 @@ def verified_mapping(before, after):
             changes.append({'old_cp': old_word, 'new_cp': new_word,
                 'old_utf16': _range(old, *old_word)['utf16'],
                 'new_utf16': _range(new, *new_word)['utf16']})
-            pieces.append(old[cursor:lo]); cursor = hi; removed += 2
+            pieces.append(old[cursor:lo]); cursor = hi; removed += hi - lo
         pieces.append(old[cursor:])
         return ''.join(pieces) == new and changes == mapping['changes']
     except (KeyError, TypeError, ValueError, UnicodeError, IndexError):
@@ -166,7 +261,7 @@ def verified_mapping(before, after):
 def reading_position(anchor, old_blocks, new_blocks, version, book_id, source_sha256):
     """Prove a position, not a quotation, using retained text and deletion edits.
 
-    Inside a removed '- ' range, land at its surviving left boundary. Reject
+    Inside a removed separator, land at its surviving left boundary. Reject
     incomplete UTF-16 characters and ambiguous/missing source evidence.
     """
     try:

@@ -26,6 +26,12 @@ class Lifecycle(BaseModel):
     action: str
 
 
+class ProseOverride(BaseModel):
+    revision: str = Field(min_length=64, max_length=64)
+    block_id: str = Field(min_length=1, max_length=80)
+    action: Literal["body", "outside", "reset"]
+
+
 class FormulaRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -155,6 +161,11 @@ def register(app: FastAPI, ctx: PluginContext):
     @router.get("/api/pdf/books/{book_id}")
     def book(book_id: int):
         return module.book_payload(book_id)
+
+    @router.post("/api/pdf/documents/{doc_id}/prose-override")
+    async def override_prose(doc_id: int, body: ProseOverride, request: Request):
+        local_operation(request)
+        return await module.prose_override(doc_id, body.revision, body.block_id, body.action)
 
     @router.get("/api/pdf/books/{book_id}/source")
     def source(book_id: int):

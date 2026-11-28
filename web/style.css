@@ -2039,6 +2039,26 @@ dialog::backdrop {
 .reading-prose [data-block] {
   margin: 0 0 1.15em;
 }
+.reading-prose .pdf-page-furniture,
+.reading-prose .footnote {
+  color: var(--muted);
+  font-size: 0.8em;
+  border-inline-start: 1px solid currentColor;
+  padding-inline-start: 0.75em;
+}
+.reading-prose .pdf-furniture-control {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+.reading-prose .pdf-furniture-control:hover,
+.reading-prose .pdf-furniture-control:focus-visible {
+  text-decoration: underline;
+}
 .reading-prose h2 {
   font-family: inherit;
   font-size: 1.15em;

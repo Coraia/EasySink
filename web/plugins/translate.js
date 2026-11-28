@@ -4,7 +4,7 @@ import { $, $$, e } from "../core.js";
 import { installPageTranslation } from "./page-translation.js";
 
 export function install(ctx) {
-  const enabledBooks = new Set();
+  const enabledBooks = new Map();
   return ctx.hook("read", (r) => {
     let result = null,
       locked = null,

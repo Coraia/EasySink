@@ -7,18 +7,31 @@ const SKIP = new Set(["image", "image_fallback", "formula", "table", "table-row"
 const key = ({doc_id, version, block_id}) => JSON.stringify([doc_id, version, block_id]);
 
 function sourceUnits(doc) {
-  const units = new Map(), sizes = new Map();
+  const units = new Map(), sizes = new Map(), pending = new Set(), interned = new Map();
   for (const block of doc.blocks) {
-    if (SKIP.has(block.type) || !block.text.trim()) continue;
+    if (block.pdf_role || SKIP.has(block.type) || !block.text.trim()) continue;
+    const projected = doc.pdf?.prose?.[block.id];
+    if (projected?.pending) {
+      pending.add(block.id);
+      continue;
+    }
+    if (projected) {
+      const ref = projected.ref, id = key(ref);
+      if (!interned.has(id)) interned.set(id, ref);
+      units.set(block.id, interned.get(id));
+      sizes.set(ref.block_id, projected.size);
+      continue;
+    }
     // PDF import publishes source-ordered groups only for complete paragraphs.
     const first = block.paragraph_group?.blocks[0] || block.id;
     sizes.set(first, (sizes.has(first) ? sizes.get(first) + 2 : 0) + block.text.length);
     units.set(block.id, {doc_id: doc.id, version: doc.version, block_id: first});
   }
-  return {units, sizes};
+  return {units, sizes, pending};
 }
 
-const intersects = (range, fragment) => range.block_id === fragment.id &&
+const intersects = (range, fragment, doc) => range.block_id === fragment.id &&
+  (!range.doc_id || range.doc_id === doc.id && range.revision === doc.version) &&
   range.start < fragment.end && range.end > fragment.start;
 
 export function installPageTranslation(r, pane, enabledBooks, book) {
@@ -43,7 +56,8 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
   $(".reader-page-caption .caption-end").prepend(toggle);
   const updateToggle = () => toggle.setAttribute("aria-pressed", String(enabled()));
 
-  const source = sourceUnits(r.doc), results = new Map(), failures = new Map();
+  let source = sourceUnits(r.doc), version = r.doc.version, projection = r.doc.pdf?.prose;
+  const results = new Map(), failures = new Map();
   const enabled = () => enabledBooks.has(book);
   let covered = false, syncPane, work, timer, segments = [], shown, setupError = false;
   const active = () => enabled() && !r.scope.signal.aborted;
@@ -51,6 +65,12 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
     .map(node => ({id: node.dataset.block, start: +node.dataset.start, end: +node.dataset.end}));
   const refs = (fragments, map) => [...new Set(fragments.map(part => map.units.get(part.id)).filter(Boolean))];
   const canTranslate = (ref) => source.sizes.get(ref.block_id) <= MAX_SOURCE;
+  const authorized = (ref, doc = r.doc) => {
+    if (!doc.pdf) return true;
+    const versions = enabledBooks.get(book);
+    const knownDoc = versions.get(doc.id), knownParagraph = versions.get(`${ref.doc_id}:${ref.block_id}`);
+    return (!knownDoc || knownDoc === doc.version) && (!knownParagraph || knownParagraph === ref.version);
+  };
   const failureFor = (entries) => {
     const ref = entries.find(ref => failures.has(key(ref)) || results.get(key(ref))?.status === "unknown");
     return ref && (failures.get(key(ref)) || {retry: results.get(key(ref)).batch_id, blocks: entries});
@@ -63,6 +83,8 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
     const failure = failureFor(available);
     const message = setupError ? AI_REQUIRED
       : failure ? (failure.message || "这一批译文未完成，不会自动重试。")
+      : available.some(ref => !authorized(ref)) ? "正文已更新；如需翻译，请关闭再开启整本翻译。"
+      : visibleParts.some(part => source.pending.has(part.id)) ? "等待相邻原页，暂不翻译未完段落。"
       : rows.some(row => row?.status !== "ready") ? "正在准备本页译文，仍可继续阅读原文…"
       : !available.length ? (current.length ? "此段过长，请使用选区翻译。" : "本页没有可翻译的正文。")
       : current.length > available.length ? "过长段落未翻译，可使用选区翻译。" : "";
@@ -71,7 +93,7 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
     retry.textContent = setupError ? "配置文本 AI" : "重试这一批";
     retry.disabled = Boolean(work);
     const next = rows.flatMap(row => row?.segments || [])
-      .filter(segment => segment.ranges.some(range => visibleParts.some(part => intersects(range, part))));
+      .filter(segment => segment.ranges.some(range => visibleParts.some(part => intersects(range, part, r.doc))));
     if (next.length !== segments.length || next.some((segment, i) => segment !== segments[i])) {
       segments = next;
       text.innerHTML = next.map((segment, i) => `<button type="button" class="translation-segment" data-page-pair="${i}">${e(segment.zh)}</button>`).join("");
@@ -87,7 +109,7 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
     const pages = r.pages, start = pages.index + pages.count;
     const visibleRefs = refs(visible(), source).filter(canTranslate);
     const ahead = pages.pages.slice(start, start + LOOKAHEAD).map(parts =>
-      refs(parts, source).map(ref => ({ref, size: source.sizes.get(ref.block_id)})));
+      refs(parts, source).map(ref => ({ref, doc: r.doc, size: source.sizes.get(ref.block_id)})));
     if (ahead.length < LOOKAHEAD && pages.complete && pages.rangeNeighbor(1)) {
       let neighbor;
       try { neighbor = await pages.prepareRange(1); }
@@ -95,7 +117,7 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
       if (neighbor) {
         const next = sourceUnits(neighbor.r.doc);
         for (const parts of neighbor.pages.slice(0, LOOKAHEAD - ahead.length))
-          ahead.push(refs(parts, next).map(ref => ({ref, size: next.sizes.get(ref.block_id)})));
+          ahead.push(refs(parts, next).map(ref => ({ref, doc: neighbor.r.doc, size: next.sizes.get(ref.block_id)})));
       }
     }
     return {visibleRefs, ahead: ahead.map(row => row.filter(part => part.size <= MAX_SOURCE))};
@@ -117,9 +139,15 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
     for (const part of entries) {
       const id = key(part.ref);
       if (blocks.has(id) || results.has(id) || failures.has(id)) continue;
+      if (!authorized(part.ref, part.doc)) continue;
       if (size + part.size > MAX_SOURCE || blocks.size >= MAX_BLOCKS) break;
       size += part.size;
       blocks.set(id, part.ref);
+      if (part.doc.pdf) {
+        const versions = enabledBooks.get(book);
+        versions.set(part.doc.id, part.doc.version);
+        versions.set(`${part.ref.doc_id}:${part.ref.block_id}`, part.ref.version);
+      }
     }
     return [...blocks.values()];
   };
@@ -146,8 +174,8 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
     schedule();
   }});
   async function refresh() {
-    const index = r.pages.index, layout = r.pages.layoutEpoch;
-    const samePage = () => active() && index === r.pages.index && layout === r.pages.layoutEpoch;
+    const index = r.pages.index, layout = r.pages.layoutEpoch, inputs = source;
+    const samePage = () => active() && index === r.pages.index && layout === r.pages.layoutEpoch && source === inputs;
     const {visibleRefs, ahead} = await windowRefs();
     if (!samePage()) { schedule(); return; }
     const all = [...new Map([...visibleRefs, ...ahead.flat().map(part => part.ref)].map(ref => [key(ref), ref])).values()];
@@ -159,11 +187,12 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
     }
     if (setupError || failureFor(visibleRefs)) return;
     const missing = ref => !results.has(key(ref)) && !failures.has(key(ref));
-    if (visibleRefs.some(missing) || (ahead[0]?.length && ahead[0].some(part => missing(part.ref)))) {
-      const blocks = bounded([...visibleRefs.map(ref => ({ref, size: source.sizes.get(ref.block_id)})), ...ahead.flat()]);
+    const eligible = ref => missing(ref) && authorized(ref);
+    if (visibleRefs.some(eligible) || ahead[0]?.some(part => missing(part.ref) && authorized(part.ref, part.doc))) {
+      const blocks = bounded([...visibleRefs.map(ref => ({ref, doc: r.doc, size: source.sizes.get(ref.block_id)})), ...ahead.flat()]);
       if (blocks.length) {
         await generate({blocks});
-        if (!samePage() || (visibleRefs.some(missing) && !setupError && !failureFor(visibleRefs))) schedule();
+        if (!samePage() || (visibleRefs.some(eligible) && !setupError && !failureFor(visibleRefs))) schedule();
       }
     }
   }
@@ -221,7 +250,7 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
   r.scope.on(toggle, "click", () => {
     r.pages.finishAnimation();
     const anchor = r.captureView().visibleAnchor || undefined, wasHidden = pane.hidden;
-    if (enabled()) enabledBooks.delete(book); else enabledBooks.add(book);
+    if (enabled()) enabledBooks.delete(book); else enabledBooks.set(book, new Map());
     updateToggle();
     syncPane();
     if (pane.hidden !== wasHidden)
@@ -234,6 +263,13 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
     }
   });
   r.on("draw", () => { if (!work) schedule(); else paint(); });
+  r.on("pdf-prose", () => {
+    if (version === r.doc.version && projection === r.doc.pdf?.prose) return;
+    source = sourceUnits(r.doc);
+    version = r.doc.version;
+    projection = r.doc.pdf?.prose;
+    schedule();
+  });
   r.on("reader-ready", () => schedule());
   r.scope.cleanup(() => clearTimeout(timer));
   updateToggle();

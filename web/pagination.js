@@ -891,14 +891,24 @@ export class ReadingPages {
         return `<span class="annotation" role="button" tabindex="0" data-target="${e(f.target)}" data-kind="${e(f.kind)}" data-annotation="${f.annotation}" aria-label="${e(source)}：${e(f.note)}"><span class="source-text">${rendered}</span>${gloss}</span>`;
       })
       .join("");
+    const margin = start === 0 && b.page_furniture?.length
+      ? `<aside class="pdf-page-furniture" aria-label="原页边注">${b.page_furniture.map(item => {
+          const label = {header: "页眉", footer: "页脚", "printed-page-label": "印刷页码", excluded: "已移出正文"}[item.role];
+          return measure ? `<div>${e(item.text)}</div>`
+            : `<div><button type="button" class="pdf-furniture-control" data-pdf-prose-control="${e(item.id)}" title="${e(label)}">${e(item.text)}</button></div>`;
+        }).join("")}</aside>`
+      : "";
     const source = `<${tag} data-block="${b.id}" data-start="${start}" data-end="${end}" class="${b.type === "list-item" ? "list-block" : b.type}">${text}</${tag}>`;
-    if (measure) return source;
-    const actions =
-      b.type === "heading"
-        ? ""
-        : `<div class="paragraph-actions"><button data-read-block="${b.id}" type="button" ${this.r.ctx.enabled("tts") ? "" : "hidden"}>听这一段</button><button data-select-block="${b.id}" type="button">选择这一段</button></div>`;
+    if (measure) return margin + source;
+    const classify = this.r.doc.pdf && b.source?.conversion_task_id
+      ? `<button type="button" data-pdf-prose-control="${e(b.id)}">正文分类</button>` : "";
+    const notes = (b.footnote_links || []).map(link =>
+      `<button type="button" data-pdf-note-link="${e(link.id)}" data-start="0">查看脚注 ${e(link.marker)}</button>`).join("") +
+      (b.footnote_reference ? `<button type="button" data-pdf-note-link="${e(b.footnote_reference.id)}" data-start="${b.footnote_reference.start}">返回注号</button>` : "");
+    const actions = b.type === "heading" && !classify ? ""
+      : `<div class="paragraph-actions">${b.type === "heading" ? "" : `<button data-read-block="${b.id}" type="button" ${this.r.ctx.enabled("tts") ? "" : "hidden"}>听这一段</button><button data-select-block="${b.id}" type="button">选择这一段</button>`}${classify}${notes}</div>`;
     const wrapper = b.type === "list-item" ? "li" : "section";
-    return `<${wrapper} class="source-fragment" data-fragment="${b.id}" data-fragment-start="${start}" data-fragment-end="${end}"><div class="source-row"><span class="grammar-slot" data-grammar-slot="${b.id}"></span>${source}</div>${actions}<section class="inline-grammar" data-grammar-block="${b.id}" hidden></section></${wrapper}>`;
+    return `<${wrapper} class="source-fragment" data-fragment="${b.id}" data-fragment-start="${start}" data-fragment-end="${end}">${margin}<div class="source-row"><span class="grammar-slot" data-grammar-slot="${b.id}"></span>${source}</div>${actions}<section class="inline-grammar" data-grammar-block="${b.id}" hidden></section></${wrapper}>`;
   }
   urlAsset(block) {
     const doc = this.r.doc, snapshot = doc.source?.snapshot_id;
