@@ -5,6 +5,16 @@ const LOOKAHEAD = 2, MAX_BLOCKS = 48, MAX_SOURCE = 8000;
 const AI_REQUIRED = "请先在 AI 与语音中配置并启用文本 AI";
 const SKIP = new Set(["image", "image_fallback", "formula", "table", "table-row", "code"]);
 const key = ({doc_id, version, block_id}) => JSON.stringify([doc_id, version, block_id]);
+const failureMessage = {
+  alignment: "译文未能与原文完整对齐",
+  model_format: "模型返回的译文格式不正确",
+  credentials: "AI 服务拒绝了凭据，请检查配置",
+  rate_limit: "AI 服务额度或频率已达上限，请稍后重试",
+  provider_http: "AI 服务返回错误，请检查配置或稍后重试",
+  timeout: "AI 服务响应超时，结果未知",
+  connection: "连接 AI 服务失败，结果未知",
+  interrupted: "上次请求未留下结果，不会自动重试",
+};
 
 function sourceUnits(doc) {
   const units = new Map(), sizes = new Map(), pending = new Set(), interned = new Map();
@@ -41,11 +51,17 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
   section.dataset.pageTranslation = "";
   section.innerHTML = `<div class="translation-heading"><h2>当前页 · 对照</h2></div>
     <div class="meta" role="status" data-page-translation-status></div>
-    <button type="button" data-page-translation-retry hidden>重试这一批</button>
+    <progress data-page-translation-progress aria-label="整本翻译进行中" hidden></progress>
+    <button type="button" data-page-translation-setup hidden>配置文本 AI</button>
+    <button type="button" data-page-translation-reload hidden>重新读取译文</button>
+    <ul data-page-translation-failures hidden></ul>
     <div class="translation-segments" data-page-translation-segments></div>`;
   pane.append(section);
   const status = $("[data-page-translation-status]", section),
-    retry = $("[data-page-translation-retry]", section),
+    progress = $("[data-page-translation-progress]", section),
+    setup = $("[data-page-translation-setup]", section),
+    reload = $("[data-page-translation-reload]", section),
+    failures = $("[data-page-translation-failures]", section),
     text = $("[data-page-translation-segments]", section);
   const toggle = document.createElement("button");
   toggle.type = "button";
@@ -57,9 +73,10 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
   const updateToggle = () => toggle.setAttribute("aria-pressed", String(enabled()));
 
   let source = sourceUnits(r.doc), version = r.doc.version, projection = r.doc.pdf?.prose;
-  const results = new Map(), failures = new Map();
+  const results = new Map();
   const enabled = () => enabledBooks.has(book);
-  let covered = false, syncPane, work, timer, segments = [], shown, setupError = false;
+  let covered = false, syncPane, work, timer, segments = [], shown, batch, requestError, setupError = false;
+  let failureMarkup = "";
   const active = () => enabled() && !r.scope.signal.aborted;
   const visible = () => [...document.querySelectorAll("#article .reading-prose [data-block]")]
     .map(node => ({id: node.dataset.block, start: +node.dataset.start, end: +node.dataset.end}));
@@ -71,27 +88,46 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
     const knownDoc = versions.get(doc.id), knownParagraph = versions.get(`${ref.doc_id}:${ref.block_id}`);
     return (!knownDoc || knownDoc === doc.version) && (!knownParagraph || knownParagraph === ref.version);
   };
-  const failureFor = (entries) => {
-    const ref = entries.find(ref => failures.has(key(ref)) || results.get(key(ref))?.status === "unknown");
-    return ref && (failures.get(key(ref)) || {retry: results.get(key(ref)).batch_id, blocks: entries});
+  const remember = (ref, doc) => {
+    if (!doc.pdf) return;
+    const versions = enabledBooks.get(book);
+    versions.set(doc.id, doc.version);
+    versions.set(`${ref.doc_id}:${ref.block_id}`, ref.version);
   };
   const paint = () => {
     if (!active()) return;
     const visibleParts = visible();
     const current = refs(visibleParts, source), available = current.filter(canTranslate);
     const rows = available.map(ref => results.get(key(ref)));
-    const failure = failureFor(available);
+    const done = rows.filter(row => row?.status === "ready").length;
+    const waiting = rows.some((row, i) => row?.status === "pending" || !row && authorized(available[i]));
+    const failed = rows.filter(row => row?.status === "failed" || row?.status === "unknown");
+    const count = `本页已完成 ${done} / ${available.length} 段`;
+    const processing = batch ? `本批 ${batch.total} 段，模型处理中` : "正在准备译文";
     const message = setupError ? AI_REQUIRED
-      : failure ? (failure.message || "这一批译文未完成，不会自动重试。")
-      : available.some(ref => !authorized(ref)) ? "正文已更新；如需翻译，请关闭再开启整本翻译。"
+      : requestError ? requestError
+      : waiting || batch ? `${count} · ${processing}，仍可继续阅读原文…`
+      : available.some((ref, i) => rows[i]?.status !== "ready" && !authorized(ref)) ? "正文已更新；如需翻译，请关闭再开启整本翻译。"
       : visibleParts.some(part => source.pending.has(part.id)) ? "等待相邻原页，暂不翻译未完段落。"
-      : rows.some(row => row?.status !== "ready") ? "正在准备本页译文，仍可继续阅读原文…"
+      : failed.length ? `${count} · ${failed.length} 段未完成`
       : !available.length ? (current.length ? "此段过长，请使用选区翻译。" : "本页没有可翻译的正文。")
       : current.length > available.length ? "过长段落未翻译，可使用选区翻译。" : "";
     if (status.textContent !== message) status.textContent = message;
-    retry.hidden = !(failure || setupError);
-    retry.textContent = setupError ? "配置文本 AI" : "重试这一批";
-    retry.disabled = Boolean(work);
+    progress.hidden = setupError || Boolean(requestError) || !(waiting || batch);
+    text.setAttribute("aria-busy", String(!progress.hidden && waiting));
+    setup.hidden = !setupError && !failed.some(row => row.error_code === "credentials");
+    reload.hidden = !requestError;
+    const markup = rows.map((row, i) => {
+      if (row?.status !== "failed" && row?.status !== "unknown") return "";
+      const reason = failureMessage[row.error_code];
+      return `<li><span>第 ${i + 1} 段：${reason}</span>
+        <button type="button" data-page-translation-retry="${i}" aria-label="重试第 ${i + 1} 段"${batch || !authorized(available[i]) ? " disabled" : ""}>重试此段</button></li>`;
+    }).join("");
+    if (failureMarkup !== markup) {
+      failureMarkup = markup;
+      failures.innerHTML = markup;
+      failures.hidden = !markup;
+    }
     const next = rows.flatMap(row => row?.segments || [])
       .filter(segment => segment.ranges.some(range => visibleParts.some(part => intersects(range, part, r.doc))));
     if (next.length !== segments.length || next.some((segment, i) => segment !== segments[i])) {
@@ -126,47 +162,31 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
     const response = await api(`/documents/${r.doc.id}/page-translation`, {
       method: "POST", body, signal: r.scope.signal,
     });
-    for (const row of response.blocks) {
-      const id = key(row);
-      if (row.status !== "ready" || results.get(id)?.status !== "ready") results.set(id, row);
-      failures.delete(id);
-    }
-    return response;
+    batch = response.batch;
+    for (const ref of body.blocks) if (results.get(key(ref))?.status === "pending") results.delete(key(ref));
+    for (const row of response.blocks) results.set(key(row), row);
   }
   const bounded = (entries) => {
     const blocks = new Map();
     let size = 0;
     for (const part of entries) {
       const id = key(part.ref);
-      if (blocks.has(id) || results.has(id) || failures.has(id)) continue;
-      if (!authorized(part.ref, part.doc)) continue;
+      if (blocks.has(id) || results.has(id) || !authorized(part.ref, part.doc)) continue;
       if (size + part.size > MAX_SOURCE || blocks.size >= MAX_BLOCKS) break;
       size += part.size;
       blocks.set(id, part.ref);
-      if (part.doc.pdf) {
-        const versions = enabledBooks.get(book);
-        versions.set(part.doc.id, part.doc.version);
-        versions.set(`${part.ref.doc_id}:${part.ref.block_id}`, part.ref.version);
-      }
+      remember(part.ref, part.doc);
     }
     return [...blocks.values()];
   };
-  async function generate(plan) {
+  async function submit(plan) {
     try {
-      const value = await post({...plan, generate: true});
-      if (value.busy) schedule(650);
-      if (value.error) {
-        for (const row of value.blocks.filter(row => row.status === "unknown"))
-          failures.set(key(row), {retry: row.batch_id, blocks: plan.blocks, message: value.error});
-      }
+      await post(plan);
+      if (batch) schedule(400);
     } catch (error) {
-      if (r.scope.signal.aborted) return;
-      if (error.message === AI_REQUIRED) {
-        setupError = true;
-        if (active()) await configure();
-      } else {
-        for (const ref of plan.blocks) failures.set(key(ref), {...plan, message: error.message});
-      }
+      if (error.message !== AI_REQUIRED) throw error;
+      setupError = true;
+      if (active()) await configure();
     }
   }
   const configure = () => openReadingAI(r, {pageTranslationResume() {
@@ -180,19 +200,18 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
     if (!samePage()) { schedule(); return; }
     const all = [...new Map([...visibleRefs, ...ahead.flat().map(part => part.ref)].map(ref => [key(ref), ref])).values()];
     const fresh = all.filter(ref => results.get(key(ref))?.status !== "ready");
-    for (let offset = 0; offset < fresh.length; offset += 200) {
-      const response = await post({blocks: fresh.slice(offset, offset + 200)});
-      if (response.busy) { schedule(650); return; }
+    for (let offset = 0; offset < fresh.length || (offset === 0 && batch); offset += 200) {
+      await post({blocks: fresh.slice(offset, offset + 200)});
       if (!samePage()) { schedule(); return; }
     }
-    if (setupError || failureFor(visibleRefs)) return;
-    const missing = ref => !results.has(key(ref)) && !failures.has(key(ref));
-    const eligible = ref => missing(ref) && authorized(ref);
-    if (visibleRefs.some(eligible) || ahead[0]?.some(part => missing(part.ref) && authorized(part.ref, part.doc))) {
+    if (batch) { schedule(400); return; }
+    if (setupError) return;
+    const eligible = (ref, doc) => !results.has(key(ref)) && authorized(ref, doc);
+    if (visibleRefs.some(ref => eligible(ref)) || ahead[0]?.some(part => eligible(part.ref, part.doc))) {
       const blocks = bounded([...visibleRefs.map(ref => ({ref, doc: r.doc, size: source.sizes.get(ref.block_id)})), ...ahead.flat()]);
       if (blocks.length) {
-        await generate({blocks});
-        if (!samePage() || (visibleRefs.some(eligible) && !setupError && !failureFor(visibleRefs))) schedule();
+        await submit({blocks, generate: true});
+        if (!samePage() || (!batch && !setupError && visibleRefs.some(ref => eligible(ref)))) schedule();
       }
     }
   }
@@ -208,35 +227,27 @@ export function installPageTranslation(r, pane, enabledBooks, book) {
     }, delay);
   }
   function run(action) {
+    requestError = null;
     work = action().then(paint, error => {
       if (!r.scope.signal.aborted) {
-        status.textContent = error.message;
-        retry.textContent = "重新读取译文";
-        retry.hidden = false;
+        requestError = error.message;
+        paint();
       }
     }).finally(() => {
       work = null;
-      retry.disabled = false;
     });
-    retry.disabled = true;
   }
-  r.scope.on(retry, "click", () => {
-    if (!active() || work) return;
-    if (setupError) {
-      run(configure);
-      return;
+  r.scope.on(setup, "click", () => { if (active() && !work) run(configure); });
+  r.scope.on(reload, "click", () => { if (active() && !work) schedule(); });
+  r.scope.on(failures, "click", event => {
+    const retry = event.target.closest("[data-page-translation-retry]");
+    if (!retry || !active() || work || batch) return;
+    const ref = refs(visible(), source).filter(canTranslate)[+retry.dataset.pageTranslationRetry];
+    const row = ref && results.get(key(ref));
+    if ((row?.status === "failed" || row?.status === "unknown") && authorized(ref)) {
+      remember(ref, r.doc);
+      run(() => submit({blocks: [ref], retry: row.batch_id}));
     }
-    const current = refs(visible(), source).filter(canTranslate);
-    const plan = failureFor(current);
-    if (!plan) { schedule(); return; }
-    run(async () => {
-      if (!plan.retry) {
-        await post({blocks: plan.blocks});
-        if (!active()) return;
-      }
-      const original = plan.retry ? plan : failureFor(plan.blocks);
-      await generate(original?.retry ? {blocks: original.blocks, retry: original.retry} : {blocks: plan.blocks});
-    });
   });
   r.scope.on(section, "pointerover", event => {
     const pair = event.target.closest("[data-page-pair]");

@@ -112,7 +112,7 @@ def test_translation_uses_the_complete_body_group_without_the_separate_note(monk
     units = source_units(None, [BlockRef(doc_id=1, block_id="p1", version="revision")])
     assert [unit.quote for unit in units] == [before["text"] + "\n\n" + after["text"]]
     raw = {"paragraphs": [{"id": 0, "segments": [{"quote": units[0].quote, "zh": "译文"}]}]}
-    assert align_batch(units, raw)[0][0]["ranges"] == [
+    assert align_batch(units, raw, "fixture")[0][0]["ranges"] == [
         {"block_id": "p1", "start": 0, "end": len(before["text"]) + 1},
         {"block_id": "p2", "start": 0, "end": len(after["text"])},
     ]
@@ -168,8 +168,10 @@ def import_pdf(client, case, count):
 def test_real_import_and_projection_across_reader_ranges(digital_worker, monkeypatch):
     requests = []
 
-    async def fake_provider(app, request, prompt, payload, provider):
+    async def fake_provider(app, request, prompt, payload, provider, *, on_response):
         requests.append(payload["paragraphs"])
+        if len(requests) == 1:
+            return {"paragraphs": []}
         return {"paragraphs": [{"id": item["id"], "segments": [{"quote": item["source"], "zh": "译文"}]}
                                for item in payload["paragraphs"]]}
 
@@ -185,8 +187,18 @@ def test_real_import_and_projection_across_reader_ranges(digital_worker, monkeyp
         client.put("/api/ai/config", json={"text": {"enabled": True,
             "base_url": "http://127.0.0.1:1/v1", "api_key": "fixture", "model": "fixture"}}).raise_for_status()
         path = f"/api/documents/{right['id']}/page-translation"
-        result = client.post(path, json={"generate": True, "blocks": [ref]}).raise_for_status().json()
-        assert requests == [[{"id": 0, "source": " ".join([*BEFORE, AFTER])}]]
+        generate = {"generate": True, "blocks": [ref]}
+        poll = {"blocks": [ref]}
+        started = client.post(path, json=generate).raise_for_status().json()
+        assert started["batch"]["total"] == 1
+        assert started["blocks"][0]["status"] == "pending"
+        failed = client.post(path, json=generate).raise_for_status().json()
+        assert failed["blocks"][0]["status"] == "failed"
+        expected = [{"id": 0, "source": " ".join([*BEFORE, AFTER])}]
+        assert requests == [expected]
+        client.post(path, json={**poll, "retry": started["batch"]["id"]}).raise_for_status()
+        result = client.post(path, json=poll).raise_for_status().json()
+        assert requests == [expected, expected]
         assert [(p["doc_id"], p["block_id"], p["revision"]) for p in result["blocks"][0]["segments"][0]["ranges"]] == [
             (left["id"], head["id"], left["version"]), (right["id"], tail["id"], right["version"])]
         plan = client.post(f"/api/documents/{right['id']}/grammar/plan", json={"block_ids": [tail["id"]]}).raise_for_status().json()

@@ -73,6 +73,13 @@ test("PDF reader keeps furniture separate, restores roles, and aligns translatio
   await translationButton.hover();
   await expect(page.locator("#article .linked-translation").first()).toBeVisible();
   expect(left.doc_id).not.toBe(right.doc_id);
+  const translated = (await calls(request)).length;
+  await header.click();
+  await page.getByRole("button", {name: "保留在正文", exact: true}).click();
+  await expect(promoted).toBeVisible();
+  await expect(status(page)).toHaveText("正文已更新；如需翻译，请关闭再开启整本翻译。");
+  await expect(page.locator("[data-page-translation-progress]")).toBeHidden();
+  expect((await calls(request)).length).toBe(translated);
 });
 
 test("PDF reader displays evidence-backed native line repairs", async ({page, request}) => {
@@ -96,9 +103,11 @@ test("reads a cross-page paragraph once, buffers ahead, and preserves selection 
 
   await toggle(page).click();
   await expect(status(page)).toContainText("仍可继续阅读原文");
+  await expect(translation(page).getByRole("progressbar")).toBeVisible();
   await expect(page.locator("#article")).toContainText("Line1");
   await expect.poll(async () => (await calls(request)).length).toBe(before + 1);
   const batch = (await calls(request))[before].paragraphs;
+  await expect(status(page)).toContainText(`本批 ${batch.length} 段，模型处理中`);
   expect(batch.filter(unit => unit.source.includes("Line1 ")).map(unit => unit.source)).toEqual([longParagraph]);
   await expect(translation(page)).toContainText("译文 1：Line1");
   await goPage(page, 1);
@@ -126,25 +135,55 @@ test("reads a cross-page paragraph once, buffers ahead, and preserves selection 
   await expect(status(page)).toHaveText("");
 });
 
-test("a failed batch is not retried automatically and replays from a later page", async ({page, request}) => {
-  await configure(request, "bad-alignment");
+test("a partially successful batch saves valid paragraphs and retries just the selected failure", async ({page, request}) => {
+  await configure(request, "partial-page");
   const before = (await calls(request)).length;
-  const doc = await sample(request, otherParagraphs.join("\n\n"));
+  const doc = await sample(request, ["Alpha remained readable.", "Birch was translated.", "Cedar was translated."].join("\n\n"));
   await read(page, doc.id);
   await toggle(page).click();
-  const retry = page.getByRole("button", {name: "重试这一批"});
+  const retry = page.getByRole("button", {name: "重试第 1 段"});
   await expect(retry).toBeVisible();
   const batch = (await calls(request))[before].paragraphs;
-  expect(batch.length).toBeGreaterThan(2);
-  await goPage(page, 1);
+  await expect(status(page)).toHaveText("本页已完成 2 / 3 段 · 1 段未完成");
+  await expect(translation(page)).toContainText("译文 1：Birch");
+  await expect(translation(page)).toContainText("译文未能与原文完整对齐");
+  await page.reload();
+  await toggle(page).click();
   await expect(retry).toBeVisible();
   expect((await calls(request)).length).toBe(before + 1);
   await configure(request, "e2e-model");
   await retry.click();
-  await expect(translation(page)).toContainText("测试段落译文");
-  expect((await calls(request))[before + 1].paragraphs).toEqual(batch);
+  await expect(translation(page)).toContainText("译文 1：Alpha");
+  await expect(translation(page)).toContainText("译文 1：Birch");
+  await expect(retry).toBeHidden();
+  expect((await calls(request))[before + 1].paragraphs).toEqual(batch.slice(0, 1));
+});
+
+test("leaving the reader and reopening an active batch does not resend it", async ({page, request}) => {
+  await configure(request, "slow-assist");
+  const before = (await calls(request)).length;
+  const doc = await sample(request, [longParagraph, ...otherParagraphs].join("\n\n"));
+  await read(page, doc.id);
+  await toggle(page).click();
+  await expect.poll(async () => (await calls(request)).length).toBe(before + 1);
+  await page.reload();
+  await toggle(page).click();
+  await expect(translation(page)).toContainText("译文 1：Line1");
+  await goPage(page, 1);
   await goPage(page, 0);
-  await expect(translation(page)).toContainText("Paragraph1");
+  await expect(translation(page)).toContainText("译文 1：Line1");
+  expect((await calls(request)).length).toBe(before + 1);
+});
+
+test("surfaces the provider rate limit without resending", async ({page, request}) => {
+  await configure(request, "page-rate-limit");
+  const before = (await calls(request)).length;
+  const doc = await sample(request, "A quiet reading page.");
+  await read(page, doc.id);
+  await toggle(page).click();
+  await expect(translation(page)).toContainText("AI 服务额度或频率已达上限");
+  await expect(translation(page).getByRole("progressbar")).toBeHidden();
+  expect((await calls(request)).length).toBe(before + 1);
 });
 
 test("disabling during a request stops prefetch and reopening uses the saved translation", async ({page, request}) => {
