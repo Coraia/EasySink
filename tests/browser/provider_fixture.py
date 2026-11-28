@@ -52,6 +52,7 @@ class Provider:
                         "nearby_excerpt": selection.get("nearby_excerpt"),
                         "focus_sources": selection.get("focus_sources"),
                         "traces": selection.get("traces"),
+                        "paragraphs": selection.get("paragraphs"),
                     })
                     if p["model"] == "slow-assist":
                         time.sleep(1.2)
@@ -65,6 +66,18 @@ class Provider:
                         content = json.dumps({"segments": [{"quote": text.lstrip(), "zh": "测试译文：" + str(i + 1)} for i, text in enumerate(pieces) if text.strip()]})
                         if p["model"] == "bad-alignment":
                             content = '{"segments":[{"quote":"invented source","zh":"虚构对应"}]}'
+                    elif task == "page-translation":
+                        paragraphs = [
+                            {"id": unit["id"], "segments": [
+                                {"quote": quote.strip(), "zh": f"测试段落译文 {index + 1}：{quote.strip().split()[0]}"}
+                                for index, quote in enumerate(re.findall(r"[^.!?]+[.!?]*", unit["source"]))
+                                if quote.strip()
+                            ]}
+                            for unit in selection["paragraphs"]
+                        ]
+                        if p["model"] == "bad-alignment":
+                            paragraphs.pop()
+                        content = json.dumps({"paragraphs": paragraphs})
                     elif task == "anchored-usage-then-gloss-and-source-rendering":
                         explanation = "测试译文：这两个人的论证未能令人信服。"
                         gloss = "令人信服"

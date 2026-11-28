@@ -2585,6 +2585,38 @@ body.paged-reading #app {
   gap: 4px 12px;
   text-align: right;
 }
+.reader-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font: 12px/1.3 -apple-system, "PingFang SC", sans-serif;
+  cursor: pointer;
+}
+.reader-mode-toggle:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+.reader-mode-toggle[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 500;
+}
+.reader-mode-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+}
+.reader-mode-toggle[aria-pressed="true"] .reader-mode-dot {
+  opacity: 1;
+}
 #reading-end,
 #reading-speech-stop {
   border-color: transparent;

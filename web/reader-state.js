@@ -177,7 +177,7 @@ export class ReaderInteraction {
       !r.panelId &&
       !document.querySelector("dialog[open]") &&
       !$("#reading-stage")?.inert &&
-      $("#translation-pane")?.hidden &&
+      !$("#translation-pane")?.hasAttribute("data-selection-open") &&
       !pages?.displayPending &&
       (!pages?.animating || ownPreview)
     );

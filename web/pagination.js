@@ -960,7 +960,7 @@ export class ReadingPages {
       this.render();
       return true;
     }
-    const geometryChange=["font","size","line","width","typography-reset","viewport","columns"].includes(reason);
+    const geometryChange=["font","size","line","width","typography-reset","viewport","columns","translation-pane"].includes(reason);
     let geometryIntent=null;
     if(geometryChange && this.validAnchor(anchor)) {
       const prior=this.geometryRestore;
@@ -1315,7 +1315,8 @@ export class ReadingPages {
     if (!leaves.length) return;
     const rect = article.getBoundingClientRect(),
       bounds = stage.getBoundingClientRect();
-    const enabled = $("#translation-pane").hidden;
+    const pane = $("#translation-pane");
+    const enabled = !pane.hasAttribute("data-selection-open");
     for (const [id, right] of [
       ["reading-edge-prev", false],
       ["reading-edge-next", true],
@@ -1331,7 +1332,7 @@ export class ReadingPages {
           ? page.right - bounds.left - 14 + "px"
           : -bounds.left + "px",
         width: right
-          ? innerWidth - page.right + 14 + "px"
+          ? (pane.hidden ? innerWidth - page.right + 14 : 22) + "px"
           : page.left + 14 + "px",
       });
     }

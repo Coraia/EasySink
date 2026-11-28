@@ -118,7 +118,7 @@ export function install(ctx) {
     const modeBar = document.createElement("div");
     modeBar.className = "grammar-mode-bar";
     modeBar.dataset.grammarModeBar = "";
-    modeBar.innerHTML = `<button type="button" class="grammar-mode-toggle" data-grammar-mode-toggle aria-pressed="false" title="开启后后台分析窗口内句子，悬停原文即可查看从句修饰与 it/that/which 回指"><span class="grammar-mode-dot" aria-hidden="true"></span><span>语法模式</span></button><select class="grammar-window-select" data-grammar-window aria-label="语法分析范围" hidden>${WINDOW_OPTIONS.map(([v, label]) => `<option value="${v}" ${v === windowPages ? "selected" : ""}>${label}</option>`).join("")}</select><span class="grammar-mode-status" data-grammar-mode-status hidden></span>`;
+    modeBar.innerHTML = `<button type="button" class="reader-mode-toggle" data-grammar-mode-toggle aria-pressed="false" title="开启后后台分析窗口内句子，悬停原文即可查看从句修饰与 it/that/which 回指"><span class="reader-mode-dot" aria-hidden="true"></span><span>语法模式</span></button><select class="grammar-window-select" data-grammar-window aria-label="语法分析范围" hidden>${WINDOW_OPTIONS.map(([v, label]) => `<option value="${v}" ${v === windowPages ? "selected" : ""}>${label}</option>`).join("")}</select><span class="grammar-mode-status" data-grammar-mode-status hidden></span>`;
     $(".reader-page-caption .caption-end")?.prepend(modeBar);
 
     const modeToggleBtn = $("[data-grammar-mode-toggle]", modeBar);
@@ -170,7 +170,6 @@ export function install(ctx) {
     };
     const updateModeUI = () => {
       modeToggleBtn.setAttribute("aria-pressed", String(modeOn));
-      modeToggleBtn.classList.toggle("is-active", modeOn);
       modeWindowSelect.hidden = !modeOn;
       readerEl?.classList.toggle("grammar-mode-active", modeOn);
       if (!modeOn) {

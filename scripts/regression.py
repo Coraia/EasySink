@@ -16,6 +16,7 @@ CORE_E2E_SPECS = [
     "tests/browser/collections-word.spec.js",
     "tests/browser/importer.spec.js",
     "tests/browser/reader.spec.js",
+    "tests/browser/page-translation.spec.js",
     "tests/browser/immersive-v3.spec.js",
     "tests/browser/feedback.spec.js",
     "tests/browser/reader-trackpad.spec.js",
