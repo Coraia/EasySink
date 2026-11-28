@@ -155,38 +155,6 @@
   flex-shrink: 0;
   font: 12px/1.3 -apple-system, "PingFang SC", sans-serif;
 }
-.grammar-mode-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  cursor: pointer;
-}
-.grammar-mode-toggle:hover {
-  color: var(--ink);
-  border-color: var(--muted);
-}
-.grammar-mode-toggle.is-active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-  font-weight: 500;
-}
-.grammar-mode-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.45;
-}
-.grammar-mode-toggle.is-active .grammar-mode-dot {
-  opacity: 1;
-}
 .grammar-window-select {
   padding: 1px 4px;
   border-radius: 4px;

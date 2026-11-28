@@ -1,8 +1,10 @@
 import { anchorSegments, combineSelection, linkedRanges, sameSelection } from "../source-selection.js";
 import { actionIcon } from "../reading-action-icons.js";
 import { $, $$, e } from "../core.js";
+import { installPageTranslation } from "./page-translation.js";
 
 export function install(ctx) {
+  const enabledBooks = new Set();
   return ctx.hook("read", (r) => {
     let result = null,
       locked = null,
@@ -12,7 +14,22 @@ export function install(ctx) {
       hoverTimer = 0,
       openGeneration = 0,
       openRequest = null;
-    const pane = $("#translation-pane");
+    const shell = $("#translation-pane");
+    const pane = document.createElement("section");
+    pane.dataset.selectionTranslation = "";
+    pane.hidden = true;
+    shell.append(pane);
+    const book = r.doc.chapter ? `book:${r.doc.chapter.book_id}` : `doc:${r.doc.id}`;
+    const pageMode = installPageTranslation(r, shell, enabledBooks, book);
+    const syncPane = () => {
+      shell.hidden = pane.hidden && !pageMode.enabled();
+      shell.toggleAttribute("data-selection-open", !pane.hidden);
+      shell.setAttribute("aria-label", pane.hidden ? "当前页的对照译文" : "所选文字的对照译文");
+      $(".reading-columns").classList.toggle("has-translation", !shell.hidden);
+      pageMode.setCovered(!pane.hidden);
+    };
+    pageMode.onToggle(syncPane);
+    syncPane();
     const cancelNavigation = () => {
       ++navigation;
       target = null;
@@ -123,7 +140,7 @@ export function install(ctx) {
     const paint = () => {
       if (!result) return;
       pane.hidden = false;
-      $(".reading-columns").classList.add("has-translation");
+      syncPane();
       pane.innerHTML = `<div class="translation-heading"><h2>所选文字 · 对照</h2></div><div class="meta">${e(result.source)}</div><div class="translation-segments">${result.payload.segments.map((v, i) => `<button type="button" class="translation-segment" data-pair="${i}" aria-label="定位对应原文：${e(v.zh)}">${e(v.zh)}</button>`).join("")}</div><div class="translation-actions"><button type="button" data-return-translation>回到选区</button>${ctx.enabled("notes") ? '<button type="button" data-translation-note>记一笔</button>' : ""}</div>`;
       syncCloseControl();
     };
@@ -268,7 +285,7 @@ export function install(ctx) {
       cancelNavigation();
       highlight(null);
       pane.hidden = true;
-      $(".reading-columns").classList.remove("has-translation");
+      syncPane();
       locked = null;
       syncCloseControl();
       const request = begin("layout", true);
@@ -377,5 +394,7 @@ export function install(ctx) {
       locked = null;
       highlight(null);
     });
+    if (pageMode.enabled() && r.pages.geometryIdentity !== r.pages.geometrySignature())
+      return r.pages.reflow(r.captureView().visibleAnchor || undefined);
   });
 }

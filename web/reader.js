@@ -180,6 +180,7 @@ export class Reader {
         $(".reader").dataset.readyMs = (
           performance.now() - this.ctx.readStarted
         ).toFixed(1);
+        this.emit("reader-ready");
       }),
     );
     local.set("last-document", d.id);

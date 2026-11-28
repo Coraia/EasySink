@@ -214,6 +214,7 @@ class Store:
             "wr_bookmark",
             "wr_progress",
             "wr_translation",
+            "wr_page_translation",
             "wr_assist",
             "wr_review",
             "wr_session_time",

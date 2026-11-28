@@ -66,7 +66,9 @@ export async function openReadingAI(reader, request = {}) {
     }, {capture: true});
     scope.on(resume, "click", () => {
       const {anchor, kind} = view.request;
+      const pageTranslationResume = view.request.pageTranslationResume;
       view.close();
+      if (pageTranslationResume) { pageTranslationResume(); return; }
       if (anchor && kind === "context") {
         reader.restore(anchor, {automatic: true, mark: false}).then(() => {
           if (reader.scope.signal.aborted) return;
@@ -85,8 +87,8 @@ export async function openReadingAI(reader, request = {}) {
     scope.on(window, "resize", position, {passive: true});
     view.open = request => {
       view.request = request;
-      resume.hidden = !title[request.kind] || !request.anchor;
-      resume.textContent = "继续" + (title[request.kind] || "阅读");
+      resume.hidden = !request.pageTranslationResume && (!title[request.kind] || !request.anchor);
+      resume.textContent = "继续" + (request.pageTranslationResume ? "整本翻译" : title[request.kind] || "阅读");
       resume.disabled = !view.ready || view.busy || view.dirty;
       reader.aiSetupOpen = true;
       if (!dialog.open) dialog.show();

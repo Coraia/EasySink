@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
+from wise_reader import page_translation
 from wise_reader.plugins.runtime import PluginContext, require_plugin
 from wise_reader.store import Store
 from wise_reader.reading_assist import SelectionIn, assist
@@ -31,6 +32,7 @@ def migrate(store: Store) -> None:
         );
         """
     )
+    page_translation.migrate(store)
 
 
 def _now() -> str:
@@ -42,6 +44,7 @@ __all__ = ["migrate", "register"]
 
 def register(app: FastAPI, ctx: PluginContext) -> None:
     router = APIRouter(dependencies=[Depends(require_plugin(PLUGIN_ID))])
+    page_translation.register(router, ctx)
 
     @router.post("/api/documents/{doc_id}/translate-selection")
     async def translate_selection(doc_id: int, body: SelectionIn, request: Request):
