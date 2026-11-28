@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDF 正文投影 · 评审原型</title>
+  <link rel="stylesheet" href="/assets/review.css">
+  <script type="module" src="/assets/review.js"></script>
+</head>
+<body>
+  <header class="mast">
+    <div>
+      <span class="eyebrow">EASYSINK / PDF 实验室</span>
+      <h1>让跨页的句子接得上</h1>
+      <p>真实导入对比 · 原页取证 · 模拟翻译，不写入现有书库</p>
+    </div>
+    <span class="stamp">仅供评审</span>
+  </header>
+  <nav id="cases" aria-label="测试样本"></nav>
+  <main>
+    <div class="topline">
+      <div><h2 id="title">正在准备样本</h2><p id="summary"></p></div>
+      <button id="pending" hidden></button>
+    </div>
+    <div id="notice" role="status" hidden></div>
+    <div class="workbench">
+      <section class="proof" aria-labelledby="proof">
+        <h3 id="proof">原页 · 点击框选</h3>
+        <div id="pages"></div>
+        <div id="evidence"></div>
+        <div class="controls" id="controls">
+          <button data-action="body">保留在正文</button>
+          <button data-action="exclude">移出正文</button>
+          <button data-action="reset">恢复自动判断</button>
+        </div>
+      </section>
+      <section class="compare" aria-label="阅读与翻译对照">
+        <div class="panel">
+          <div class="section-label">01 / 阅读文字</div>
+          <div class="columns">
+            <div><h3>修复前</h3><div class="passages" id="before"></div></div>
+            <div><h3>修复后</h3><div class="passages" id="after"></div></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="section-label">02 / 送往模拟翻译器的请求 <span>逐字 JSON</span></div>
+          <div class="columns">
+            <div><h3>修复前</h3><pre id="before-payload"></pre></div>
+            <div><h3>修复后</h3><pre id="after-payload"></pre></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="section-label">03 / 译文定位 <span>点击译文，对照原页</span></div>
+          <div id="translations"></div>
+          <div id="mapping"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
