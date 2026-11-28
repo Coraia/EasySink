@@ -793,29 +793,34 @@
       });
     }
 
-    function startBatch({ retry = false } = {}) {
-      if (!translate || request) return;
+    function nextBatch() {
       const start = pageState(index) === "ready" ? index + 1 : index;
-      if (start === pages.length || (!retry && pageState(start) !== "loading"))
-        return;
+      if (start === pages.length || pageState(start) !== "loading") return;
       const end = Math.min(start + batchSize, pages.length);
       const ids = new Set(
         pageSpans
           .slice(start, end)
           .flat()
           .map(({ id }) => id)
-          .filter(
-            (id) =>
-              !results.has(id) || (retry && results.get(id).status === "error"),
-          ),
+          .filter((id) => !results.has(id)),
       );
-      for (const id of ids) results.delete(id);
       const first = pages[start],
         last = pages[end - 1];
       const range =
         first.chapter === last.chapter
           ? `第 ${first.chapter} 章 · ${first.number}–${last.number} 页`
           : `第 ${first.chapter} 章第 ${first.number} 页至第 ${last.chapter} 章第 ${last.number} 页`;
+      return { ids, range };
+    }
+
+    function startBatch({ retry = false } = {}) {
+      if (!translate || request) return;
+      const batch = retry
+        ? pageSpans[index].map(({ id }) => results.get(id)?.batch).find(Boolean)
+        : nextBatch();
+      if (!batch) return;
+      const { ids, range } = batch;
+      for (const id of ids) results.delete(id);
       const fail = $("fail-next").checked;
       $("fail-next").checked = false;
       const { signal } = (request = new AbortController());
@@ -825,7 +830,7 @@
         request = null;
         for (const id of ids) {
           const result = fail
-            ? { status: "error" }
+            ? { status: "error", batch }
             : { status: "ready", segments: blocks.get(id).map(([, zh]) => zh) };
           results.set(id, result);
         }
