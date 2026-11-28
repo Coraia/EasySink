@@ -79,7 +79,6 @@ export class AnnotationReflow {
     this.fonts=new Map([...document.querySelectorAll('#article [data-block]')].map(n=>[n.dataset.block,cssText(getComputedStyle(n))]));
     this.defaultFont=cssText(getComputedStyle(node.closest('.reading-prose')));
     this.lineHeight=parseFloat(getComputedStyle(node.closest('[data-block]')).lineHeight);
-    this.bodyLineHeight=parseFloat(getComputedStyle(node.closest('.reading-prose')).lineHeight);
     this.units=new Map([...document.querySelectorAll("#article [data-word]")].map(node=>[node.dataset.reflowKey || inkKey(node.dataset.sourceBlock,+node.dataset.sourceStart,+node.dataset.sourceEnd),{node,template:null}]));
     this.inkColor=getComputedStyle(document.querySelector("#article")).color;
     this.base=this.capture();
@@ -523,15 +522,39 @@ export class AnnotationReflow {
           margin:'0',padding:'0',border:'0',pointerEvents:'none'});
         const fragment=document.createElement('section');fragment.className='source-fragment';fragment.style.position='static';fragment.dataset.fragment=part.id;
         fragment.dataset.fragmentStart=part.start;fragment.dataset.fragmentEnd=part.end;fragment.append(source);prose.append(fragment);
-        const lineHeight=+(state.fonts?.get(part.id)?.font.match(/\/\s*([\d.]+)px/)?.[1] || this.bodyLineHeight || this.lineHeight);
-        const rows=new Map();
-        for(const item of pieces) {
-          const row=Math.round((item.r.y-originY)/lineHeight);
-          if(!rows.has(row))rows.set(row,[]);rows.get(row).push(item);
+        const rows = [];
+        const rowFor = new Map();
+        for (const item of pieces.toSorted((a, b) => b.r.height - a.r.height)) {
+          const { y, height } = item.r;
+          let row = rows.find(({ rect }) => {
+            const overlap =
+              Math.min(y + height, rect.y + rect.height) - Math.max(y, rect.y);
+            return overlap > Math.min(height, rect.height) / 2;
+          });
+          if (!row) {
+            row = { rect: item.r, pieces: [] };
+            rows.push(row);
+          }
+          rowFor.set(item, row);
         }
-        for(const [,rowPieces] of [...rows].sort((a,b)=>a[0]-b[0])) {
-          const line=document.createElement('span');line.className='reflow-source-line';
-          Object.assign(line.style,{left:`${Math.min(...rowPieces.map(p=>p.r.x))-originX}px`,top:`${Math.min(...rowPieces.map(p=>p.r.y))-originY}px`,width:`${Math.max(...rowPieces.map(p=>p.r.x+p.r.width))-Math.min(...rowPieces.map(p=>p.r.x))+32}px`,height:`${lineHeight}px`,lineHeight:`${lineHeight}px`});source.append(line);
+        for (const item of pieces) rowFor.get(item).pieces.push(item);
+        const lines = rows.map(({ pieces }) => ({
+          pieces,
+          top: Math.min(...pieces.map(({ r }) => r.y)),
+        }));
+        for (const { pieces: rowPieces, top } of lines.sort((a, b) => a.top - b.top)) {
+          const left = Math.min(...rowPieces.map(({ r }) => r.x));
+          const right = Math.max(...rowPieces.map(({ r }) => r.x + r.width));
+          const bottom = Math.max(...rowPieces.map(({ r }) => r.y + r.height));
+          const line = document.createElement("span");
+          line.className = "reflow-source-line";
+          Object.assign(line.style, {
+            left: `${left - originX}px`,
+            top: `${top - originY}px`,
+            width: `${right - left + 32}px`,
+            height: `${bottom - top}px`,
+          });
+          source.append(line);
           for(const item of rowPieces) {
           const node=document.createElement('span');node.className=item.gloss?'gloss reflow-inline-piece reflow-note-piece':'reflow-inline-piece';
           node.dataset.reflowKey=item.key;
